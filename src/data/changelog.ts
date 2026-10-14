@@ -46,7 +46,9 @@ export const CHANGELOG: ChangelogEntry[] = [
     ['Pokémon de apoyo: no atacan, refuerzan a las torres cercanas. Scyther (Danza Espada, +daño), Togekiss (Viento Afín, +velocidad), Lucario y Absol (Foco Energía, +crítico), Meowth (Día de Pago, +monedas) y Noctowl (Vista Lince, +alcance). Dos auras iguales no se suman.',
      'Support Pokémon: they do not attack, they boost nearby towers. Scyther (Swords Dance, +damage), Togekiss (Tailwind, +speed), Lucario and Absol (Focus Energy, +crits), Meowth (Pay Day, +coins) and Noctowl (Keen Eye, +range). Two auras of the same kind do not stack.'],
     ['Al colocar una torre se ve su alcance, lo que no se puede ocupar y por qué. Todavía no da recompensas.',
-     'When placing a tower you see its range, where you cannot build and why. It gives no rewards yet.']
+     'When placing a tower you see its range, where you cannot build and why. It gives no rewards yet.'],
+    ['Ranking de Defensa: en la pantalla del ranking, la pestaña Defensa ordena por oleadas superadas y, a igualdad, por las vidas que te quedaban.',
+     'Defense leaderboard: in the leaderboard screen, the Defense tab ranks by waves cleared and, on a tie, by the lives you had left.']
   ] },
   { d: '2026-10-13', title: ['La Sentencia de Arceus', 'The Judgment of Arceus'], new: [
     ['La Sentencia de Arceus: al llegar al minuto 30, Arceus baja del cielo y te lleva a las Ruinas del Juicio. Es invencible, te persigue cada vez más deprisa y lanza pilares de luz, rayos y ondas; si te toca, te quita casi media vida. Cada 5 segundos acude un legendario con el doble de vida y de daño que el anterior. ¿Cuánto aguantarás?',

@@ -52,8 +52,15 @@ export const RankingUI = (() => {
         box.appendChild(b);
       }
     };
-    mk($('rk-mode'), [['s', `<b>${G.Icons.html('user', 16)} Solo</b>`], ['g', `<b>${G.Icons.html('friends', 16)} Grupo</b>`]],
-       mode, k => { mode = k; }, 'gen-tab');
+    mk($('rk-mode'), [['s', `<b>${G.Icons.html('user', 16)} Solo</b>`], ['g', `<b>${G.Icons.html('friends', 16)} Grupo</b>`],
+                      ['d', `<b>${G.Icons.html('shield', 16)} Defensa</b>`]],
+       mode, k => {
+         mode = k;
+         // En Defensa no hay tablas por Pokémon.
+         if (k === 'd' && dex) { dex = null; $('rk-poke').value = ''; $('rk-clear').classList.add('hidden'); }
+       }, 'gen-tab');
+    $('rk-poke').classList.toggle('hidden', mode === 'd');
+    $('rk-what').textContent = mode === 'd' ? '· oleadas superadas' : '· tiempo aguantado';
     mk($('rk-period'), G.Ranking.PERIODS, period, k => {
       period = k;
       if (k !== 'a' && dex) { dex = null; $('rk-poke').value = ''; $('rk-clear').classList.add('hidden'); }
@@ -61,7 +68,11 @@ export const RankingUI = (() => {
     mk($('rk-scope'), [['all', 'Todos'], ['friends', 'Sólo amigos']], scope, k => { scope = k; }, 'chip');
   }
 
-  const fmt = t => t >= 3600 ? Math.floor(t / 3600) + ':' + G.U.mmss(t % 3600).padStart(5, '0') : G.U.mmss(t);
+  const fmtT = t => t >= 3600 ? Math.floor(t / 3600) + ':' + G.U.mmss(t % 3600).padStart(5, '0') : G.U.mmss(t);
+  /** La marca: tiempo, o en Defensa la puntuación oleadas·100 + vidas (td-waves.ts, defenseScore). */
+  const fmt = t => mode !== 'd' ? fmtT(t) : G.I18n.f('Oleada {x}', Math.floor(t / 100));
+  /** En Defensa, las vidas que quedaban. */
+  const livesOf = t => t % 100;
 
   async function load() {
     const my = ++token;
@@ -95,8 +106,8 @@ export const RankingUI = (() => {
     const pn = en ? { d: 'today', w: 'this week', m: 'this month', y: 'this year', a: 'of all time' }[period]
                   : { d: 'de hoy', w: 'de esta semana', m: 'de este mes', y: 'de este año', a: 'de siempre' }[period];
     const mon = dex ? G.DEX_BY[dex].name : '';
-    const where = en ? (mode === 's' ? 'solo' : 'group') + (dex ? ' with ' + mon : '')
-                     : (mode === 's' ? 'en solitario' : 'en grupo') + (dex ? ' con ' + mon : '');
+    const where = en ? ({ s: 'solo', g: 'group', d: 'in Defense' }[mode]) + (dex ? ' with ' + mon : '')
+                     : ({ s: 'en solitario', g: 'en grupo', d: 'en Defensa' }[mode]) + (dex ? ' con ' + mon : '');
     $('rk-me').innerHTML = !G.Social.me ? 'Elige un apodo (en Amigos) para salir en el ranking.'
       : me && me.out ? (en ? `<span translate="no">You're not in the top 50 ${where} ${pn} yet. Your exact rank is in All-time.</span>`
                            : `Aún no estás en el top 50 ${pn} ${where}. Tu puesto exacto está en Histórico.`)
@@ -114,7 +125,7 @@ export const RankingUI = (() => {
     r.dex.forEach((d, i) => { if (G.DEX_BY[d]) mons.appendChild(G.UI.spriteCanvas(d, 44, 40, { scale: 1, shiny: !!r.shiny[i] })); });
     el.appendChild(mons);
     el.insertAdjacentHTML('beforeend',
-      `<span class="who"><b translate="no">${r.names.map((n, i) => `<a href="#" class="plink" data-u="${esc(r.uids[i] || '')}">${esc(n)}</a>`).join(' · ')}</b><small>Nv. ${r.lv || 1} · ${(r.kills || 0).toLocaleString('es')} derrotados</small></span>
+      `<span class="who"><b translate="no">${r.names.map((n, i) => `<a href="#" class="plink" data-u="${esc(r.uids[i] || '')}">${esc(n)}</a>`).join(' · ')}</b><small>${mode === 'd' ? G.I18n.f('{x} vidas', livesOf(r.t)) : 'Nv. ' + (r.lv || 1)} · ${(r.kills || 0).toLocaleString('es')} derrotados</small></span>
        <span class="time">${fmt(r.t)}</span>`);
     el.querySelectorAll<HTMLAnchorElement>('.plink').forEach(a => { a.onclick = e => { e.preventDefault(); G.ProfileUI.show(a.dataset.u); }; });
     // Reportar una marca sospechosa (no la tuya). Lo revisa el admin (mod-ui.js).

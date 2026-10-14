@@ -84,6 +84,10 @@ export const TD = (() => {
   let bossLeft = 0;
   let downT = 0;                     // héroe caído: segundos hasta levantarse
   let won = false;
+  /** Oleadas superadas (lo que cuenta para el ranking). */
+  let cleared = 0;
+  /** La partida se ha tocado desde la consola (debugHpMul): no sube al ranking. */
+  let tampered = false;
   /** ×1 o ×2: todo pasa el doble de deprisa. */
   let fast = false;
   /** Puntos del camino en unidades de mundo (los comparten todos los enemigos como destino). */
@@ -352,7 +356,7 @@ export const TD = (() => {
     path = ROUTE.map(([tx, ty]) => ({ x: tx * TS, y: ty * TS, r: 0, level: 1 }));
     lens = pathLengths(path);
     bound = 20 * TS;
-    time = 0; lives = START_LIVES; wave = 0; leaked = 0; downT = 0; won = false; fast = false;
+    time = 0; lives = START_LIVES; wave = 0; leaked = 0; downT = 0; won = false; fast = false; cleared = 0; tampered = false;
     money = START_MONEY; heroLevel = 1; reach = 0; hpMul = 1; bossLeft = 0; toSpawn = 0;
     towers = []; placing = null; selected = null; pendingEvo = null; powers = {};
     pool = candidates();
@@ -370,6 +374,7 @@ export const TD = (() => {
     G.Audio.music(G.BIOME_MUSIC[0]);
 
     Run.state = 'playing';
+    G.Ranking.runStarted('d');
     phase = 'break'; phaseT = FIRST_BREAK;
     buildUI();
     G.Spawner.say('Compra torres en la tienda y plántalas junto al camino', 4, true);
@@ -381,6 +386,10 @@ export const TD = (() => {
     hideUI();
     G.Audio.music(null);
     G.Audio.sfx(dead ? 'gameover' : won ? 'legend' : 'back');
+    // Ranking de Defensa: oleadas superadas y, a igualdad, vidas que quedaban.
+    if (!tampered && cleared > 0) {
+      G.Ranking.submitDefense({ waves: cleared, lives: Math.max(0, lives), secs: Math.floor(time), kills: pl.kills, dex: pl.dex, shiny: pl.shiny });
+    }
     G.RunUI.showOver({
       dead, time, level: pl.level, kills: pl.kills, bosses: 0, coins: 0, record: false, t1: 0, t10: 0, judge: null,
       moves: pl.moves, caught: [],
@@ -476,6 +485,7 @@ export const TD = (() => {
         }
       } else if (!G.EnemyMgr.all().some(e => !e.dead)) {
         earn(waveBonus(wave), pl.x, pl.y - 40);
+        cleared = wave;
         if (wave >= LAST_WAVE) { won = true; G.Spawner.say('¡Has defendido la base!', 3, true); end(false); return; }
         G.Spawner.say('¡Oleada ' + wave + ' superada!', 2.2, true);
         phase = 'break'; phaseT = BREAK;
@@ -1271,7 +1281,7 @@ export const TD = (() => {
     debugMode(i: number, mode: TargetMode) { if (towers[i] && TARGET_MODES.includes(mode)) towers[i].mode = mode; },
     debugCallWave() { callWave(); },
     debugFast(on: boolean) { fast = !!on; },
-    debugHpMul(k: number) { hpMul = k > 0 ? k : 1; },
+    debugHpMul(k: number) { hpMul = k > 0 ? k : 1; if (hpMul !== 1) tampered = true; },
     canPlace(x: number, y: number) { return !whyNot(x, y); },
     get route() { return path.map(p => ({ x: p.x, y: p.y })); },
     get placing() { return placing ? { dex: placing.dex, x: ghost.x, y: ghost.y } : null; },

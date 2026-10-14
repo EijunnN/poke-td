@@ -55,7 +55,7 @@ export const ModUI = (() => {
   /** "s_w2026-42" -> "Solo · Semana" */
   function boardName(b) {
     const [m, p] = b.split('_');
-    const mode = m === 'g' ? 'Grupo' : 'Solo';
+    const mode = m === 'g' ? 'Grupo' : m === 'd' ? 'Defensa' : 'Solo';
     const per = p.startsWith('d') ? 'Hoy' : p.startsWith('w') ? 'Semana' : p.startsWith('m') ? 'Mes' : 'Histórico';
     const dex = (b.match(/_p(\d+)$/) || [])[1];
     return mode + ' · ' + per + (dex && G.DEX_BY[dex] ? ' · sólo ' + G.DEX_BY[dex].name : '');
@@ -69,11 +69,12 @@ export const ModUI = (() => {
     for (const g of groups) {
       const row = document.createElement('div');
       row.className = 'rk-row mod-row rep';
-      const mode = g.board.startsWith('g_') ? 'g' : 's';
+      const mode = g.board[0] === 'g' || g.board[0] === 'd' ? g.board[0] : 's';
       // Lo que se ve de la marca ahora en su tabla (nivel, derrotados, Pokémon).
       const info = await G.Ranking.entryInfo(g.board, g.e).catch(() => null);
       const t = info ? info.t : g.t;
-      const sus = t > SUSPECT_T;
+      // En Defensa `t` es la puntuación oleadas·100 + vidas, no un tiempo.
+      const sus = mode !== 'd' && t > SUSPECT_T;
       const mons = document.createElement('span');
       mons.className = 'mons';
       if (info) info.dex.forEach((d, i) => { if (G.DEX_BY[d]) mons.appendChild(G.UI.spriteCanvas(d, 44, 40, { scale: 1, shiny: !!(info.shiny || [])[i] })); });
@@ -82,7 +83,7 @@ export const ModUI = (() => {
       row.insertAdjacentHTML('beforeend', `<span class="who"><b translate="no">${g.names.map(esc).join(' · ')}</b>
           <small>${esc(boardName(g.board))}${info ? ' · Nv. ' + (info.lv || 1) + ' · ' + (info.kills || 0).toLocaleString('es') + ' derrotados' : ' · ya no está en el top 50'}</small>
           ${sus ? '<small class="mod-warn">Más de 33 min: casi imposible con la Sentencia de Arceus</small>' : ''}</span>
-        <span class="time${sus ? ' mod-warn' : ''}">${fmt(t)}</span>`);
+        <span class="time${sus ? ' mod-warn' : ''}">${mode === 'd' ? 'Oleada ' + Math.floor(t / 100) + ' · ' + t % 100 + ' vidas' : fmt(t)}</span>`);
       const acts = document.createElement('span');
       acts.className = 'mod-acts';
       const busy = async (fn, msg) => {

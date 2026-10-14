@@ -89,3 +89,32 @@ export const START_LIVES = 30;
 
 /** Vidas que te quita al llegar a la base. */
 export const leakCost = (boss: boolean, legend: boolean) => legend ? 6 : boss ? 3 : 1;
+
+// ---------------- ranking ----------------
+// Lo comparten la partida (src/modes/td.ts) y el servidor (server/ranking.ts),
+// que con esto decide si una marca es posible.
+
+/**
+ * Puntuación de una partida: manda cuántas oleadas superaste y, a igualdad,
+ * las vidas que te quedaban. `waves * 100 + lives` (lives nunca llega a 100).
+ */
+export const defenseScore = (waves: number, lives: number) => waves * 100 + Math.max(0, Math.min(START_LIVES, lives));
+/** La puntuación partida en oleadas y vidas. */
+export const scoreParts = (score: number) => ({ waves: Math.floor(score / 100), lives: score % 100 });
+
+/** Segundos de partida que tardan en salir todos los enemigos de una oleada (lo mínimo que dura). */
+export function spawnTime(n: number): number {
+  return (waveCount(n) - 1) * waveGap(n) + (waveAt(n).boss ? 2 : 0);
+}
+/** Lo mínimo que puede durar (en segundos de partida) superar las primeras `waves` oleadas. */
+export function minDefenseTime(waves: number): number {
+  let s = 0;
+  for (let n = 1; n <= Math.min(waves, LAST_WAVE); n++) s += spawnTime(n);
+  return s;
+}
+/** Los enemigos que pueden salir hasta la oleada siguiente a las `waves` superadas (la que te tumbó). */
+export function maxDefenseKills(waves: number): number {
+  let k = 0;
+  for (let n = 1; n <= Math.min(waves + 1, LAST_WAVE); n++) k += waveCount(n) + (waveAt(n).boss ? 1 : 0);
+  return k;
+}

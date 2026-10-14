@@ -112,6 +112,8 @@ export const GuideUI = (() => {
     return h('El objetivo', 'The goal')
       + `<p>${T(`Los enemigos siguen el camino hasta tu base. Aguanta las <b>${WAVES.length} oleadas</b>. Empiezas con <b>${START_LIVES} vidas</b>: cada enemigo que llega quita ${leakCost(false, false)}, un jefe ${leakCost(true, false)} y un legendario ${leakCost(true, true)}.`,
                `Enemies follow the path to your base. Survive all <b>${WAVES.length} waves</b>. You start with <b>${START_LIVES} lives</b>: each enemy that gets through takes ${leakCost(false, false)}, a boss ${leakCost(true, false)} and a legendary ${leakCost(true, true)}.`)}</p>`
+      + `<p>${T('En el ranking (pestaña Defensa) cuentan las oleadas que superas y, a igualdad, las vidas que te quedan.',
+               'On the leaderboard (Defense tab) what counts is the waves you clear and, on a tie, the lives you have left.')}</p>`
       + h('Paso a paso', 'Step by step')
       + `<ol>${[
         ['Antes de empezar eliges hasta 6 <b>favoritos</b>: salen los primeros en la tienda. Puedes comprar cualquier Pokémon de tu colección.',

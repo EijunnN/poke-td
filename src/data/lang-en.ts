@@ -377,7 +377,8 @@ G.I18n.add({
   // ---------------- ranking ----------------
   'tiempo aguantado': 'survival time', '· tiempo aguantado': '· survival time', 'Diario': 'Daily', 'Semanal': 'Weekly', 'Mensual': 'Monthly', 'Anual': 'Yearly',
   'Histórico': 'All-time', 'Sólo amigos': 'Friends only', 'Filtrar por Pokémon (histórico)': 'Filter by Pokémon (all-time)', 'Quitar filtro': 'Clear filter',
-  '{x} Solo': '{x} Solo', '{x} Grupo': '{x} Group', 'Grupo': 'Group', 'Todavía no hay marcas aquí. ¡Sé el primero!': 'No records here yet. Be the first!',
+  '{x} Solo': '{x} Solo', '{x} Grupo': '{x} Group', 'Grupo': 'Group', '{x} Defensa': '{x} Defense', 'Defensa': 'Defense',
+  '· oleadas superadas': '· waves cleared', 'Oleada {x}': 'Wave {x}', '{x} vidas': '{x} lives', 'Todavía no hay marcas aquí. ¡Sé el primero!': 'No records here yet. Be the first!',
   'No hay ningún Pokémon con ese nombre': 'There\'s no Pokémon with that name', 'No se pudo cargar el ranking ({x}).': 'Couldn\'t load the leaderboard ({x}).',
   'Elige un apodo (en Amigos) para salir en el ranking.': 'Choose a nickname (in Friends) to appear on the leaderboard.',
   'Tu mejor puesto {x} {x}:': 'Your best rank {x} {x}:', 'Aún no tienes marca {x} {x}.': 'You don\'t have a record {x} {x} yet.',

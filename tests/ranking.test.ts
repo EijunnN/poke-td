@@ -11,6 +11,7 @@ import { startServer } from './helpers';
 import { openDb } from '../server/db';
 import { sha256 } from '../server/http';
 import { createRanking, periodIds, type RankingOptions } from '../server/ranking';
+import { LAST_WAVE, maxDefenseKills, minDefenseTime } from '../src/modes/td-waves';
 
 // Las cuentas de moderación se leen de la variable de entorno al crear el servidor.
 process.env.ADMIN_USERS = ' Moderadora , OTROADMIN,';
@@ -66,7 +67,7 @@ async function aparte<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 /** Avisa de que empieza una partida que lleva `age` segundos en marcha. */
-async function begin(u: U, mode: 's' | 'g' = 's', age = 0, s = srv, equipo?: U[]) {
+async function begin(u: U, mode: 's' | 'g' | 'd' = 's', age = 0, s = srv, equipo?: U[]) {
   const r = await call('POST', '/start', { mode }, u.token);
   expect(r.status).toBe(200);
   s.db.raw.run('UPDATE ranking_runs SET started = ? WHERE user_id = ?', [Date.now() - age * 1000, u.id]);
@@ -162,7 +163,7 @@ describe('sesión y forma de las peticiones', () => {
     }
   });
 
-  test('/start: sólo los modos s y g', async () => {
+  test('/start: sólo los modos s, g y d', async () => {
     const u = mkUser();
     for (const mode of [undefined, null, 'x', 'S', 1, ['s'], { a: 1 }, "s' OR 1=1"]) {
       expect((await call('POST', '/start', { mode }, u.token)).status).toBe(400);
@@ -785,7 +786,7 @@ describe('moderación: acciones', () => {
       ['POST', '/admin/remove', { board: 's_all2', e: "1' OR '1'='1" }],
       ['POST', '/admin/remove', { board: 's_all', e: v.uid }],
       ['POST', '/admin/remove', { board: 's_all2_p0', e: v.uid }],
-      ['POST', '/admin/remove', { board: 'd_all2', e: v.uid }],
+      ['POST', '/admin/remove', { board: 'x_all2', e: v.uid }],
       ['POST', '/admin/remove', { board: 's_d2026101', e: v.uid }],
       ['POST', '/admin/remove', { board: ['s_all2'], e: v.uid }],
       ['POST', '/admin/remove', { board: 's_all2', e: [v.uid] }],
@@ -1049,5 +1050,113 @@ describe('con reloj controlado (módulo suelto)', () => {
     const db = openDb(':memory:');
     createRanking(db);
     createRanking(db);
+  });
+});
+
+describe('Defensa (modo d)', () => {
+  /** Una partida de Defensa posible: `waves` superadas con lo mínimo que dura, a ×1. */
+  const defense = (waves: number, lives: number, over: Record<string, unknown> = {}) =>
+    ({ mode: 'd', waves, lives, secs: Math.ceil(minDefenseTime(waves)) + 60, kills: 50, dex: 4, shiny: false, ...over });
+  /** Aviso con `age` s de antigüedad y subida. */
+  async function td(u: U, body: Record<string, unknown>, age = 4000) {
+    await begin(u, 'd', age);
+    return call('POST', '/submit', body, u.token);
+  }
+
+  test('una marca legal: puntuación oleadas·100 + vidas, en las 4 tablas de Defensa y en ninguna más', async () => {
+    const u = mkUser();
+    const r = await td(u, defense(10, 25));
+    expect(r.status).toBe(200);
+    expect(r.j.better).toEqual(['d', 'w', 'm', 'a']);
+    const ids = periodIds();
+    for (const p of ['d', 'w', 'm', 'a'] as const) {
+      expect(count('ranking_entries', 'board = ? AND id = ?', 'd_' + ids[p], u.uid)).toBe(1);
+    }
+    expect(count('ranking_entries', 'id = ?', u.uid)).toBe(4);              // sin tablas por Pokémon
+    expect(await mine(u, 'd')).toMatchObject({ t: 1025, lv: 10, kills: 50, dex: [4], names: [u.name] });
+    expect(await mine(u, 's')).toBeUndefined();
+  });
+
+  test('manda la oleada; a igualdad, las vidas; una peor no pisa la buena', async () => {
+    const u = mkUser();
+    await td(u, defense(10, 25));
+    expect((await td(u, defense(10, 20))).j.better).toEqual([]);
+    expect((await mine(u, 'd')).t).toBe(1025);
+    expect((await td(u, defense(10, 26))).j.better).toEqual(['d', 'w', 'm', 'a']);
+    expect((await td(u, defense(11, 0))).j.better).toEqual(['d', 'w', 'm', 'a']);
+    expect((await mine(u, 'd')).t).toBe(1100);
+
+    const a = mkUser(), b = mkUser();
+    await td(a, defense(LAST_WAVE, 3));
+    await td(b, defense(LAST_WAVE - 1, 30));
+    const top = await rows(a, 'd', 'a');
+    expect(top.findIndex(r => r.id === a.uid)).toBeLessThan(top.findIndex(r => r.id === b.uid));
+  });
+
+  test('valores imposibles o rotos -> 400 y nada guardado', async () => {
+    const u = mkUser();
+    const min = (w: number) => Math.floor(minDefenseTime(w) * 0.9);
+    const malas: Record<string, unknown>[] = [
+      { waves: 0 }, { waves: LAST_WAVE + 1 }, { waves: 1.5 }, { waves: '10' }, { waves: null }, { waves: -3 },
+      { lives: -1 }, { lives: 31 }, { lives: 2.5 }, { lives: '30' },
+      { secs: min(10) - 1 }, { secs: 0 }, { secs: 3 * 3600 + 1 }, { secs: 1e999 }, { secs: '900' }, { secs: 900.5 },
+      { kills: -1 }, { kills: maxDefenseKills(10) + 1 }, { kills: 1.5 }, { kills: '5' },
+      { dex: 0 }, { dex: 2001 }, { dex: 'pikachu' },
+    ];
+    for (const m of malas) {
+      await begin(u, 'd', 4000);
+      expect([m, (await call('POST', '/submit', defense(10, 10, m), u.token)).status]).toEqual([m, 400]);
+    }
+    expect(count('ranking_entries', 'id = ?', u.uid)).toBe(0);
+    // Los límites exactos sí valen.
+    expect((await td(u, defense(10, 30, { secs: min(10), kills: maxDefenseKills(10) }))).status).toBe(200);
+  });
+
+  test('el tiempo: a ×2 cabe el doble de partida que de tiempo real, no más', async () => {
+    const u = mkUser();
+    const secs = Math.ceil(minDefenseTime(20)) + 100;
+    const real = Math.ceil(secs / 2);
+    await begin(u, 'd', real - 40);                       // 10 s más allá del margen de 30
+    expect((await call('POST', '/submit', defense(20, 5, { secs }), u.token)).status).toBe(400);
+    await begin(u, 'd', real - 20);
+    expect((await call('POST', '/submit', defense(20, 5, { secs }), u.token)).status).toBe(200);
+  });
+
+  test('sin avisar, con el aviso de otro modo o dos veces con un aviso: 409', async () => {
+    const u = mkUser();
+    expect((await call('POST', '/submit', defense(5, 5), u.token)).status).toBe(409);
+    await begin(u, 's', 4000);
+    expect((await call('POST', '/submit', defense(5, 5), u.token)).status).toBe(409);
+    await begin(u, 'd', 4000);
+    expect((await call('POST', '/submit', mark(120), u.token)).status).toBe(409);
+    expect((await call('POST', '/submit', defense(5, 5), u.token)).status).toBe(200);
+    expect((await call('POST', '/submit', defense(6, 5), u.token)).status).toBe(409);
+  });
+
+  test('una cuenta marcada no sube a Defensa', async () => {
+    const m = await mod();
+    const u = mkUser();
+    await call('POST', '/admin/mark', { uid: u.uid, on: true }, m.token);
+    expect((await td(u, defense(5, 5))).status).toBe(403);
+    expect(count('ranking_entries', 'id = ?', u.uid)).toBe(0);
+  });
+
+  test('no hay tablas de Defensa por Pokémon: el filtro se ignora y d_all2_p4 no es una tabla', async () => {
+    const u = mkUser(), v = mkUser();
+    await td(u, defense(8, 8));
+    expect(await rows(u, 'd', 'a', '&dex=4')).toEqual(await rows(u, 'd', 'a'));
+    expect((await call('POST', '/report', { board: 'd_all2_p4', e: u.uid }, v.token)).status).toBe(400);
+    expect((await call('POST', '/report', { board: 'd_all2', e: u.uid }, v.token)).status).toBe(200);
+  });
+
+  test('purge sólo mira tiempos: no toca las puntuaciones de Defensa; remove-all sí las quita', async () => {
+    const m = await mod();
+    const u = mkUser();
+    await td(u, defense(LAST_WAVE, 30));                  // 3030 "segundos" si fuera un tiempo
+    await call('POST', '/admin/purge', { maxT: 600 }, m.token);
+    expect(count('ranking_entries', 'id = ?', u.uid)).toBe(4);
+    const r = await call('POST', '/admin/remove-all', { e: u.uid, mode: 'd', also: 'd_all2' }, m.token);
+    expect(r.j.removed).toBe(4);
+    expect(count('ranking_entries', 'id = ?', u.uid)).toBe(0);
   });
 });
