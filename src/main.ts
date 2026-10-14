@@ -1,0 +1,76 @@
+/* ============ main.ts — entrada: carga los módulos en orden ============
+ * El orden importa: cada módulo se apunta en G al cargarse y algunos usan a
+ * los anteriores nada más cargar.
+ */
+import { G } from './g';
+import './core/util';
+import './core/i18n';
+import './data/lang-en';
+import './core/settings';
+import './data/music';
+import './data/pokedex';
+import './data/sprites-meta';
+import './core/firebase-config';
+import './core/db';
+import './core/audio';
+import './core/input';
+import './core/touch';
+import './core/sprites';
+import './core/camera';
+import './data/moves';
+import './data/types';
+import './data/starters';
+import './data/enemies';
+import './data/upgrades';
+import './data/items';
+import './data/missions';
+import './data/achievements';
+import './data/funding';
+import './data/changelog';
+import './world/tiles';
+import './world/world';
+import './entities/vfx';
+import './entities/fx';
+import './entities/projectile';
+import './entities/enemy';
+import './entities/pickup';
+import './entities/player';
+import './systems/combat';
+import './systems/spawner';
+import './systems/levelup';
+import './systems/gacha';
+import './systems/interact';
+import './systems/rift';
+import './systems/judgment';
+import './systems/events';
+import './systems/weather';
+import './systems/pathing';
+import './systems/progress';
+import './systems/hazards';
+import './net/social';
+import './net/signups';
+import './net/net';
+import './net/coop';
+import './net/ranking';
+import './ui/icons';
+import './ui/ui';
+import './ui/hud';
+import './ui/login';
+import './ui/test';
+import './ui/menu';
+import './ui/slots';
+import './ui/gacha-ui';
+import './ui/run-ui';
+import './ui/social-ui';
+import './ui/ranking-ui';
+import './ui/mod-ui';
+import './ui/goals-ui';
+import './ui/settings-ui';
+import './ui/support-ui';
+import './ui/news-ui';
+import './core/updater';
+import './game';
+import './boot';
+
+// En desarrollo (y en las pruebas) G se ve desde la consola; publicado, no.
+if (import.meta.env.DEV) (window as any).G = G;
