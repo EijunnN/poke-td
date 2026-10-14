@@ -201,7 +201,7 @@ G.I18n.add({
 
   // ---------------- inicio de sesión y test ----------------
   'Mundo Misterioso': 'Mystery Dungeon', 'Entrar': 'Log in', 'Crear cuenta': 'Sign up', 'Nombre': 'Name', 'Contraseña': 'Password',
-  'Entrar con Google': 'Sign in with Google', 'Jugar como invitado': 'Play as guest', '3-16 letras, números o _': '3-16 letters, numbers or _',
+ 'Jugar como invitado': 'Play as guest', '3-16 letras, números o _': '3-16 letters, numbers or _',
   'Sobrevive a las hordas con tu compañero Pokémon · gratis, en PC y móvil': 'Survive the hordes with your partner Pokémon · free, on PC and mobile',
   'Juego de supervivencia con Pokémon, gratis en el navegador y en el móvil.': 'A Pokémon survival game, free in your browser and on mobile.',
   'Cargando…': 'Loading…', 'Guía': 'Guide', 'Aviso legal y privacidad': 'Legal notice & privacy',
@@ -215,9 +215,7 @@ G.I18n.add({
   'La contraseña debe tener al menos {x} caracteres.': 'The password must be at least {x} characters long.',
   'El nombre debe tener 3-16 letras, números o _.': 'The name must be 3-16 letters, numbers or _.',
   'Demasiados intentos seguidos. Espera un poco.': 'Too many attempts in a row. Please wait a moment.', 'Sin conexión a internet.': 'No internet connection.',
-  'El navegador bloqueó la ventana de Google. Permite las ventanas emergentes.': 'The browser blocked the Google window. Please allow pop-ups.',
   'Este dominio no está autorizado en Firebase (Authentication > Configuración > Dominios autorizados).': 'This domain is not authorized in Firebase (Authentication > Settings > Authorized domains).',
-  'Entrar con Google necesita la versión publicada del juego.': 'Google sign-in needs the online version of the game.',
   'Ese método de inicio de sesión no está activado en Firebase.': 'That sign-in method is not enabled in Firebase.',
   'La base de datos rechazó el acceso (revisa las reglas de Firestore).': 'The database denied access (check the Firestore rules).',
   'Sin conexión con la base de datos.': 'No connection to the database.', 'El navegador no deja guardar datos (¿modo incógnito?).': 'The browser won\'t let us save data (incognito mode?).',
@@ -346,7 +344,6 @@ G.I18n.add({
 
   // ---------------- amigos, sala e invitaciones ----------------
   'Elige tu apodo': 'Choose your nickname', 'Guardar apodo': 'Save nickname',
-  'Es el nombre que verán tus amigos y el que sale en el ranking. Tu nombre y tu correo de Google no se enseñan a nadie.': 'It\'s the name your friends will see and the one on the leaderboard. Your real name and Google email are never shown to anyone.',
   'Tu apodo:': 'Your nickname:', '· dáselo a tus amigos para que te añadan.': '· give it to your friends so they can add you.', 'Tu apodo es {x}': 'Your nickname is {x}',
   'Apodo de tu amigo': 'Your friend\'s nickname', 'Añadir amigo': 'Add friend', 'Aún no tienes amigos añadidos. Escribe arriba el apodo de un amigo.': 'You haven\'t added any friends yet. Type a friend\'s nickname above.',
   'Quiere ser tu amigo': 'Wants to be your friend', 'Solicitud enviada': 'Request sent', 'Desconectado': 'Offline', 'Jugando': 'Playing', 'En línea': 'Online',
@@ -404,7 +401,10 @@ G.I18n.add({
   'ataque anterior / siguiente': 'previous / next move', 'elegir carta al subir de nivel': 'choose a card when leveling up',
   'Pon el dedo en cualquier parte y arrastra para moverte: el joystick aparece donde tocas. Toca un ataque de abajo para cambiarlo y el botón de arriba a la derecha para pausar. Se juega en horizontal.': 'Put your finger anywhere and drag to move: the joystick appears where you touch. Tap a move at the bottom to switch to it and the top-right button to pause. Play in landscape.',
   'Apodo': 'Nickname', 'Es único y no se puede cambiar.': 'It\'s unique and can\'t be changed.', 'Tipo de cuenta': 'Account type', 'Partida': 'Save',
-  'Cuenta de este navegador': 'This browser\'s account', 'Nombre y contraseña': 'Name and password', 'Google': 'Google',
+  'Cambiar contraseña': 'Change password', 'Contraseña actual': 'Current password', 'Contraseña nueva': 'New password',
+  'Repite la nueva': 'Repeat the new one', 'Contraseña cambiada': 'Password changed', 'Contraseña cambiada.': 'Password changed.',
+  'Las dos contraseñas nuevas no coinciden.': 'The two new passwords do not match.',
+  'Cuenta de este navegador': 'This browser\'s account', 'Nombre y contraseña': 'Name and password',
   'Cerrar sesión': 'Log out', 'Borrar cuenta': 'Delete account', 'Crear cuenta o entrar': 'Sign up or log in',
   'Estás jugando como': 'You\'re playing as', 'Estás jugando como {x}: tu progreso no se guarda al salir.': 'You\'re playing as a {x}: your progress isn\'t saved when you leave.',
   ': tu progreso no se guarda al salir.': ': your progress isn\'t saved when you leave.', 'invitado': 'guest',
@@ -435,7 +435,6 @@ G.I18n.add({
   'Contacto y retirada de contenido': 'Contact and content removal',
   'Si eres titular de derechos y quieres que retiremos algo, escríbenos y lo quitaremos lo antes posible:': 'If you are a rights holder and want something removed, write to us and we\'ll take it down as soon as possible:',
   'Código fuente:': 'Source code:', 'Privacidad': 'Privacy',
-  'Si creas una cuenta, guardamos tu nombre de jugador y tu partida (colección, monedas, mejoras y estadísticas) en Google Firebase para que puedas seguir en cualquier ordenador. Si entras con Google, Firebase guarda también tu correo de Google para identificarte (nunca se enseña a otros jugadores). No usamos tus datos para nada más, ni los compartimos, ni hay publicidad ni seguimiento. Como invitado no se guarda nada fuera de tu navegador.': 'If you create an account, we store your player name and your game (collection, coins, upgrades and stats) in Google Firebase so you can continue on any computer. If you sign in with Google, Firebase also stores your Google email to identify you (it is never shown to other players). We don\'t use your data for anything else, we don\'t share it, and there are no ads or tracking. As a guest, nothing is stored outside your browser.',
   'Amigos y ranking: tu': 'Friends and leaderboard: your',
   'es público para otros jugadores. Guardamos tu lista de amigos, si estás en línea y tus mejores tiempos (con tu apodo y tu Pokémon).': 'is public to other players. We store your friends list, whether you\'re online and your best times (with your nickname and your Pokémon).',
   'Partidas en grupo: tu navegador se conecta': 'Group games: your browser connects',
@@ -514,7 +513,7 @@ G.I18n.add({
   '¡{x} se ha escapado!': '{x} got away!', 'HORA DORADA · {x} s': 'GOLDEN HOUR · {x} s', 'HORDA {x} · {x} s': '{x} HORDE · {x} s',
   'Marca · {x} m': 'Marker · {x} m',
   '¿Te está gustando PokéSurvivor? Lo hago yo solo y los servidores cuestan dinero. Si quieres, puedes ayudarme a mantenerlo en línea.': "Enjoying PokéSurvivor? I make it on my own and the servers cost money. If you'd like, you can help keep it online.",
-  'Apoyar en Ko-fi': 'Support on Ko-fi', 'Entrar con Google (si ya tienes cuenta)': 'Sign in with Google (if you already have an account)',
+  'Apoyar en Ko-fi': 'Support on Ko-fi',
   'Este mes se han llenado las plazas de cuentas nuevas: vuelven el 1 de {x}. Si ya tienes cuenta, entra normal. Si no, juega como invitado.': "New accounts are full for this month: they reopen on {x} 1. If you already have an account, sign in as usual. If not, play as a guest.",
   'Este mes ya no quedan plazas para cuentas nuevas (vuelven el 1 de {x}). Mientras, puedes jugar como invitado.': 'There are no new account slots left this month (they reopen on {x} 1). Meanwhile, you can play as a guest.',
   'El juego ha fallado: tu partida se ha guardado hasta aquí': 'The game crashed: your run has been saved up to this point',
@@ -553,16 +552,29 @@ G.I18n.add({
   'Desafío divino': 'Divine challenge', 'Derrota a 3 legendarios ante Arceus en una partida.': 'Defeat 3 legendaries against Arceus in a single run.',
   'Juzgado': 'Judged', 'Elegido de Arceus': 'Chosen of Arceus',
 
-  // ---------------- recuperar la cuenta (vincular Gmail) ----------------
   '¿Olvidaste tu contraseña?': 'Forgot your password?',
   '¿Te da miedo perder tu cuenta?': 'Afraid of losing your account?',
-  'Vincular mi Gmail': 'Link my Gmail', 'Ahora no': 'Not now', 'No volver a preguntar': "Don't ask again",
-  '¡Gmail vinculado! Si olvidas la contraseña, entra con Google.': 'Gmail linked! If you forget your password, sign in with Google.',
-  'Ese Gmail ya tiene su propia cuenta del juego. Usa otro Gmail.': 'That Gmail already has its own game account. Use another Gmail.',
+ 'Ahora no': 'Not now', 'No volver a preguntar': "Don't ask again",
   'Inicia sesión primero.': 'Sign in first.',
 
   // ---------------- reportar marcas del ranking ----------------
   'Reportar marca sospechosa': 'Report suspicious record', 'Ya la has reportado': 'You already reported it',
   'Ya has reportado esta marca': 'You already reported this record',
-  '¿Reportar la marca de {x} como trampa?': "Report {x}'s record as cheating?", 'Gracias: la revisaremos': 'Thanks: we will review it'
+  '¿Reportar la marca de {x} como trampa?': "Report {x}'s record as cheating?", 'Gracias: la revisaremos': 'Thanks: we will review it',
+
+  // ---------------- servidor propio: cuentas, privacidad y contacto ----------------
+  'Si creas una cuenta, guardamos en nuestro servidor tu nombre de jugador, tu contraseña (cifrada: nadie puede leerla, ni nosotros) y tu partida (colección, monedas, mejoras y estadísticas), para que puedas seguir en cualquier dispositivo. No pedimos correo ni ningún otro dato personal. No usamos tus datos para nada más, ni los compartimos, ni hay publicidad ni seguimiento. Como invitado no se guarda nada fuera de tu navegador.': 'If you create an account, we store on our server your player name, your password (encrypted: nobody can read it, not even us) and your game (collection, coins, upgrades and stats), so you can continue on any device. We do not ask for an email or any other personal data. We do not use your data for anything else or share it, and there are no ads or tracking. As a guest nothing is stored outside your browser.',
+  'Partidas en grupo: van a través de nuestro servidor, así que tus compañeros no ven tu dirección IP ni tú la suya.': 'Group games: they go through our server, so your teammates cannot see your IP address and you cannot see theirs.',
+  'Si eres titular de derechos y quieres que retiremos algo, o necesitas ayuda con tu cuenta, escríbenos y lo atenderemos lo antes posible:': 'If you are a rights holder and want something removed, or you need help with your account, write to us and we will deal with it as soon as possible:',
+  'Pide al administrador del juego una contraseña temporal (por el contacto del Aviso legal, con tu nombre de jugador). Al entrar, cámbiala en Ajustes → Cuenta.': 'Ask the game administrator for a temporary password (through the contact in the Legal notice, with your player name). Once you are in, change it in Settings → Account.',
+  'Es el nombre que verán tus amigos y el que sale en el ranking.': 'It is the name your friends will see and the one shown on the leaderboard.',
+  'Sin conexión con el servidor: la partida sólo se guarda en este navegador.': 'No connection to the server: your game is only saved in this browser.',
+  'No se pudo conectar con el servidor: la partida sólo se guarda en este navegador.': 'Couldn\'t connect to the server: your game is only saved in this browser.',
+  'Sin conexión con el servidor.': 'No connection to the server.',
+  'La contraseña actual no es correcta.': 'The current password is not correct.',
+  'La contraseña nueva debe tener al menos 6 caracteres.': 'The new password must be at least 6 characters long.',
+  'La contraseña nueva debe tener al menos 4 caracteres.': 'The new password must be at least 4 characters long.',
+  'La contraseña nueva es demasiado larga.': 'The new password is too long.',
+  'Sesión caducada: vuelve a entrar.': 'Session expired: please log in again.',
+  'Contraseña incorrecta.': 'Wrong password.'
 });

@@ -49,6 +49,9 @@ export function openDb(path: string) {
     session: db.query<{ user_id: number; seen: number }, [string]>('SELECT user_id, seen FROM sessions WHERE token_hash = ?'),
     touchSession: db.query<unknown, [number, string]>('UPDATE sessions SET seen = ? WHERE token_hash = ?'),
     delSession: db.query<unknown, [string]>('DELETE FROM sessions WHERE token_hash = ?'),
+    delOtherSessions: db.query<unknown, [number, string]>('DELETE FROM sessions WHERE user_id = ? AND token_hash <> ?'),
+    delAllSessions: db.query<unknown, [number]>('DELETE FROM sessions WHERE user_id = ?'),
+    setPass: db.query<unknown, [string, number]>('UPDATE users SET pass = ? WHERE id = ?'),
     oldSessions: db.query<unknown, [number]>('DELETE FROM sessions WHERE seen < ?'),
     save: db.query<SaveRow, [number]>('SELECT data, ver, updated FROM saves WHERE user_id = ?'),
     // Sólo escribe si nadie ha guardado entre medias (la versión sigue siendo la que el cliente vio).
@@ -69,6 +72,9 @@ export function openDb(path: string) {
     session: (hash: string) => q.session.get(hash),
     touchSession: (hash: string) => { q.touchSession.run(Date.now(), hash); },
     deleteSession: (hash: string) => { q.delSession.run(hash); },
+    /** Cierra todas las sesiones de la cuenta salvo `keep` (o todas, sin `keep`). */
+    deleteOtherSessions: (userId: number, keep?: string) => { if (keep) q.delOtherSessions.run(userId, keep); else q.delAllSessions.run(userId); },
+    setPassword: (userId: number, hash: string) => { q.setPass.run(hash, userId); },
     pruneSessions: (olderThan: number) => { q.oldSessions.run(olderThan); },
     save: (userId: number) => q.save.get(userId),
     /** @returns la versión nueva, o null si la de la base ya no es `base` (otro dispositivo guardó antes) */

@@ -1,6 +1,6 @@
 import { G } from '../g';
 import type { PokeType } from './types';
-/* ============ pokedex.js — GENERADO, no editar a mano ============
+/* ============ pokedex.ts — GENERADO, no editar a mano ============
  * Lo produce tools/fetch_pokedex.py. Los datos se bajaron una vez de
  * PokeAPI y viven aqui: el juego no hace ninguna peticion a internet.
  *

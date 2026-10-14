@@ -121,7 +121,7 @@ export const Judgment = (() => {
   function port() {
     ported = true;
     const pl = G.Game.player, ts = TS();
-    G.Rift.reset();
+    G.Rift.reset(true);
     if (authority()) G.EnemyMgr.stash(); else G.EnemyMgr.clearRemote();
     G.Projectiles.clear();
     G.Combat.clearFields();
@@ -693,6 +693,21 @@ export const Judgment = (() => {
 
   return {
     AT, reset, noteDmg, update, cineTick, skip, bossDown, drawable, drawAir, drawOverlay, onEvent, netState, netApply,
+    /** Cooperativo: cómo va la Sentencia (para reenviársela a quien vuelve tras un corte). */
+    snapshot() {
+      return phase ? { cfg, phase, ct: Math.round(ct * 10) / 10, arenaT: Math.round(arenaT * 10) / 10, downs } : null;
+    },
+    /** Cooperativo: se une a la Sentencia que ya está en marcha en el anfitrión (si no la tenía). */
+    restore(s) {
+      const c = s && s.cfg;
+      if (phase || !c || !Number.isFinite(c.tx) || !Number.isFinite(c.ty) || !Array.isArray(c.q) || c.q.length > 60
+          || !c.q.every(d => G.DEX_BY[d])) return;
+      begin(c);
+      if (s.phase === 'fight') { doSkip(); ct = T_END; cineTick(0); arenaT = Math.max(0, +s.arenaT || 0); downs = s.downs | 0; return; }
+      ct = Math.max(0, Math.min(T_END - 0.1, +s.ct || 0));
+      if (ct >= T_PORT) port();
+      if (ct >= T_LAND) land(true);
+    },
     get active() { return !!phase; },
     get cinematic() { return phase === 'cine'; },
     /** Lo que suena: nada en la animación hasta que aterriza. */

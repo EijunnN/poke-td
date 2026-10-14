@@ -472,7 +472,6 @@ input[type=range]::-moz-range-thumb { width: 14px; height: 14px; border-radius: 
 #btn-sound { padding: 5px 9px; display: flex; }
 
 /* ============ nube, aviso legal ============ */
-.btn.google { background: linear-gradient(180deg, #ffffff, #dfe6f2); color: #1f2a44; text-shadow: none; }
 .sync { display: inline-block; width: 9px; height: 9px; margin-left: 8px; border-radius: 2px;
   box-shadow: 0 0 0 2px #0b1838; vertical-align: 1px; }
 .sync.ok { background: #5fe08a; }

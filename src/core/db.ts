@@ -64,11 +64,11 @@ export interface SaveData {
 }
 
 /** Resultado de registro, entrada y demás operaciones de cuenta. */
-export interface AuthResult { ok: boolean; error?: string; isNew?: boolean; imported?: boolean }
+export interface AuthResult { ok: boolean; error?: string; isNew?: boolean }
 
 export const DB = (() => {
   const K_ACC = 'ps.accounts', K_SES = 'ps.session', K_SAVE = 'ps.save.';
-  const K_CLOUD = 'ps.cloud.', K_MIGRATED = 'ps.migrated.';
+  const K_CLOUD = 'ps.cloud.';
   const VERSION = 3;
   const START_COINS = 500;
 
@@ -335,22 +335,13 @@ export const DB = (() => {
     return true;
   }
 
-  /** Partida de una cuenta local antigua, si el nombre y la contraseña coinciden. */
-  async function legacySave(name: string, pass: string) {
-    const k = (name || '').toLowerCase();
-    const acc = (read(K_ACC) || {})[k];
-    if (!acc || read(K_MIGRATED + k)) return null;
-    if (acc.hash !== await hash(pass || '', acc.salt)) return null;
-    const s = read(K_SAVE + k);
-    return s ? { key: k, save: migrate(s, acc.name) } : null;
-  }
-
   // =====================================================================
   //                 MODO NUBE: servidor propio (server/, Bun + SQLite)
   // =====================================================================
 
-  const K_TOKEN = 'ps.token';             // { token, name } de la sesión abierta
+  const K_TOKEN = 'ps.token';             // { token, uid, name } de la sesión abierta
   let token: string | null = null;        // sesión con el servidor
+  let sid: string | null = null;          // id de la cuenta en el servidor (texto)
   let uid: string | null = null;          // nombre en minúsculas: clave de la copia local (K_CLOUD + uid)
   let ver = 0;                            // versión de la partida en el servidor que conoce esta copia
   let pushT = 0, retryT = 0, pending = false, pushing = null, lastPush = 0;
@@ -398,12 +389,11 @@ export const DB = (() => {
 
   /**
    * Abre la partida de una sesión recién iniciada: la del servidor FUSIONADA con
-   * la copia de este navegador (y con la de una cuenta local antigua del mismo
-   * nombre, si se está importando).
+   * la copia de este navegador.
    */
-  async function openCloud(tok: string, name: string, opts: { legacy?: { key: string; save: SaveData } } = {}) {
-    token = tok; uid = name.toLowerCase();
-    write(K_TOKEN, { token: tok, name });
+  async function openCloud(tok: string, id: string, name: string) {
+    token = tok; sid = id; uid = name.toLowerCase();
+    write(K_TOKEN, { token: tok, uid: id, name });
     const cached = read(K_CLOUD + uid);
     let remote = null, online = true;
     try {
@@ -417,16 +407,12 @@ export const DB = (() => {
     }
     let s = merge(cached && migrate(cached), remote && migrate(remote));
     if (!s) s = newSave(name);
-    if (opts.legacy) {
-      s = merge(s, opts.legacy.save);
-      write(K_MIGRATED + opts.legacy.key, uid);
-    }
     save = migrate(s, s.name);
     key = uid; user = save.name; guest = false;
     write(K_CLOUD + uid, save);
     // Sólo se sube si esta copia tiene algo que el servidor no (cuenta nueva,
     // progreso de este navegador sin subir...), y sin esperar a que acabe.
-    const same = remote && !opts.legacy && (!cached || (cached.updated || 0) <= (remote.updated || 0));
+    const same = remote && (!cached || (cached.updated || 0) <= (remote.updated || 0));
     lastPush = Date.now();
     if (!online) { pending = true; setSync('offline'); scheduleRetry(); }
     else if (same) setSync('ok');
@@ -517,12 +503,12 @@ export const DB = (() => {
       catch (e) { console.warn('[DB] sin servidor:', e.message); localReason = 'error'; mode = 'local'; }
       if (mode === 'local') { setSync('local'); return restoreLocal(); }
       const ses = read(K_TOKEN);
-      if (!ses || !ses.token) return false;
-      try { await openCloud(ses.token, ses.name); return true; }
+      if (!ses || !ses.token || !ses.uid) return false;
+      try { await openCloud(ses.token, ses.uid, ses.name); return true; }
       catch (e) {
         console.warn('[DB] no se pudo abrir la partida:', e.code || e.message);
         if (e.code === 'auth') remove(K_TOKEN);
-        token = null; uid = null;
+        token = null; uid = null; sid = null;
         return false;
       }
     })();
@@ -536,11 +522,10 @@ export const DB = (() => {
     if ((pass || '').length < min) return { ok: false, error: `La contraseña debe tener al menos ${min} caracteres.` };
     if (mode === 'local') return registerLocal(name, pass);
     try {
-      const legacy = await legacySave(name, pass);
       const r = await api('POST', '/register', { name, pass });
       if (!r.j.ok) return { ok: false, error: r.j.error };
-      await openCloud(r.j.token, r.j.name, { legacy });
-      return { ok: true, isNew: !save.partner, imported: !!legacy };
+      await openCloud(r.j.token, r.j.uid, r.j.name);
+      return { ok: true, isNew: !save.partner };
     } catch (e) { return { ok: false, error: netError(e) }; }
   }
 
@@ -548,16 +533,30 @@ export const DB = (() => {
     name = (name || '').trim();
     if (mode === 'local') return loginLocal(name, pass);
     try {
-      const legacy = await legacySave(name, pass);
       const r = await api('POST', '/login', { name, pass: pass || '' });
       if (!r.j.ok) return { ok: false, error: r.j.error };
-      await openCloud(r.j.token, r.j.name, { legacy });
-      return { ok: true, isNew: !save.partner, imported: !!legacy };
+      await openCloud(r.j.token, r.j.uid, r.j.name);
+      return { ok: true, isNew: !save.partner };
     } catch (e) { return { ok: false, error: netError(e) }; }
   }
 
-  async function loginWithGoogle(): Promise<AuthResult> {
-    return { ok: false, error: 'Entrar con Google todavía no está disponible.' };
+  /** Cambia la contraseña de la cuenta (pide la actual). En el servidor, cierra las demás sesiones. */
+  async function changePassword(old: string, pass: string): Promise<AuthResult> {
+    if (guest || !key) return { ok: false, error: 'No hay cuenta.' };
+    const min = mode === 'cloud' ? 6 : 4;
+    if ((pass || '').length < min) return { ok: false, error: `La contraseña nueva debe tener al menos ${min} caracteres.` };
+    if (mode === 'local') {
+      const accs = read(K_ACC) || {};
+      const acc = accs[key];
+      if (!acc || acc.hash !== await hash(old || '', acc.salt)) return { ok: false, error: 'La contraseña actual no es correcta.' };
+      acc.salt = randomSalt();
+      acc.hash = await hash(pass, acc.salt);
+      return write(K_ACC, accs) ? { ok: true } : { ok: false, error: 'El navegador no deja guardar datos (¿modo incógnito?).' };
+    }
+    try {
+      const r = await api('POST', '/password', { old: old || '', pass });
+      return r.j.ok ? { ok: true } : { ok: false, error: r.j.error };
+    } catch (e) { return { ok: false, error: netError(e) }; }
   }
 
   /** Cambia el nombre que se ve en la partida (al elegir apodo). */
@@ -606,16 +605,12 @@ export const DB = (() => {
       remove(K_SES);
     }
     clearTimeout(pushT); clearTimeout(retryT);
-    user = key = save = uid = token = null; guest = false; pending = false; ver = 0;
+    user = key = save = uid = token = sid = null; guest = false; pending = false; ver = 0;
     setSync(mode === 'cloud' ? 'ok' : 'local');
   }
 
-  /** En el servidor todas las cuentas son de nombre y contraseña (sin Google, de momento). */
+  /** Las cuentas del servidor son siempre de nombre y contraseña. */
   function nameAccount() { return mode === 'cloud' && !!token; }
-  function hasGoogle() { return false; }
-  async function linkGoogle(): Promise<AuthResult> {
-    return { ok: false, error: 'Vincular Google todavía no está disponible.' };
-  }
 
   /**
    * Borra la cuenta y la partida (en el servidor o en este navegador).
@@ -638,7 +633,7 @@ export const DB = (() => {
       clearTimeout(pushT); clearTimeout(retryT); pending = false;
       for (const fn of leaveHooks) { try { await fn('delete'); } catch (e) { /* nada */ } }
       remove(K_CLOUD + uid); remove(K_TOKEN);
-      user = key = save = uid = token = null; ver = 0;
+      user = key = save = uid = token = sid = null; ver = 0;
       return { ok: true };
     } catch (e) { return { ok: false, error: netError(e) }; }
   }
@@ -669,21 +664,20 @@ export const DB = (() => {
   }
 
   return {
-    ready, register, login, loginWithGoogle, playAsGuest, logout, commit, deleteAccount, flush: pushNow,
+    ready, register, login, changePassword, playAsGuest, logout, commit, deleteAccount, flush: pushNow,
     owns, grant, ownsShiny, grantShiny, merge, setName, upgradesOf,
     onSync(fn: (s: string) => void) { listeners.add(fn); },
     onLeave(fn: (why: 'logout' | 'delete') => any) { leaveHooks.push(fn); },
     /** (Firebase, ya retirado) Los módulos de red lo miran: sin él no arrancan. */
     get fb(): any { return null; },
-    /**
-     * ¿Está disponible lo online (amigos, ranking, multijugador)? Todavía no:
-     * esos módulos (src/net/) siguen escritos para Firebase hasta que el
-     * servidor propio tenga su parte.
-     */
-    get online() { return false; },
-    /** ¿La cuenta es de usuario y contraseña (no de Google)? */
+    /** ¿Está disponible lo online (amigos, ranking, multijugador)? Sí, con una sesión en el servidor. */
+    get online() { return !!this.session; },
+    /** Sesión con el servidor propio, para los módulos de red (src/net/). null sin cuenta en el servidor. */
+    get session() { return mode === 'cloud' && token && sid && !guest && save ? { token, uid: sid, name: user } : null; },
+    /** Llamada a la API del servidor con la sesión (ver server/api.ts). */
+    api,
+    /** ¿Cuenta del servidor (de nombre y contraseña)? */
     get nameAccount() { return nameAccount(); },
-    get hasGoogle() { return hasGoogle(); }, linkGoogle,
     get mode() { return mode; },
     get localReason() { return localReason; },
     get syncState() { return syncState; },

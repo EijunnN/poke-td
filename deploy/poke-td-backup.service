@@ -1,0 +1,10 @@
+# Copia de la base de datos (la lanza poke-td-backup.timer). Ver docs/DEPLOY.md.
+[Unit]
+Description=Copia de seguridad de la base de datos de poke-td
+
+[Service]
+Type=oneshot
+User=poketd
+WorkingDirectory=/opt/poke-td
+EnvironmentFile=/etc/poke-td.env
+ExecStart=/usr/local/bin/bun server/admin.ts backup /var/backups/poke-td

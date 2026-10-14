@@ -1,8 +1,7 @@
 import { G } from '../g';
 /* ============ mod-ui.js — moderación del ranking (pantalla oculta) ============
- * Sólo la ve la cuenta de moderación (G.Ranking.isAdmin, y firestore.rules
- * admin(): aunque alguien abriera esta pantalla, el servidor no le dejaría
- * hacer nada). Se abre con el botón "Moderación" del ranking.
+ * Sólo la ve la cuenta de moderación (G.Ranking.isAdmin, y server/ranking.ts:
+ * aunque alguien abriera esta pantalla, el servidor no le dejaría hacer nada). Se abre con el botón "Moderación" del ranking.
  *
  *   Reportes          marcas reportadas por los jugadores, las más reportadas
  *                     primero: borrar la marca, banear (marca la cuenta: no

@@ -19,13 +19,26 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { d: '2026-10-14', title: ['Servidores nuevos', 'New servers'], new: [
+    ['Puedes cambiar tu contraseña en Ajustes → Cuenta. Si la olvidas, el administrador te pone una temporal.',
+     'You can change your password in Settings → Account. If you forget it, the administrator gives you a temporary one.'],
+    ['Las partidas en grupo siguen si alguien pierde la conexión un momento (o si se reinicia el servidor): al volver recupera los enemigos, el clima, la grieta y lo que ganasteis mientras no estaba.',
+     'Group games carry on if someone loses connection for a moment (or the server restarts): when they come back they get the enemies, the weather, the rift and anything you won while they were away.']
+  ], chg: [
+    ['El juego tiene sus propios servidores: cuentas, partida guardada, ranking, amigos y partidas en grupo.',
+     'The game has its own servers: accounts, saved game, leaderboard, friends and group games.'],
+    ['Las cuentas son sólo de nombre y contraseña; ya no se entra con Google. No se pide correo.',
+     'Accounts are name and password only; Google sign-in is gone. No email is required.'],
+    ['Las partidas en grupo van por el servidor: funcionan en cualquier red y nadie ve la IP de nadie.',
+     "Group games go through the server: they work on any network and nobody can see anyone else's IP."],
+    ['El ranking comprueba en el servidor que cada marca sea posible.',
+     'The leaderboard checks on the server that every record is possible.'],
+    ['Victini, Meowscarada y Barraskewda tienen los sprites nuevos de SpriteCollab, y Barraskewda ya tiene versión shiny.',
+     'Victini, Meowscarada and Barraskewda have the new SpriteCollab sprites, and Barraskewda now has a shiny version.']
+  ] },
   { d: '2026-10-14', title: ['Modo Defensa (prototipo)', 'Defense mode (prototype)'], new: [
     ['Modo Defensa, en pruebas: los enemigos siguen un camino hasta tu base. Llevas a tu compañero y, entre oleadas, eliges 1 de 3 cartas para plantar a otros Pokémon como torres, mejorarlos o mejorar al tuyo. Todavía no da recompensas.',
      'Defense mode, in testing: enemies follow a path to your base. You control your partner and, between waves, pick 1 of 3 cards to plant other Pokémon as towers, upgrade them or upgrade your own. It gives no rewards yet.']
-  ] },
-  { d: '2026-10-14', title: ['Recupera tu cuenta con Gmail', 'Recover your account with Gmail'], new: [
-    ['Si juegas con nombre y contraseña, puedes vincular tu Gmail: si un día olvidas la contraseña, entras con Google y es tu misma cuenta. Te lo ofrecemos al entrar.',
-     'If you play with a name and password, you can link your Gmail: if you ever forget your password, sign in with Google and it is the same account. We offer it when you sign in.']
   ] },
   { d: '2026-10-13', title: ['La Sentencia de Arceus', 'The Judgment of Arceus'], new: [
     ['La Sentencia de Arceus: al llegar al minuto 30, Arceus baja del cielo y te lleva a las Ruinas del Juicio. Es invencible, te persigue cada vez más deprisa y lanza pilares de luz, rayos y ondas; si te toca, te quita casi media vida. Cada 5 segundos acude un legendario con el doble de vida y de daño que el anterior. ¿Cuánto aguantarás?',

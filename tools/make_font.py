@@ -8,19 +8,21 @@ redondeados. Este script saca dos versiones fijas de la fuente variable
 estrechado por la cintura... Las esquinas siguen recortadas como en el resto
 de letras para que no desentonen.
 
-    python tools/make_font.py   ->  assets/fonts/PixelifyPS-400.ttf y -700.ttf
+    python tools/make_font.py   ->  public/assets/fonts/PixelifyPS-400.ttf y -700.ttf
+    python tools/make_font.py --out /tmp/prueba   (en otra carpeta, sin tocar el repo)
 
 Necesita fontTools (pip install fonttools). La fuente cambia de nombre
 ("Pixelify PS"), como pide la licencia OFL para versiones modificadas.
 """
+import argparse
 import os
 from fontTools.ttLib import TTFont
 from fontTools.varLib import instancer
 from fontTools.pens.ttGlyphPen import TTGlyphPen
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
-SRC = os.path.join(ROOT, 'assets', 'fonts', 'PixelifySans.ttf')
-OUT = os.path.join(ROOT, 'assets', 'fonts', 'PixelifyPS-{}.ttf')
+SRC = os.path.join(ROOT, 'public', 'assets', 'fonts', 'PixelifySans.ttf')
+OUT = os.path.join(ROOT, 'public', 'assets', 'fonts', 'PixelifyPS-{}.ttf')
 FAMILY = 'Pixelify PS'
 
 # 5 columnas x 7 filas, de arriba abajo. '#' = píxel.
@@ -37,7 +39,8 @@ DIGITS = {
 }
 
 
-def build(weight):
+def build(weight, out=OUT):
+    """Genera una .ttf (out lleva `{}` para el peso) y devuelve su ruta."""
     font = instancer.instantiateVariableFont(TTFont(SRC), {'wght': weight})
     glyf, hmtx = font['glyf'], font['hmtx']
     # Caja de los números de la fuente original (la del 0) y grosor de su trazo.
@@ -84,10 +87,21 @@ def build(weight):
             rec.string = FAMILY.replace(' ', '') + '-' + style
         elif rec.nameID == 17:
             rec.string = style
-    font.save(OUT.format(weight))
-    print('ok:', os.path.basename(OUT.format(weight)), 'pixel', round(cw), 'x', round(ch), 'extra', round(bleed))
+    path = out.format(weight)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    font.save(path)
+    print('ok:', os.path.basename(path), 'pixel', round(cw), 'x', round(ch), 'extra', round(bleed))
+    return path
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description='Genera PixelifyPS-400.ttf y -700.ttf.')
+    ap.add_argument('--out', help='carpeta donde escribirlas, en vez de public/assets/fonts/')
+    args = ap.parse_args(argv)
+    out = os.path.join(args.out, 'PixelifyPS-{}.ttf') if args.out else OUT
+    for w in (400, 700):
+        build(w, out)
 
 
 if __name__ == '__main__':
-    for w in (400, 700):
-        build(w)
+    main()

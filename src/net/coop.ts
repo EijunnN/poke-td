@@ -1,4 +1,3 @@
-// @ts-nocheck — capa de Firebase heredada: se sustituye por el servidor propio (server/), no se tipa.
 import { G } from '../g';
 /* ============ coop.js — partida cooperativa (hasta 4 jugadores) ============
  *
@@ -11,38 +10,69 @@ import { G } from '../g';
  * Los invitados ven COPIAS de los enemigos del anfitrión (enemy.remote) y los
  * ataques de los compañeros como "fantasmas" que no hacen daño (ver combat.js).
  *
- * Mensajes (por net.js, unas 15 veces por segundo; 5 si va por el relé):
+ * Mensajes (por net.ts, unas 15 veces por segundo; 5 si la red va justa):
  *   invitado -> anfitrión  { k:'f', p:[estado], ev:[eventos] }
  *   anfitrión -> invitado  { k:'f', t, lv, xp, xn, ki, bo, co, p:{uid:[estado]},
  *                            e:[[id,x,y,vida,anim,dir,estados]], ev:[eventos],
  *                            ja:[x,y,anim,dir] (Arceus, sólo en la Sentencia) }
  *   anfitrión -> todos     { k:'start', seed, host, members:[{uid,name,dex,shiny}] }
+ *
+ * Cortes de conexión (o reinicio del servidor): los mensajes que se mandan mientras alguien no está
+ * se pierden, pero el servidor le guarda el sitio en la sala (server/realtime.ts). Cuando vuelve
+ * (Net avisa con el modo 'relay'), el anfitrión le reenvía el estado entero (resync): ['rs'] borra
+ * las copias del invitado y siguen los enemigos, objetos y props rotos que hay ahora, más cómo está
+ * la subida de nivel. El invitado guarda sus eventos (golpes, elegir carta...) hasta poder mandarlos.
+ * El estado del mapa (Sentencia de Arceus, grieta/arena y clima) va en ['st', ...] justo después de ['rs'].
  */
+/** Un jugador de la partida (lo que manda el anfitrión al empezar). */
+export interface CoopMember { uid: string; name: string; dex: number; shiny: boolean }
+export interface CoopConfig { k?: string; seed: number; host: string; members: CoopMember[] }
+/** Lo que el modo de juego (modes/survivor.ts) le da a Coop para actuar sobre la partida. */
+export interface CoopApi {
+  team(): any; summary?(): any; syncTeam(t: any): void;
+  levelStart(level: number): void; waiting(names: string[]): void; resume(): void;
+  hold?(names: string[]): void; away?(name: string | null): void;
+  shiny(dex: number): void; item(id: any): void;
+  over(data: any): void; lost(msg: string): void; mateLeft?(m: any): void;
+}
+type Ev = any[];
+
 export const Coop = (() => {
   const ANIMS = ['Idle', 'Walk', 'Attack', 'Shoot', 'Charge', 'Hurt', 'Faint'];
   const COLORS = ['#ffcb3d', '#5fc8ff', '#7ee07a', '#ff8ad8'];
-  // Mensajes por segundo: 15 directo, 4 por el TURN de Cloudflare (se paga por
-  // GB: era 7 y se iban unos 110 GB al día, el 12-10-2026) y 3 por el relé de
-  // la Realtime Database (1 $ el GB: sólo si todo lo demás falla).
-  const RATE_FAST = 1 / 15, RATE_TURN = 1 / 4, RATE_SLOW = 1 / 3;
-  const rateFor = u => (G.Net.slow(u) ? RATE_SLOW : G.Net.viaTurn(u) ? RATE_TURN : RATE_FAST);
+  // Ritmo de los estados, por el servidor (net.ts): 15 por segundo, lo que la
+  // interpolación del invitado (enemigos y compañeros) ya tenía ajustado cuando iba
+  // directo. Por un WebSocket no hay motivo para menos: el servidor no cobra por GB
+  // y un fotograma ronda unos pocos KB (unos 50 KB/s por invitado). Más de 15 no se
+  // nota con la interpolación y gasta más datos móviles. Si la red de ese jugador va
+  // justa (los mensajes se acumulan sin salir; Net.slow), baja a 5 en vez de seguir
+  // apilando: el WebSocket es fiable y ordenado, y la cola sólo añadiría retraso.
+  const RATE_FAST = 1 / 15, RATE_SLOW = 1 / 5;
+  const rateFor = (u: string) => (G.Net.slow(u) ? RATE_SLOW : RATE_FAST);
   const NEAR = 950;                     // radio de enemigos que se mandan a cada uno
+  /** Eventos por fotograma como mucho: un reenvío de estado (cientos) va repartido en varios y no pasa de 64 KB. */
+  const MAX_EV = 150;
+  /** Eventos del invitado que se guardan mientras no hay conexión. */
+  const MAX_OUT = 300;
+  /** Enemigos por fotograma como mucho (~35 B cada uno: el fotograma entero se queda muy por debajo de los 64 KB del servidor). */
+  const MAX_E = 900;
 
-  let active = false, host = false, me = null, hostUid = null;
+  let active = false, host = false, me: string | null = null, hostUid: string | null = null;
   let local = null;                     // tu Player
-  const mates = new Map();              // uid -> { uid, name, color, pl, connected, q:[], flushT, xpMul }
-  let outEv = [];                       // invitado: eventos para el anfitrión
+  const mates = new Map<string, any>();              // uid -> { uid, name, color, pl, connected, q:[], flushT, xpMul }
+  let outEv: Ev[] = [];                       // invitado: eventos para el anfitrión
   let flushT = 0;
   let hitFrom = null;                   // invitado cuyo golpe se está aplicando (no repetirle el número)
-  let api = {};                         // callbacks del juego (game.js)
-  let waiting = new Set();              // subida de nivel: quién falta por elegir
-  let holds = new Set();                // quién está eligiendo una fusión (la partida se para para todos)
+  let api = {} as CoopApi;             // callbacks del juego (modes/survivor.ts)
+  let waiting = new Set<string>();              // subida de nivel: quién falta por elegir
+  let holds = new Set<string>();                // quién está eligiendo una fusión (la partida se para para todos)
   // El anfitrión mueve a los enemigos: si cambia de pestaña (o se le congela),
   // todo se para para todos. Antes los enemigos se quedaban quietos y los demás
   // seguían jugando con una ventaja enorme.
   let hostAway = false, stalled = false, lastHostAt = 0;
   const STALL_MS = 2500;
-  let members = [];
+  let members: CoopMember[] = [];
+  let broken: string[] = [];            // anfitrión: props rotos en esta partida ("tx,ty"), para reenviarlos
 
   // ---------------- escalado de dificultad ----------------
 
@@ -56,7 +86,7 @@ export const Coop = (() => {
    * @param pl    tu Player (ya creado)
    * @param cb    { levelStart(lv), resume(), waiting(names), over(data), lost(msg), team(t), shiny(dex) }
    */
-  function begin(cfg, pl, cb) {
+  function begin(cfg: CoopConfig, pl, cb: CoopApi) {
     active = true;
     me = G.Net.uid; hostUid = cfg.host;
     host = me === hostUid;
@@ -64,7 +94,7 @@ export const Coop = (() => {
     api = cb;
     members = cfg.members;
     mates.clear();
-    outEv = []; flushT = 0; waiting = new Set(); holds = new Set();
+    outEv = []; flushT = 0; waiting = new Set(); holds = new Set(); broken = [];
     hostAway = false; stalled = false; lastHostAt = performance.now();
     cfg.members.forEach((m, i) => {
       const x = (i - (cfg.members.length - 1) / 2) * 34, y = 0;
@@ -75,7 +105,7 @@ export const Coop = (() => {
       p.x = x; p.y = y;
       p.net = { x, y, ang: Math.PI / 2, walk: 0, hp: p.maxHp, maxHp: p.maxHp, dead: 0, mv: G.startMoveOf(mon.dex), ml: 1, mag: 78, aim: Math.PI / 2, rev: 0 };
       G.Sprites.preload([mon.dex], 8000, p.shiny);
-      mates.set(m.uid, { uid: m.uid, name: m.name, color: COLORS[i], pl: p, connected: true, q: [], flushT: 0, xpMul: 1 });
+      mates.set(m.uid, { uid: m.uid, name: m.name, color: COLORS[i], pl: p, connected: true, q: [], owed: [], flushT: 0, xpMul: 1 });
     });
   }
 
@@ -139,13 +169,13 @@ export const Coop = (() => {
   // ---------------- envío ----------------
 
   /** Anfitrión: evento para todos los invitados (menos `except`). */
-  function emit(ev, except) {
+  function emit(ev: Ev, except?: string) {
     if (!host) return;
     for (const m of mates.values()) if (m.connected && m.uid !== except) m.q.push(ev);
   }
 
   /** Anfitrión: evento sólo para los que están cerca (números de daño). */
-  function emitNear(ev, x, y, except) {
+  function emitNear(ev: Ev, x: number, y: number, except?: string) {
     for (const m of mates.values()) {
       if (!m.connected || m.uid === except) continue;
       if (G.U.dist2(m.pl.x, m.pl.y, x, y) > 700 * 700) continue;
@@ -159,6 +189,7 @@ export const Coop = (() => {
     const r2n = NEAR * NEAR;
     for (const e of G.EnemyMgr.all()) {
       if (e.dead || G.U.dist2(e.x, e.y, near.x, near.y) > r2n) continue;
+      if (out.length >= MAX_E) break;
       const a = ANIMS.indexOf(e.anim.cur);
       out.push([e.id, r1(e.x), r1(e.y), Math.ceil(e.hp), a < 0 ? 0 : a, e.anim.dir,
                 (e.burn > 0 ? 1 : 0) | (e.poison > 0 ? 2 : 0) | (e.shield > 0 ? 4 : 0)]);
@@ -172,20 +203,38 @@ export const Coop = (() => {
     for (const o of mates.values()) {
       if (o.connected && o.uid !== m.uid && o.state) p[o.uid] = o.state;
     }
-    const ev = m.q; m.q = [];
-    const f = { k: 'f', t: r2(st.time), lv: st.level, xp: r2(st.xp), xn: st.xpNext, ki: st.kills, bo: st.bosses, co: st.coins, tk: [st.t1, st.t10],
+    const ev = m.q.splice(0, MAX_EV);
+    const f: { k: string; [key: string]: any } = { k: 'f', t: r2(st.time), lv: st.level, xp: r2(st.xp), xn: st.xpNext, ki: st.kills, bo: st.bosses, co: st.coins, tk: [st.t1, st.t10],
                 p, e: enemyList(m.pl), ev };
     const ja = G.Judgment.netState();       // Arceus en la Sentencia
     if (ja) f.ja = ja;
     return f;
   }
 
-  function flushAll() { for (const m of mates.values()) if (m.connected) G.Net.send(m.uid, hostFrame(m)); }
+  /** Sin conexión con el servidor no sale nada: se tira lo pendiente (al volver, resync). */
+  function frameFor(m) {
+    if (G.Net.up) return hostFrame(m);
+    m.q.length = 0;
+    return null;
+  }
+
+  function flushAll() {
+    for (const m of mates.values()) {
+      if (!m.connected) continue;
+      const f = frameFor(m);
+      if (f) G.Net.send(m.uid, f);
+    }
+  }
+
+  /** Invitado: manda sus eventos; si no ha podido, los guarda (con tope) para el siguiente intento. */
+  function sendOut() {
+    if (G.Net.toHost({ k: 'f', p: myState(), ev: outEv })) outEv = [];
+    else if (outEv.length > MAX_OUT) outEv.splice(0, outEv.length - MAX_OUT);
+  }
 
   function flushClient(force) {
     if (!force && !outEv.length && flushT > 0) return;
-    G.Net.toHost({ k: 'f', p: myState(), ev: outEv });
-    outEv = [];
+    sendOut();
   }
 
   /** Cada fotograma (también en la pantalla de subida de nivel). */
@@ -197,15 +246,15 @@ export const Coop = (() => {
         m.flushT -= dt;
         if (m.flushT > 0) continue;
         m.flushT = rateFor(m.uid);
-        G.Net.send(m.uid, hostFrame(m));
+        const f = frameFor(m);
+        if (f) G.Net.send(m.uid, f);
       }
     } else {
       if (!stalled && performance.now() - lastHostAt > STALL_MS) { stalled = true; updateAway(); }
       flushT -= dt;
       if (flushT <= 0) {
         flushT = rateFor(hostUid);
-        G.Net.toHost({ k: 'f', p: myState(), ev: outEv });
-        outEv = [];
+        sendOut();
       }
     }
   }
@@ -214,16 +263,38 @@ export const Coop = (() => {
 
   G.Net.on((from, msg) => {
     if (!msg) return;
-    if (msg.k === 'start') { if (G.Flow.startCoop) G.Flow.startCoop(msg); return; }
+    // Empezar la partida sólo vale si lo manda el anfitrión de la sala (el servidor también lo exige).
+    if (msg.k === 'start') { if (from === G.Net.hostUid && G.Flow.startCoop) G.Flow.startCoop(msg); return; }
     if (!active || msg.k !== 'f') return;
     if (host) onClientFrame(from, msg); else if (from === hostUid) onHostFrame(msg);
   });
 
   G.Net.onPeer((u, mode) => {
-    if (!active || (mode !== 'closed' && mode !== 'failed')) return;
+    if (!active) return;
+    // Un compañero que vuelve tras un corte: se le reenvía todo lo que se ha perdido.
+    if (mode === 'relay') { if (host) resync(u); return; }
+    if (mode !== 'closed') return;
     if (host) mateGone(u);
     else if (u === hostUid) { const cb = api.lost; end(); if (cb) cb('Se ha perdido la conexión con el anfitrión.'); }
   });
+
+  /** Anfitrión: el estado de la partida para `u`, que ha estado sin conexión (sustituye a lo que tuviera pendiente). */
+  function resync(u: string) {
+    const m = mates.get(u);
+    if (!host || !m || !m.connected) return;
+    // Primero lo que cambia el mapa (Sentencia, grieta, clima), luego lo que hay en él.
+    const evs: Ev[] = [['rs'], ['st', G.Judgment.snapshot(), G.Rift.snapshot(), G.Weather.snapshot()]];
+    for (const e of G.EnemyMgr.all()) if (!e.dead && !e.remote) evs.push(enemyEv(e));
+    for (const o of G.Pickups.all()) if (o.id != null) evs.push(['pk', o.id, o.kind, r1(o.x), r1(o.y), o.value]);
+    for (const k of broken) { const [x, y] = k.split(','); evs.push(['pb', +x, +y]); }
+    if (waiting.size) {
+      if (waiting.has(u)) evs.push(['lu', api.team().level]);
+      evs.push(['lw', [...waiting].map(nameOf)]);
+    } else evs.push(['lr']);
+    evs.push(['hp', holdNames()]);
+    evs.push(...m.owed.splice(0));
+    m.q = evs;
+  }
 
   function mateGone(u) {
     const m = mates.get(u);
@@ -266,6 +337,7 @@ export const Coop = (() => {
           break;
         case 'pb':
           G.World.breakAt(ev[1], ev[2]);
+          noteBroken(ev[1], ev[2]);
           emit(['pb', ev[1], ev[2]], from);
           break;
         case 'lp': picked(from); break;
@@ -305,7 +377,7 @@ export const Coop = (() => {
     for (const a of msg.e || []) {
       const e = G.EnemyMgr.get(a[0]);
       if (!e || !e.remote || e.dead) continue;
-      const n = e.net;
+      const n = e.net as typeof e.net & { last?: number };
       const dts = (now - (n.last || now)) / 1000;
       if (dts > 0.02 && dts < 1) {
         n.vx = G.U.clamp((a[1] - n.x) / dts, -600, 600);
@@ -319,6 +391,8 @@ export const Coop = (() => {
 
   function applyHostEvent(ev) {
     switch (ev[0]) {
+      case 'rs': G.EnemyMgr.clearRemote(); G.Pickups.clear(); break;       // el anfitrión va a reenviar todo
+      case 'st': G.Judgment.restore(ev[1]); G.Rift.restore(ev[2]); G.Weather.restore(ev[3]); break;
       case 'ne':
         G.EnemyMgr.addRemote({ id: ev[1], dex: ev[2], x: ev[3], y: ev[4], boss: !!ev[5], shiny: !!ev[6], hp: ev[7], dmg: ev[8], beh: ev[9] });
         break;
@@ -373,17 +447,17 @@ export const Coop = (() => {
 
   // anfitrión
   function hurtShown(e, d, color) { emitNear(['hn', e.id, d, color], e.x, e.y, hitFrom); }
-  function enemyAdded(e) {
-    emit(['ne', e.id, e.dex, r1(e.x), r1(e.y), e.boss ? 1 : 0, e.shiny ? 1 : 0, Math.ceil(e.maxHp), r2(e.dmg), e.behavior]);
-  }
+  const enemyEv = (e): Ev => ['ne', e.id, e.dex, r1(e.x), r1(e.y), e.boss ? 1 : 0, e.shiny ? 1 : 0, Math.ceil(e.maxHp), r2(e.dmg), e.behavior];
+  function enemyAdded(e) { emit(enemyEv(e)); }
   function enemyGone(e, died) { emit([died ? 'ed' : 'eg', e.id]); }
   function enemyShot(p, type) { emit(['es', r1(p.x), r1(p.y), r1(p.vx), r1(p.vy), r2(p.dmg), p.r, p.life, type]); }
   function pickupAdded(o) { emit(['pk', o.id, o.kind, r1(o.x), r1(o.y), o.value]); }
   function pickupGone(id) { emit(['pc', id]); }
   function say(text, secs) { emit(['say', text, secs]); }
 
+  function noteBroken(tx: number, ty: number) { if (broken.length < 3000) broken.push(tx + ',' + ty); }
   function propBroken(p) {
-    if (host) emit(['pb', p.tx, p.ty]);
+    if (host) { noteBroken(p.tx, p.ty); emit(['pb', p.tx, p.ty]); }
     else outEv.push(['pb', p.tx, p.ty]);
   }
 
@@ -394,7 +468,11 @@ export const Coop = (() => {
     if (p.kind === 'bomb') emit(['bomb', r1(who.x), r1(who.y)]);
     if ((p.kind === 'heal' || p.kind === 'item') && who !== local) {
       const m = mates.get(who.uid);
-      if (m) m.q.push(p.kind === 'heal' ? ['heal', 0.3] : ['item', p.value]);
+      if (m) {
+        m.q.push(p.kind === 'heal' ? ['heal', 0.3] : ['item', p.value]);
+        // Un objeto para alguien sin conexión no se pierde: se le da al volver (resync).
+        if (p.kind === 'item' && G.Net.mode(who.uid) !== 'relay' && m.owed.length < 20) m.owed.push(['item', p.value]);
+      }
     }
   }
 

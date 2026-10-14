@@ -177,6 +177,14 @@ export const Weather = (() => {
     force(kind, dur) { start(kind, dur); },
     /** Quita el clima de golpe (al salir de la arena). */
     clear() { cur = null; parts.length = 0; },
+    /** Cooperativo: el clima en curso (para reenviárselo a quien vuelve tras un corte). */
+    snapshot() { return cur ? { kind: cur.kind, t: Math.round(cur.t * 10) / 10, dur: cur.dur } : null; },
+    /** Cooperativo: pone el clima tal y como lo manda el anfitrión (sin aviso ni sonido). */
+    restore(s) {
+      if (!s) { cur = null; return; }
+      if (!KINDS[s.kind] || !(s.dur > 0) || !(s.t >= 0) || s.t > s.dur) return;
+      cur = { kind: s.kind, t: s.t, dur: s.dur };
+    },
     debugStart(kind = 'rain', dur = 60) { start(kind, dur); if (G.Coop.isHost) G.Coop.broadcast(['wx', kind, dur]); }
   };
 })();

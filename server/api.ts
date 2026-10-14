@@ -1,10 +1,10 @@
 /* ============ server/api.ts — API de cuentas y guardado ============
  * Todo es JSON bajo /api. La sesión va en la cabecera `Authorization: Bearer <token>`.
  *
- *   POST   /api/register  { name, pass }      -> { ok, token, name }
- *   POST   /api/login     { name, pass }      -> { ok, token, name }
+ *   POST   /api/register  { name, pass }      -> { ok, token, uid, name }
+ *   POST   /api/login     { name, pass }      -> { ok, token, uid, name }
  *   POST   /api/logout                        -> { ok }
- *   GET    /api/me                            -> { ok, name }
+ *   GET    /api/me                            -> { ok, uid, name }
  *   GET    /api/save                          -> { ok, save, ver }   (save null si no hay)
  *   PUT    /api/save      { save, base }      -> { ok, ver } | 409 { ok:false, save, ver }
  *   DELETE /api/account   { pass }            -> { ok }
@@ -15,8 +15,13 @@
  * el cliente la FUSIONA con la suya (src/core/db.ts, merge) y vuelve a mandar.
  *
  * Errores: { ok: false, error } con un texto que se puede enseñar al jugador.
+ *
+ * El resto de la API (ranking, amigos...) va en módulos aparte (server/http.ts,
+ * Module) que se pasan a createApi. `uid` es el id de la cuenta como texto.
  */
-import type { Db } from './db';
+import type { Db, User } from './db';
+import { vetSave } from './save-rules';
+import { json, fail, sha256, limiter, readBody as body, type Module } from './http';
 
 /** Igual que en el cliente (src/core/db.ts). */
 const VALID_NAME = /^[A-Za-z0-9_ñÑáéíóúÁÉÍÓÚ]{3,16}$/;
@@ -26,40 +31,9 @@ export const MAX_SAVE = 512 * 1024;
 /** Una sesión sin usar en 60 días caduca. */
 const SESSION_TTL = 60 * 24 * 3600 * 1000;
 
-const json = (body: unknown, status = 200) => Response.json(body, { status, headers: { 'Cache-Control': 'no-store' } });
-const fail = (status: number, error: string) => json({ ok: false, error }, status);
-
-const sha256 = (s: string) => new Bun.CryptoHasher('sha256').update(s).digest('hex');
 const newToken = () => Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64url');
 
-/**
- * Límite de intentos por IP para entrar y crear cuentas (contra quien prueba
- * contraseñas a lo bruto): `max` en una ventana de `windowMs`.
- */
-function limiter(max: number, windowMs: number) {
-  const hits = new Map<string, { n: number; t: number }>();
-  return (ip: string) => {
-    const now = Date.now();
-    const h = hits.get(ip);
-    if (!h || now - h.t > windowMs) { hits.set(ip, { n: 1, t: now }); if (hits.size > 50_000) hits.clear(); return true; }
-    return ++h.n <= max;
-  };
-}
-
-/** Cuerpo JSON con tope de tamaño. @returns el objeto, o una Response de error */
-async function body(req: Request, max = 8 * 1024): Promise<any | Response> {
-  const len = Number(req.headers.get('content-length') || 0);
-  if (len > max) return fail(413, 'Demasiado grande.');
-  let text: string;
-  try { text = await req.text(); } catch { return fail(400, 'Petición no válida.'); }
-  if (text.length > max) return fail(413, 'Demasiado grande.');
-  try {
-    const v = JSON.parse(text);
-    return v && typeof v === 'object' && !Array.isArray(v) ? v : fail(400, 'Petición no válida.');
-  } catch { return fail(400, 'Petición no válida.'); }
-}
-
-export function createApi(db: Db, opts: { loginLimit?: number } = {}) {
+export function createApi(db: Db, opts: { loginLimit?: number; modules?: Module[] } = {}) {
   const authLimit = limiter(opts.loginLimit ?? 20, 60_000);
   db.pruneSessions(Date.now() - SESSION_TTL);
 
@@ -70,10 +44,13 @@ export function createApi(db: Db, opts: { loginLimit?: number } = {}) {
   }
 
   /** Usuario de la sesión de la petición, o null. */
-  function who(req: Request) {
-    const m = /^Bearer ([A-Za-z0-9_-]{20,100})$/.exec(req.headers.get('authorization') || '');
-    if (!m) return null;
-    const hash = sha256(m[1]);
+  function who(req: Request): { user: User; hash: string } | null {
+    return whoToken((/^Bearer (.+)$/.exec(req.headers.get('authorization') || '') || [])[1]);
+  }
+  /** Usuario de un token de sesión (también para el WebSocket, que lo manda en la URL). */
+  function whoToken(token?: string | null): { user: User; hash: string } | null {
+    if (!token || !/^[A-Za-z0-9_-]{20,100}$/.test(token)) return null;
+    const hash = sha256(token);
     const s = db.session(hash);
     if (!s) return null;
     if (Date.now() - s.seen > SESSION_TTL) { db.deleteSession(hash); return null; }
@@ -97,7 +74,7 @@ export function createApi(db: Db, opts: { loginLimit?: number } = {}) {
     let id: number;
     // Dos registros a la vez con el mismo nombre: la base (UNIQUE) sólo deja uno.
     try { id = db.addUser(name, key, hash); } catch { return fail(409, 'Ese nombre ya existe.'); }
-    return json({ ok: true, token: openSession(id), name });
+    return json({ ok: true, token: openSession(id), uid: String(id), name });
   }
 
   async function login(req: Request, ip: string) {
@@ -110,7 +87,7 @@ export function createApi(db: Db, opts: { loginLimit?: number } = {}) {
     // Con nombre inexistente también se calcula un hash: así no se nota por el tiempo de respuesta.
     const ok = user ? await Bun.password.verify(pass, user.pass) : (await Bun.password.hash(pass || 'x', { algorithm: 'argon2id' }), false);
     if (!user || !ok || pass.length > MAX_PASS) return fail(401, 'Usuario o contraseña incorrectos.');
-    return json({ ok: true, token: openSession(user.id), name: user.name });
+    return json({ ok: true, token: openSession(user.id), uid: String(user.id), name: user.name });
   }
 
   async function getSave(userId: number) {
@@ -124,8 +101,10 @@ export function createApi(db: Db, opts: { loginLimit?: number } = {}) {
     const save = b.save, base = b.base;
     if (!save || typeof save !== 'object' || Array.isArray(save)) return fail(400, 'Partida no válida.');
     if (!Number.isInteger(base) || base < 0) return fail(400, 'Versión no válida.');
-    const ver = db.putSave(userId, JSON.stringify(save), base);
-    if (ver != null) return json({ ok: true, ver });
+    const vet = vetSave(db, userId, save, base);           // anti-trampas (server/save-rules.ts)
+    if (!vet.ok) return fail(400, vet.error);
+    const ver = db.putSave(userId, JSON.stringify(vet.save), base);
+    if (ver != null) { vet.stored(); return json({ ok: true, ver }); }
     const cur = db.save(userId);
     return json({ ok: false, error: 'Otra sesión ha guardado antes.', save: cur ? JSON.parse(cur.data) : null, ver: cur ? cur.ver : 0 }, 409);
   }
@@ -141,7 +120,7 @@ export function createApi(db: Db, opts: { loginLimit?: number } = {}) {
   }
 
   /** Atiende /api/*. @returns null si la ruta no es de la API */
-  return async function handle(req: Request, ip: string): Promise<Response | null> {
+  async function handle(req: Request, ip: string): Promise<Response | null> {
     const { pathname } = new URL(req.url);
     if (!pathname.startsWith('/api/')) return null;
     const route = req.method + ' ' + pathname;
@@ -153,15 +132,22 @@ export function createApi(db: Db, opts: { loginLimit?: number } = {}) {
       if (['POST /api/logout', 'GET /api/me', 'GET /api/save', 'PUT /api/save', 'DELETE /api/account'].includes(route)) {
         if (!s) return fail(401, 'Sesión caducada: vuelve a entrar.');
         if (route === 'POST /api/logout') { db.deleteSession(s.hash); return json({ ok: true }); }
-        if (route === 'GET /api/me') return json({ ok: true, name: s.user.name });
+        if (route === 'GET /api/me') return json({ ok: true, uid: String(s.user.id), name: s.user.name });
         if (route === 'GET /api/save') return await getSave(s.user.id);
         if (route === 'PUT /api/save') return await putSave(req, s.user.id);
         if (route === 'DELETE /api/account') return await deleteAccount(req, ip, s.user);
+      }
+      const ctx = { ip, user: s ? s.user : null, session: s ? s.hash : null, path: pathname.slice(4), method: req.method };
+      for (const m of opts.modules || []) {
+        const r = await m(req, ctx);
+        if (r) return r;
       }
       return fail(404, 'No existe.');
     } catch (e) {
       console.error('[api]', route, e);
       return fail(500, 'Error del servidor.');
     }
-  };
+  }
+
+  return { handle, whoToken };
 }

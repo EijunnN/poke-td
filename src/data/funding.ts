@@ -10,11 +10,10 @@ import { G } from '../g';
  *   costs     gastos [concepto, euros al mes]; si el coste no es fijo, un texto
  */
 export const Funding = {
-  kofi: 'jpter78',
-  sponsors: 'JPTER78',
+  kofi: '',
+  sponsors: '',
   costs: [
-    ['Servidores (partidas, cuentas, ranking y multijugador)', 'Según cuánta gente juegue'],
-    ['Dominio pokesurvivor.com', '≈12 € al año']
+    ['Servidor (partidas, cuentas, ranking y multijugador)', 'VPS propia']
   ],
   get url() { return this.kofi ? 'https://ko-fi.com/' + this.kofi : ''; }
 };

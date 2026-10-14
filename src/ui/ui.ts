@@ -102,14 +102,15 @@ export const UI = (() => {
 
   // ---------------- aviso legal ----------------
 
-  const CONTACT = 'jpieratorregrosa@gmail.com';
-  const REPO = 'https://github.com/JPTER78/pokesurvivor';
+  // Contacto: las incidencias del repositorio (no hay correo público).
+  const REPO = 'https://github.com/EijunnN/poke-td';
   let legalBack = null;
 
   function openLegal() {
     legalBack = SCREENS.find(s => isOpen(s)) || null;
-    $('legal-mail').textContent = CONTACT;
-    $('legal-mail').href = 'mailto:' + CONTACT + '?subject=Pok%C3%A9Survivor';
+    $('legal-mail').textContent = REPO.replace('https://', '') + '/issues';
+    $('legal-mail').href = REPO + '/issues';
+    $('legal-mail').target = '_blank';
     $('legal-repo').textContent = REPO.replace('https://', '');
     $('legal-repo').href = REPO;
     const canDelete = G.DB.loggedIn && !G.DB.guest;
@@ -119,9 +120,8 @@ export const UI = (() => {
   }
 
   /**
-   * "¿Seguro que quieres borrar la cuenta?". Las cuentas de nombre y
-   * contraseña escriben su contraseña (Firebase pide confirmar quién eres);
-   * las de Google la confirman en la ventana de Google al seguir.
+   * "¿Seguro que quieres borrar la cuenta?". Las cuentas del servidor
+   * escriben su contraseña para confirmarlo.
    * Devuelve { pass } o null si se cancela.
    */
   function confirmDelete() {

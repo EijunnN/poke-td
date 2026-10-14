@@ -11,25 +11,28 @@ servidores, dominio ni cuentas con el original.
   `src/modes/survivor.ts` es el de hordas y `src/modes/td.ts` el de Defensa (prototipo). Un modo nuevo se añade en `src/modes/`,
   se importa en `main.ts` y se apunta en `MODES` de `game.ts`.
 - `public/` — estáticos servidos tal cual (`assets/` con sprites, fuente e iconos; PWA).
-- `server/` — servidor Bun: sirve `dist/` y la API de cuentas y guardado (`server/api.ts`)
-  sobre SQLite (`server/db.ts`, archivo en `data/`). Sustituye a Firebase; amigos, ranking
-  y cooperativo (`src/net/`) siguen sin portar y están apagados (`G.DB.online` es false).
+- `server/` — servidor Bun sobre SQLite (`server/db.ts`, archivo en `data/`); sustituye a Firebase.
+  Sirve `dist/`, la API de cuentas y guardado (`api.ts`), el ranking (`ranking.ts`), perfiles
+  y amigos (`social.ts`) y, por WebSocket en `/ws`, presencia, invitaciones, salas y el relé
+  del cooperativo (`realtime.ts`). Admins del ranking: variable `ADMIN_USERS` (nombres).
 - `tests/` — pruebas adversariales diferenciales (`golden.json` es la referencia).
 - `tools/` — scripts de datos (PokeAPI, SpriteCollab). `docs/GDD.md` — diseño.
-- `legacy/` — lo del original que ya no se usa (Firebase, Cloudflare, páginas SEO,
-  build antiguo). Sólo de consulta: las reglas anti-trampas de `legacy/firestore.rules`
-  hay que portarlas al servidor nuevo.
 
 ## Comandos (Bun)
 - `bun run dev` — desarrollo (Vite). `G` se ve en la consola sólo aquí. Con `bun run server`
   a la vez, `/api` va al servidor (cuentas y guardado de verdad); sin él, modo local.
 - `bun run check` — tipos del juego y del servidor.
-- `bun run test` — las tres baterías adversariales:
-  - `tests/server.test.ts`: la API contra entradas hostiles (bun test).
+- `bun run test` — las pruebas rápidas y deterministas (reloj simulado, sin red ni esperas;
+  unos 20 s). Es lo que se ejecuta en cada cambio:
+  - `tests/*.test.ts` (bun test): API, cuentas, ranking, guardado y amigos contra el servidor
+    en el mismo proceso (`tests/helpers.ts`, sin sockets); WebSocket con conexiones y reloj
+    simulados (`tests/fakes.ts`); `coop.fast.test.ts`: dos páginas del juego en partida en
+    grupo con la red y el reloj controlados (reconexión, grietas, reinicio del servidor...).
   - `tests/adversarial.ts`: partidas con azar y reloj fijos, comparadas con
     `tests/golden.json`. Un refactor o una migración NO debe cambiar el resultado.
-  - `tests/sync.e2e.ts`: el juego contra el servidor con dos navegadores (guardado cruzado,
-    sesión, servidor caído).
+- `bun run test:e2e` — pruebas de humo con servidor y navegadores reales (lentas: sólo antes
+  de publicar): `sync.e2e.ts`, `ranking.e2e.ts`, `coop.e2e.ts`.
+- Nada de esperas en tiempo real en las pruebas: si algo depende del tiempo, se inyecta un reloj.
 - `bun run test:record` — regraba la referencia. Sólo cuando se cambia la jugabilidad
   a propósito; nunca para "arreglar" una prueba que falla tras un refactor.
 - `bun run build` — genera `dist/` (incluye `version.json`). `bun run start` lo sirve.

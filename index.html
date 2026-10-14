@@ -48,15 +48,12 @@
       <input id="f-pass" class="field" type="password" maxlength="64">
       <p id="login-err" class="err"></p>
       <p class="note"><a href="#" id="f-forgot">¿Olvidaste tu contraseña?</a></p>
-      <p id="forgot-note" class="note hidden">Si vinculaste tu Gmail, pulsa <b>Entrar con Google</b> con ese Gmail: es tu misma cuenta.
-        Si no lo vinculaste, no se puede recuperar: crea una cuenta nueva (y esta vez vincula tu Gmail desde el aviso que sale al entrar).</p>
+      <p id="forgot-note" class="note hidden">Pide al administrador del juego una contraseña temporal (por el contacto del
+        Aviso legal, con tu nombre de jugador). Al entrar, cámbiala en Ajustes → Cuenta.</p>
       <div class="row">
         <button id="btn-auth" class="btn gold grow" type="submit">Entrar</button>
       </div>
     </form>
-    <div class="row" style="margin-top:10px">
-      <button id="btn-google" class="btn google grow hidden" type="button">Entrar con Google</button>
-    </div>
     <div class="row" style="margin-top:10px">
       <button id="btn-guest" class="btn ghost grow" type="button">Jugar como invitado</button>
     </div>
@@ -160,20 +157,6 @@
   </div>
 </section>
 
-<!-- ====== Vincular Gmail para recuperar la cuenta (js/ui/login.js, offerRecovery) ====== -->
-<section id="scr-recover" class="scr dim hidden">
-  <div class="box" style="width:min(440px,100%)">
-    <h2>¿Te da miedo perder tu cuenta?</h2>
-    <p>Vincula tu Gmail: si un día olvidas la contraseña, pulsas <b>Entrar con Google</b> y es tu misma cuenta, con todo lo tuyo.</p>
-    <p class="err" id="rec-err"></p>
-    <div class="row" style="gap:8px;flex-wrap:wrap">
-      <button class="btn gold grow" id="rec-link" type="button">Vincular mi Gmail</button>
-      <button class="btn ghost" id="rec-later" type="button">Ahora no</button>
-    </div>
-    <p class="note center"><a href="#" id="rec-never">No volver a preguntar</a></p>
-  </div>
-</section>
-
 <!-- ====== Apoyar el proyecto (donaciones) ====== -->
 <section id="scr-support" class="scr dim hidden">
   <div class="box support">
@@ -215,22 +198,19 @@
       <a href="https://pokeapi.co/" target="_blank" rel="noopener">PokeAPI</a>. Fuente Pixelify Sans (OFL).
       La música y los efectos de sonido son originales del proyecto.</p>
     <h3>Contacto y retirada de contenido</h3>
-    <p>Si eres titular de derechos y quieres que retiremos algo, escríbenos y lo quitaremos lo
-      antes posible: <a id="legal-mail" href="#"></a></p>
+    <p>Si eres titular de derechos y quieres que retiremos algo, o necesitas ayuda con tu cuenta,
+      escríbenos y lo atenderemos lo antes posible: <a id="legal-mail" href="#" rel="noopener"></a></p>
     <p>Código fuente: <a id="legal-repo" href="#" target="_blank" rel="noopener"></a></p>
     <h3>Privacidad</h3>
-    <p>Si creas una cuenta, guardamos tu nombre de jugador y tu partida (colección, monedas,
-      mejoras y estadísticas) en Google Firebase para que puedas seguir en cualquier ordenador.
-      Si entras con Google, Firebase guarda también tu correo de Google para identificarte
-      (nunca se enseña a otros jugadores).
-      No usamos tus datos para nada más, ni los compartimos, ni hay publicidad ni seguimiento.
-      Como invitado no se guarda nada fuera de tu navegador.</p>
+    <p>Si creas una cuenta, guardamos en nuestro servidor tu nombre de jugador, tu contraseña
+      (cifrada: nadie puede leerla, ni nosotros) y tu partida (colección, monedas, mejoras y
+      estadísticas), para que puedas seguir en cualquier dispositivo. No pedimos correo ni ningún
+      otro dato personal. No usamos tus datos para nada más, ni los compartimos, ni hay publicidad
+      ni seguimiento. Como invitado no se guarda nada fuera de tu navegador.</p>
     <p>Amigos y ranking: tu <b>apodo</b> es público para otros jugadores. Guardamos tu lista de
       amigos, si estás en línea y tus mejores tiempos (con tu apodo y tu Pokémon).</p>
-    <p>Partidas en grupo: tu navegador se conecta <b>directamente</b> con el de tus compañeros
-      (como en una videollamada), así que cada uno puede llegar a ver la dirección IP del otro.
-      Juega en grupo sólo con gente que conozcas. Si la conexión directa no es posible, la partida
-      pasa por los servidores de Firebase.</p>
+    <p>Partidas en grupo: van a través de nuestro servidor, así que tus compañeros no ven tu
+      dirección IP ni tú la suya.</p>
     <p>Puedes borrar tu cuenta cuando quieras (se borran también tu apodo, tus amigos y tus marcas):</p>
     <div class="row">
       <button class="btn small" id="legal-delete">Borrar mi cuenta y mi partida</button>
@@ -279,8 +259,7 @@
 <section id="scr-nick" class="scr dim hidden">
   <div class="box" style="width:min(440px,100%)">
     <h2>Elige tu apodo</h2>
-    <p class="sub">Es el nombre que verán tus amigos y el que sale en el ranking.
-      Tu nombre y tu correo de Google no se enseñan a nadie.</p>
+    <p class="sub">Es el nombre que verán tus amigos y el que sale en el ranking.</p>
     <form id="nick-form" autocomplete="off">
       <input id="nick-in" class="field" maxlength="16" spellcheck="false" placeholder="3-16 letras, números o _">
       <p id="nick-err" class="err"></p>

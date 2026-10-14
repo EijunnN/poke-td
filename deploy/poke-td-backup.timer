@@ -1,0 +1,10 @@
+# Una copia al día, a las 05:00 (y al arrancar si se perdió alguna).
+[Unit]
+Description=Copia diaria de poke-td
+
+[Timer]
+OnCalendar=*-*-* 05:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

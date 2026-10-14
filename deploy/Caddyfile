@@ -1,0 +1,6 @@
+# Caddy delante del servidor Bun: HTTPS automático (Let's Encrypt), compresión
+# y WebSocket. deploy/install.sh cambia DOMINIO por el tuyo.
+DOMINIO {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:8080
+}

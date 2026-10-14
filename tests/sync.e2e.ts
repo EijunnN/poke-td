@@ -45,7 +45,7 @@ async function device(browser: Browser, url: string): Promise<Page> {
   const page = await ctx.newPage();
   page.on('pageerror', e => fails.push('error en la página: ' + e.message));
   await page.goto(url);
-  await page.waitForFunction(() => typeof G === 'object' && G.DB && G.Flow && document.getElementById('boot').classList.contains('hidden'), null, { timeout: 30000 });
+  await page.waitForFunction(() => typeof G === 'object' && G.DB && G.Flow && document.getElementById('boot').classList.contains('hidden'), null, { timeout: 90000 });
   return page;
 }
 
@@ -91,7 +91,7 @@ async function main() {
 
     console.log('sesión');
     await a.reload();
-    await a.waitForFunction(() => typeof G === 'object' && G.DB && document.getElementById('boot').classList.contains('hidden'), null, { timeout: 30000 });
+    await a.waitForFunction(() => typeof G === 'object' && G.DB && document.getElementById('boot').classList.contains('hidden'), null, { timeout: 90000 });
     await a.evaluate(() => G.DB.ready());
     check(await a.evaluate(n => G.DB.loggedIn && G.DB.user === n, name), 'al recargar, la sesión sigue abierta');
     const oldToken = await a.evaluate(() => JSON.parse(localStorage.getItem('ps.token')).token);

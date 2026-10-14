@@ -1,10 +1,10 @@
 # Iconos de la app (PWA, favicon, iPhone) en pixel art: Poké Ball sobre azul marino.
-#   python tools/make_icons.py   -> assets/icons/*.png
+#   python tools/make_icons.py   -> public/assets/icons/*.png y public/favicon.ico
+# icon() es pura (tamaño -> imagen); main() es lo único que escribe en disco.
 import os
 from PIL import Image, ImageDraw
 
-OUT = os.path.join(os.path.dirname(__file__), '..', 'assets', 'icons')
-os.makedirs(OUT, exist_ok=True)
+OUT = os.path.join(os.path.dirname(__file__), '..', 'public', 'assets', 'icons')
 
 NAVY, NAVY2, K = (10, 20, 48), (26, 49, 112), (27, 21, 40)
 RED, RED2, WHITE, GREY, GOLD = (232, 57, 74), (168, 30, 48), (242, 242, 242), (190, 196, 214), (255, 210, 63)
@@ -56,9 +56,18 @@ def icon(size, maskable=False):
     return img
 
 # Google sólo enseña en los resultados iconos cuadrados de 48 px o múltiplos (48, 96, 144...).
-for size in (512, 192, 180, 144, 96, 48, 32):
-    icon(size).save(os.path.join(OUT, f'icon-{size}.png'))
-icon(512, True).save(os.path.join(OUT, 'icon-maskable-512.png'))
-# favicon.ico en la raíz de la web: lo primero que piden Google y los navegadores.
-icon(48).save(os.path.join(OUT, '..', '..', 'favicon.ico'), sizes=[(16, 16), (32, 32), (48, 48)])
-print('ok', os.listdir(OUT))
+SIZES = (512, 192, 180, 144, 96, 48, 32)
+
+
+def main():
+    os.makedirs(OUT, exist_ok=True)
+    for size in SIZES:
+        icon(size).save(os.path.join(OUT, f'icon-{size}.png'))
+    icon(512, True).save(os.path.join(OUT, 'icon-maskable-512.png'))
+    # favicon.ico en la raíz de la web (public/): lo primero que piden Google y los navegadores.
+    icon(48).save(os.path.join(OUT, '..', '..', 'favicon.ico'), sizes=[(16, 16), (32, 32), (48, 48)])
+    print('ok', os.listdir(OUT))
+
+
+if __name__ == '__main__':
+    main()

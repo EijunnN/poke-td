@@ -8,8 +8,10 @@
     "build": "tsc --noEmit && vite build",
     "check": "tsc --noEmit && tsc --noEmit -p tsconfig.server.json",
     "start": "bun server/index.ts",
-    "test": "bun test tests/server.test.ts && node tests/adversarial.ts && node tests/sync.e2e.ts",
-    "test:record": "node tests/adversarial.ts --record"
+    "test": "bun test tests/ && node tests/adversarial.ts",
+    "test:record": "node tests/adversarial.ts --record",
+    "test:e2e": "node tests/sync.e2e.ts && node tests/ranking.e2e.ts && node tests/coop.e2e.ts",
+    "test:all": "bun run test && bun run test:e2e"
   },
   "devDependencies": {
     "@types/bun": "^1.4.3",

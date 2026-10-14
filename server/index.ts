@@ -9,10 +9,16 @@
  *   PORT       puerto (8080)
  *   DB_PATH    archivo de la base de datos (data/poke-td.sqlite)
  *   TRUST_PROXY=1  detrás de Caddy/nginx: la IP del jugador viene en X-Forwarded-For
+ *   ROOM_GRACE_MS  cuánto espera una sala a quien se desconecta antes de sacarlo (45000)
  */
 import { join, normalize, sep } from 'node:path';
 import { openDb } from './db';
 import { createApi } from './api';
+import type { Module } from './http';
+import { createRealtime, type RealtimeOptions } from './realtime';
+import { createRanking } from './ranking';
+import { createSocial } from './social';
+import { createAccount } from './account';
 
 const ROOT = join(import.meta.dir, '..');
 
@@ -26,12 +32,21 @@ export interface ServerOptions {
   trustProxy?: boolean;
   /** Intentos de entrar o crear cuenta por IP y minuto. */
   loginLimit?: number;
+  /** Límites del WebSocket (pruebas). */
+  realtime?: RealtimeOptions;
 }
 
 export function startServer(o: ServerOptions = {}) {
   const dist = o.dist ?? join(ROOT, 'dist');
   const db = openDb(o.dbPath ?? join(ROOT, 'data', 'poke-td.sqlite'));
-  const api = createApi(db, { loginLimit: o.loginLimit });
+  // Tiempo real (presencia, invitaciones, salas, cooperativo): WebSocket en /ws?token=...
+  const rt = createRealtime(db, o.realtime);
+  // Módulos de la API: cada uno con sus rutas y sus tablas.
+  // Las marcas de grupo del ranking sólo valen para el equipo que de verdad empezó una partida junto
+  // (lo apunta realtime cuando el anfitrión manda `start`) y no antes de que el anfitrión avisara al ranking.
+  const ranking = createRanking(db, { verifyTeam: rt.verifyTeam });
+  const modules: Module[] = [createAccount(db, { perIp: o.loginLimit }), ranking, createSocial(db, rt)];
+  const api = createApi(db, { loginLimit: o.loginLimit, modules });
 
   async function serveFile(pathname: string) {
     let path = pathname;
@@ -48,17 +63,25 @@ export function startServer(o: ServerOptions = {}) {
 
   const server = Bun.serve({
     port: o.port ?? 8080,
+    websocket: rt.websocket,
     async fetch(req, srv) {
-      const ip = (o.trustProxy && (req.headers.get('x-forwarded-for') || '').split(',')[0].trim())
-        || srv.requestIP(req)?.address || '?';
-      const res = await api(req, ip);
+      // Detrás de Caddy, la IP real es la ÚLTIMA de X-Forwarded-For (la que añade Caddy): las
+      // anteriores las puede inventar el jugador para saltarse los límites de intentos.
+      const ip = (o.trustProxy && (req.headers.get('x-forwarded-for') || '').split(',').pop()!.trim())
+        || srv?.requestIP(req)?.address || '?';
+      if (new URL(req.url).pathname === '/ws') {
+        const s = api.whoToken(new URL(req.url).searchParams.get('token'));
+        if (!s) return new Response('Sesión caducada', { status: 401 });
+        return srv?.upgrade(req, { data: { user: s.user } }) ? undefined : new Response('Se esperaba un WebSocket', { status: 400 });
+      }
+      const res = await api.handle(req, ip);
       if (res) return res;
       if (req.method !== 'GET' && req.method !== 'HEAD') return new Response('Method not allowed', { status: 405 });
       return serveFile(new URL(req.url).pathname);
     },
   });
 
-  return { server, db, stop() { server.stop(true); db.close(); } };
+  return { server, db, rt, stop() { rt.stop(); server.stop(true); db.close(); } };
 }
 
 if (import.meta.main) {
@@ -66,6 +89,7 @@ if (import.meta.main) {
     port: Number(process.env.PORT) || 8080,
     dbPath: process.env.DB_PATH,
     trustProxy: process.env.TRUST_PROXY === '1',
+    realtime: process.env.ROOM_GRACE_MS ? { roomGrace: Number(process.env.ROOM_GRACE_MS) } : undefined,
   });
   console.log(`poke-td en http://localhost:${server.port}`);
 }

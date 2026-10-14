@@ -1,0 +1,22 @@
+# Servicio de systemd del servidor del juego. Ver docs/DEPLOY.md.
+[Unit]
+Description=poke-td (servidor del juego, Bun)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=poketd
+WorkingDirectory=/opt/poke-td
+EnvironmentFile=/etc/poke-td.env
+ExecStart=/usr/local/bin/bun server/index.ts
+Restart=always
+RestartSec=2
+# Endurecimiento: sólo puede escribir en su carpeta de datos.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/poke-td/data /var/backups/poke-td
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

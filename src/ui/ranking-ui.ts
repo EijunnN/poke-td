@@ -2,7 +2,7 @@ import { G } from '../g';
 /* ============ ranking-ui.js — pantalla del ranking ============
  * Pestañas Solo / Grupo, periodo (diario ... histórico), todos o sólo amigos,
  * filtro por Pokémon (sólo en el histórico) y tu puesto abajo aunque no salgas
- * en el top. Lo leído se guarda 30 min (ver ranking.js).
+ * en el top. Las listas y los puestos los calcula el servidor (ver ranking.ts).
  */
 export const RankingUI = (() => {
   const $ = G.UI.$;
@@ -80,6 +80,8 @@ export const RankingUI = (() => {
       return;
     }
     if (my !== token) return;
+    // El servidor dice si eres admin con cada lista: aquí ya se sabe.
+    $('rk-mod').classList.toggle('hidden', !G.Ranking.isAdmin());
     list.innerHTML = '';
     if (!rows.length) {
       list.innerHTML = '<p class="sub">Todavía no hay marcas aquí. ¡Sé el primero!</p>';

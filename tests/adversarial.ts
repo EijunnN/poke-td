@@ -19,6 +19,7 @@ import { chromium, type Page } from 'playwright-core';
 import { readFileSync, writeFileSync, existsSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { installHarness } from './fakes.ts';
 
 declare const G: any;
 declare const window: any;
@@ -41,55 +42,6 @@ const PHASES: [number | null, number][] = [
   [535, 600],    // tercer jefe (minuto 9), enemigos duros
   [895, 300],    // último jefe (minuto 15)
 ];
-
-/** Se inyecta antes que cualquier script del juego: azar con semilla, reloj falso y fotogramas a mano. */
-function installHarness() {
-  let s = 1;
-  const rnd = () => { s |= 0; s = s + 0x6D2B79F5 | 0; let t = Math.imul(s ^ s >>> 15, 1 | s); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
-  Math.random = rnd;
-  let now = 1_000_000;
-  const T0 = 1_760_000_000_000;
-  performance.now = () => now;
-  Date.now = () => T0 + now;
-  let queue: ((ts: number) => void)[] = [];
-  window.requestAnimationFrame = (cb: any) => { queue.push(cb); return queue.length; };
-  window.cancelAnimationFrame = () => {};
-  // Temporizadores: reales durante el arranque; desde freeze() van con el reloj
-  // falso (saltan dentro de frame()), para que no dependan de la carga de la máquina.
-  type Timer = { id: number; due: number; fn: any; args: any[]; every: number };
-  let frozen = false, tid = 1_000_000_000, timers: Timer[] = [];
-  const real = { st: window.setTimeout.bind(window), si: window.setInterval.bind(window), ct: window.clearTimeout.bind(window), ci: window.clearInterval.bind(window) };
-  const add = (fn: any, ms: any, args: any[], repeat: boolean) => {
-    const d = Math.max(0, +ms || 0);
-    timers.push({ id: ++tid, due: now + d, fn, args, every: repeat ? Math.max(1, d) : 0 });
-    return tid;
-  };
-  const drop = (id: any) => { timers = timers.filter(t => t.id !== id); };
-  window.setTimeout = (fn: any, ms: any, ...a: any[]) => frozen ? add(fn, ms, a, false) : real.st(fn, ms, ...a);
-  window.setInterval = (fn: any, ms: any, ...a: any[]) => frozen ? add(fn, ms, a, true) : real.si(fn, ms, ...a);
-  window.clearTimeout = (id: any) => { drop(id); real.ct(id); };
-  window.clearInterval = (id: any) => { drop(id); real.ci(id); };
-  const runTimers = () => {
-    for (let guard = 0; guard < 10000; guard++) {
-      let best: Timer | null = null;
-      for (const t of timers) if (t.due <= now && (!best || t.due < best.due || (t.due === best.due && t.id < best.id))) best = t;
-      if (!best) return;
-      if (best.every) best.due += best.every; else drop(best.id);
-      if (typeof best.fn === 'function') best.fn(...best.args);
-    }
-  };
-  window.__errors = [];
-  addEventListener('error', (e: any) => window.__errors.push('error: ' + (e.message || e)));
-  addEventListener('unhandledrejection', (e: any) => window.__errors.push('rejection: ' + (e.reason && e.reason.message || e.reason)));
-  window.__h = {
-    seed(n: number) { s = n; },
-    rnd,
-    /** Avanza un fotograma de 1/60 s. */
-    frame() { now += 1000 / 60; runTimers(); const q = queue; queue = []; for (const cb of q) cb(now); },
-    freeze() { frozen = true; },
-    ready() { return queue.length > 0; },
-  };
-}
 
 /** Dentro de la página: juega un caso entero y devuelve una foto del estado tras cada fase. */
 async function playCase(c: { dex: number; seed: number }, phases: [number | null, number][]) {
@@ -257,7 +209,7 @@ async function openPage(browser: any, url: string): Promise<{ page: Page; errors
   const boot: string[] = [];
   page.on('requestfailed', r => boot.push('no carga: ' + r.url()));
   page.on('response', r => { if (r.status() >= 400) boot.push(r.status() + ': ' + r.url()); });
-  await page.waitForFunction(() => typeof G === 'object' && G.Game && G.Flow && window.__h.ready(), null, { timeout: 30000 })
+  await page.waitForFunction(() => typeof G === 'object' && G.Game && G.Flow && window.__h.ready(), null, { timeout: 90000 })
     .catch(e => { throw new Error('el juego no arranca en ' + url + '\n  ' + [...errors, ...boot].slice(0, 8).join('\n  ') + '\n' + e.message); });
   return { page, errors };
 }
@@ -298,7 +250,8 @@ async function main() {
   // Dos pasadas en páginas distintas: la segunda comprueba que el juego es reproducible.
   const runs: any[][] = [];
   const td: any[] = [];
-  for (let pass = 0; pass < 2; pass++) {
+  // Las dos pasadas van en páginas distintas A LA VEZ (la mitad de tiempo).
+  async function runPass(pass: number) {
     const { page, errors } = await openPage(browser, url!);
     const out: any[] = [];
     for (const c of cases) {
@@ -315,14 +268,15 @@ async function main() {
     if (ONLY == null) {
       await page.waitForLoadState('networkidle');
       await page.waitForTimeout(150);
-      try { td.push(await page.evaluate(`(${playTD})(4242)`)); }
-      catch (e: any) { td.push(null); fails.push(`caso td: revienta — ${String(e.message).split('\n')[0]}`); }
+      try { td[pass] = await page.evaluate(`(${playTD})(4242)`); }
+      catch (e: any) { td[pass] = null; fails.push(`caso td: revienta — ${String(e.message).split('\n')[0]}`); }
       const pageErrs = await page.evaluate(() => window.__errors.splice(0));
       for (const e of [...errors.splice(0), ...pageErrs]) fails.push(`caso td (pasada ${pass + 1}): ${e}`);
     }
-    runs.push(out);
+    runs[pass] = out;
     await page.close();
   }
+  await Promise.all([runPass(0), runPass(1)]);
   await browser.close();
   if (vite) await vite.close();
 

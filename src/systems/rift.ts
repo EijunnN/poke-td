@@ -15,6 +15,12 @@ import type { PokeType } from '../data/types';
  * Mientras dura la arena, los enemigos del mapa se guardan (EnemyMgr.stash) y
  * no aparecen nuevos; al volver todo sigue como estaba.
  *
+ * Premio en grupo: el vínculo y el avance de misiones los da `won()` en cada ordenador; el legendario
+ * vencido (logro, jefes) y su shiny los reciben los invitados con los avisos normales del anfitrión.
+ * Si un invitado estaba sin conexión cuando acabó la arena, `restore()` (ver coop.ts, resync) le da lo
+ * mismo que se perdió, una sola vez (`paid`): cada arena lleva un `id` y el anfitrión recuerda el
+ * resultado de la última (`last`). Los tickets y las monedas ya llegan con el estado del equipo.
+ *
  * Cooperativo: lo decide el anfitrión. Mensajes (ver coop.js):
  *   'rift' x y ttl · 'riftx' · 'arena' cfg · 'aw' (ganada) · 'al' (perdida)
  *   y del invitado al anfitrión 're' (he entrado en la grieta).
@@ -29,10 +35,17 @@ export const Rift = (() => {
   let rift = null;          // { x, y, ttl, t }
   let arena = null;         // { tx, ty, r, dex, shiny, x, y, back, biome, t, phase, endT, bossId }
   let checkT = CHECK, asked = false, downT = 0, misses = 0;
+  let arenaN = 0;                                       // arenas abiertas aquí (para dar un id a cada una)
+  const paid = new Set<string>();                       // arenas ganadas cuyo premio ya se ha dado en este ordenador
+  let last: { id: string; won: boolean; dex: number; type: string; shiny: boolean } | null = null;   // la última arena que acabó
   const authority = () => !G.Coop.active || G.Coop.isHost;
   const TS = () => G.Tiles.T * G.Sprites.PX;
 
-  function reset() { rift = null; arena = null; checkT = CHECK; asked = false; downT = 0; misses = 0; }
+  /** @param keep  no olvidar las arenas ya vencidas (la Sentencia de Arceus llama a esto a mitad de partida) */
+  function reset(keep = false) {
+    rift = null; arena = null; checkT = CHECK; asked = false; downT = 0; misses = 0;
+    if (!keep) { paid.clear(); last = null; }
+  }
 
   // ---------------- grieta en el mapa ----------------
 
@@ -103,7 +116,8 @@ export const Rift = (() => {
       tx: 5000 + Math.floor(Math.random() * 3000), ty: 5000 + Math.floor(Math.random() * 3000), r: ARENA_R,
       dex: mon.dex, shiny: G.Sprites.hasShiny(mon.dex) && Math.random() < 1 / 512,
       // La arena es la de uno de sus tipos, al azar.
-      type: forceType || G.U.pick(mon.types)
+      type: forceType || G.U.pick(mon.types),
+      id: ((G.Net && G.Net.uid) || 'solo') + ':' + Date.now().toString(36) + ':' + (++arenaN)
     };
     if (G.Coop.isHost) G.Coop.broadcast(['arena', cfg]);
     begin(cfg);
@@ -192,6 +206,7 @@ export const Rift = (() => {
   function won() {
     if (!arena || arena.phase !== 'fight') return;
     arena.phase = 'won'; arena.endT = 5;
+    if (arena.id) paid.add(arena.id);
     G.Progress.event('rift', { type: arena.type });
     G.Pickups.pullAll();
     G.Spawner.say('¡Has vencido a ' + G.DEX_BY[arena.dex].name + '! Recoge el premio…', 3.4, true);
@@ -216,6 +231,7 @@ export const Rift = (() => {
     const pl = G.Game.player;
     const a = arena;
     arena = null;
+    if (a.id) last = { id: a.id, won: a.phase === 'won', dex: a.dex, type: a.type, shiny: !!a.shiny };
     G.World.setBiome(a.biome, true);
     G.Weather.clear();
     if (authority()) G.EnemyMgr.restore(); else G.EnemyMgr.clearRemote();
@@ -228,6 +244,30 @@ export const Rift = (() => {
     G.Camera.x = pl.x; G.Camera.y = pl.y;
     G.Game.flash('#c9a6ff', 0.8);
     if (pl.bonds > 0) G.Game.offerBond();
+  }
+
+  // ---------------- premio de quien estaba sin conexión ----------------
+
+  /** Lo que el invitado habría recibido por los avisos del anfitrión al caer el legendario: logro y jefes, y el shiny. */
+  function legendReward(dex: number, shiny: boolean) {
+    const mon = G.DEX_BY[dex];
+    if (!mon) return;
+    G.Progress.event('kill', { types: mon.types, boss: true, legend: dex });
+    if (shiny && G.onShinyCaught) G.onShinyCaught({ dex, name: mon.name });
+  }
+
+  /** Premio de la última arena si se ganó y este ordenador no llegó a recibirlo (una sola vez por arena). */
+  function payLast(l) {
+    if (!l || typeof l.id !== 'string' || l.id.length > 60 || paid.has(l.id)) return;
+    paid.add(l.id);
+    if (!l.won || !G.DEX_BY[l.dex] || typeof l.type !== 'string') return;
+    G.Progress.event('rift', { type: l.type });
+    const pl = G.Game.player;
+    if (pl) {
+      pl.bonds++;
+      G.FX.dmgText(pl.x, pl.y - pl.bodyH - 10, '¡Vínculo!', '#ff8ad8', true);
+    }
+    legendReward(l.dex, !!l.shiny);
   }
 
   // ---------------- dibujo ----------------
@@ -272,6 +312,40 @@ export const Rift = (() => {
     get inArena() { return !!arena; },
     get timeLeft() { return arena ? Math.max(0, ARENA_TIME - arena.t) : 0; },
     debugOpen() { open(); },
+    /** Para pruebas: lo que se ha pagado y lo último que acabó. */
+    get debugPaid() { return { paid: [...paid], last }; },
+    /** Cooperativo: la grieta y la arena en curso (para reenviárselas a quien vuelve tras un corte). */
+    snapshot() {
+      return {
+        last,
+        rift: rift ? [Math.round(rift.x), Math.round(rift.y), Math.round(rift.ttl)] : null,
+        arena: arena ? {
+          cfg: { tx: arena.tx, ty: arena.ty, r: arena.r, dex: arena.dex, shiny: !!arena.shiny, type: arena.type, id: arena.id },
+          phase: arena.phase, t: Math.round(arena.t * 10) / 10
+        } : null
+      };
+    },
+    /**
+     * Cooperativo: pone la grieta y la arena como las tiene el anfitrión (el invitado se perdió el
+     * aviso). Entra o sale de la arena si hace falta; la recompensa de haber ganado no se repite.
+     */
+    restore(s) {
+      const a = s && s.arena;
+      const ok = a && a.cfg && Number.isFinite(a.cfg.tx) && Number.isFinite(a.cfg.ty) && G.DEX_BY[a.cfg.dex] && G.Tiles.ARENA_THEMES[a.cfg.type];
+      if (arena && (!a || (ok && (arena.tx !== a.cfg.tx || arena.ty !== a.cfg.ty)))) finish();
+      if (ok && !arena) begin(a.cfg);
+      if (ok && arena) {
+        arena.t = a.t;
+        if (a.phase === 'won') { const fresh = arena.phase === 'fight'; won(); if (fresh) legendReward(arena.dex, arena.shiny); }
+        else if (a.phase === 'lost') lost();
+      }
+      payLast(s && s.last);
+      if (!arena) {
+        const r = s && s.rift;
+        if (r && Number.isFinite(r[0]) && Number.isFinite(r[1]) && r[2] > 0) { if (!rift) show(r[0], r[1], r[2]); else rift.ttl = r[2]; }
+        else rift = null;
+      }
+    },
     /** Para pruebas: arena de un tipo ya. */
     debugArena(type) { start(type); },
     /** Para vídeos: la próxima grieta en la que entres será de este tipo. */

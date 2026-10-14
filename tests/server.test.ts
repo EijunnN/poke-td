@@ -10,7 +10,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { startServer } from '../server/index';
+import { startServer } from './helpers';
 
 let srv: ReturnType<typeof startServer>;
 let base = '';

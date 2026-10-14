@@ -2,12 +2,20 @@
 # -*- coding: utf-8 -*-
 """
 Descarga los sprites estilo Mundo Misterioso de SpriteCollab (normal y shiny)
-a assets/pokemon/ y genera js/data/sprites-meta.js.
+a public/assets/pokemon/ y genera src/data/sprites-meta.ts.
 
     python tools/fetch_sprites.py            # todos los que existan (1-1025)
     python tools/fetch_sprites.py 1 151      # sólo un rango de la Pokédex
+    python tools/fetch_sprites.py --only 12,16 --out /tmp/prueba
+                                             # sólo esos, y todo en otra carpeta (sin tocar el repo)
+    python tools/fetch_sprites.py --only 494   # actualiza ese Pokémon en el repo (PNG y su ficha)
 
 Se puede interrumpir y relanzar: lo ya bajado se reutiliza (tools/cache/).
+Después hay que pasar tools/hover_flags.py, que añade `hv` (los que flotan).
+
+El texto del .ts sale de render_sprites_meta(), una función pura (fichas ->
+texto); parse_sprites_meta() es su inversa. tools/check_generated.py las usa
+para comprobar que el archivo actual es exactamente lo que generaría este script.
 
 Fuente: https://github.com/PMDCollab/SpriteCollab  (CC BY-NC 4.0)
 Créditos: python tools/fetch_credits.py
@@ -23,23 +31,99 @@ Formato de SpriteCollab:
 
 Las hojas se guardan como PNG con paleta (sin pérdida): ocupan la mitad.
 """
+import argparse
 import io
 import json
 import os
 import re
 import sys
-import urllib.error
-import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
 from PIL import Image
 
+import netutil
+
 RAW = 'https://raw.githubusercontent.com/PMDCollab/SpriteCollab/master'
 BASE = RAW + '/sprite'
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OUT_ASSETS = os.path.join(ROOT, 'assets', 'pokemon')
-OUT_META = os.path.join(ROOT, 'js', 'data', 'sprites-meta.js')
+OUT_ASSETS = os.path.join(ROOT, 'public', 'assets', 'pokemon')
+OUT_META = os.path.join(ROOT, 'src', 'data', 'sprites-meta.ts')
 CACHE = os.path.join(ROOT, 'tools', 'cache')
+
+# Todo lo que rodea a las fichas en sprites-meta.ts: cabecera con los tipos y
+# el registro en G. Cualquier cambio de formato se hace aquí.
+HEADER = """import { G } from '../g';
+/* ============ sprites-meta.ts — GENERADO, no editar a mano ============
+ * Lo produce tools/fetch_sprites.py a partir de los AnimData.xml de
+ * SpriteCollab. Va en un .ts y no en un .json para que Vite lo empaquete
+ * con el juego y los tipos de abajo lo describan.
+ *
+ * Por Pokémon:    s ShadowSize · a animaciones · sh=1 si hay shiny
+ *                 sa geometría shiny que difiera de la normal (raro)
+ *                 sm animaciones que le faltan al shiny
+ *                 hv=1 si flota en su sprite (tools/hover_flags.py):
+ *                 pasa por encima de rocas y agua
+ * Por animación:  w,h fotograma · n fotogramas · r filas
+ *                 d duración de cada fotograma (1/60 s)
+ *                 ax,ay ancla al suelo dentro del fotograma
+ * Filas: 0 Down · 1 DownRight · 2 Right · 3 UpRight
+ *        4 Up   · 5 UpLeft    · 6 Left  · 7 DownLeft
+ */
+/** Animación de un Pokémon (ver cabecera). */
+export interface SpriteAnim {
+  w: number;
+  h: number;
+  n: number;
+  r: number;
+  d: number[];
+  ax: number;
+  ay: number;
+}
+
+/** Las 7 animaciones de cada Pokémon. */
+export type AnimName = 'Idle' | 'Walk' | 'Attack' | 'Shoot' | 'Charge' | 'Hurt' | 'Faint';
+
+/** Ficha de sprite de un Pokémon (ver cabecera). */
+export interface SpriteMeta {
+  s: number;
+  a: Record<AnimName, SpriteAnim>;
+  sh?: number;
+  hv?: number;
+  sa?: Partial<Record<AnimName, SpriteAnim>>;
+  sm?: string[];
+}
+
+export const SPRITE_META: Record<number, SpriteMeta> = {
+"""
+
+FOOTER = """};
+G.SPRITE_META = SPRITE_META;
+
+declare module '../g' {
+  interface Registry { SPRITE_META: typeof SPRITE_META }
+}
+"""
+
+META_LINE = re.compile(r'^  (\d+): (\{.*\}),$')
+
+
+def render_sprites_meta(metas):
+    """{dex: ficha} -> texto de sprites-meta.ts (las claves de cada ficha, en su orden)."""
+    out = [HEADER]
+    for dex in sorted(metas):
+        out.append(f'  {dex}: {json.dumps(metas[dex], separators=(",", ":"))},\n')
+    out.append(FOOTER)
+    return ''.join(out)
+
+
+def parse_sprites_meta(text):
+    """Texto de sprites-meta.ts -> {dex: ficha} (inversa de render_sprites_meta)."""
+    metas = {}
+    for ln in text.split('\n'):
+        m = META_LINE.match(ln)
+        if m:
+            metas[int(m.group(1))] = json.loads(m.group(2))
+    return metas
 
 WANT = ['Idle', 'Walk', 'Attack', 'Shoot', 'Charge', 'Hurt', 'Faint']
 FALLBACK = {
@@ -54,21 +138,10 @@ FALLBACK = {
 REQUIRED = {'Idle', 'Walk', 'Attack'}
 
 
-def fetch(url, retries=4):
-    last = None
-    for _ in range(retries):
-        try:
-            req = urllib.request.Request(url, headers={'User-Agent': 'pokesurvivor/1.0'})
-            with urllib.request.urlopen(req, timeout=60) as r:
-                return r.read()
-        except urllib.error.HTTPError as e:
-            if e.code == 404:
-                return None
-            last = e
-        except Exception as e:
-            last = e
-    print(f'    ! {url.split("/sprite/")[-1]} -> {last}')
-    return None
+def fetch(url):
+    """Bytes de la url; None si SpriteCollab dice que no existe (404).
+    Cualquier otro fallo levanta netutil.FetchError tras reintentar."""
+    return netutil.get_bytes(url)
 
 
 def parse_animdata(xml):
@@ -106,8 +179,9 @@ def resolve(anims, name, seen=None):
 def ground_anchor(png, w, h):
     try:
         im = Image.open(io.BytesIO(png)).convert('RGBA')
-    except Exception:
-        return None
+    except Exception as e:
+        # Una sombra bajada a medias daría un ancla inventada sin avisar.
+        raise netutil.FetchError(f'Shadow.png ilegible: {e!r}')
     px = im.crop((0, 0, w, h)).load()
     xs = ys = n = 0
     for y in range(h):
@@ -175,6 +249,14 @@ def download_set(url_base, out_dir, anims, geometry_from=None):
 
 
 def do_dex(job):
+    """(dex, ficha) o (dex, None) si no hay sprites; (dex, FetchError) si falló la descarga."""
+    try:
+        return do_dex_inner(job)
+    except Exception as e:
+        return job[0], netutil.FetchError(f'{job[0]}: {e}')
+
+
+def do_dex_inner(job):
     dex, want_shiny = job
     cache_file = os.path.join(CACHE, f'{dex}.json')
     out_dir = os.path.join(OUT_ASSETS, str(dex))
@@ -212,33 +294,71 @@ def do_dex(job):
     return dex, meta
 
 
-def main():
-    lo = int(sys.argv[1]) if len(sys.argv) > 1 else 1
-    hi = int(sys.argv[2]) if len(sys.argv) > 2 else 1025
+def main(argv=None):
+    global OUT_ASSETS, OUT_META, CACHE
+    ap = argparse.ArgumentParser(description='Baja los sprites de SpriteCollab y escribe sprites-meta.ts.')
+    ap.add_argument('lo', nargs='?', type=int, default=1, help='primer número de Pokédex (1)')
+    ap.add_argument('hi', nargs='?', type=int, default=1025, help='último número de Pokédex (1025)')
+    ap.add_argument('--only', help='sólo estos números de Pokédex, separados por comas. Sin --out los '
+                                   'actualiza en su sitio: baja sus PNG a public/assets/pokemon y cambia '
+                                   'sólo sus fichas en src/data/sprites-meta.ts (luego, hover_flags.py)')
+    ap.add_argument('--out', help='carpeta de trabajo (pokemon/, cache/ y sprites-meta.ts) en vez de '
+                                  'public/assets/pokemon, tools/cache y src/data')
+    args = ap.parse_args(argv)
+    if args.out:
+        OUT_ASSETS = os.path.join(args.out, 'pokemon')
+        OUT_META = os.path.join(args.out, 'sprites-meta.ts')
+        CACHE = os.path.join(args.out, 'cache')
+    lo, hi = args.lo, args.hi
+    only = {int(x) for x in args.only.split(',')} if args.only else None
     os.makedirs(OUT_ASSETS, exist_ok=True)
     os.makedirs(CACHE, exist_ok=True)
 
     print('Leyendo tracker.json de SpriteCollab...')
-    tracker = json.loads(fetch(RAW + '/tracker.json').decode('utf-8'))
+    try:
+        raw = fetch(RAW + '/tracker.json')
+        if raw is None:
+            raise netutil.FetchError('tracker.json -> 404')
+        tracker = json.loads(raw.decode('utf-8'))
+    except Exception as e:
+        print(f'ERROR: no se pudo leer tracker.json: {e}', file=sys.stderr)
+        return 1
     jobs = []
-    for dex in range(lo, hi + 1):
+    for dex in sorted(only) if only else range(lo, hi + 1):
         e = tracker.get(f'{dex:04d}')
         if not e or not REQUIRED <= set(e.get('sprite_files', {})):
             continue
         s = e.get('subgroups', {}).get('0000', {}).get('subgroups', {}).get('0001', {})
         jobs.append((dex, {'Idle', 'Walk'} <= set(s.get('sprite_files', {}))))
-    print(f'{len(jobs)} Pokemon con sprites en {lo}-{hi} ({sum(1 for _, s in jobs if s)} con shiny)')
+    print(f'{len(jobs)} Pokemon con sprites en {args.only or f"{lo}-{hi}"} ({sum(1 for _, s in jobs if s)} con shiny)')
 
-    metas, missing, done = {}, [], 0
+    metas, failed, done = {}, {}, 0
     with ThreadPoolExecutor(max_workers=16) as ex:
         for dex, meta in ex.map(do_dex, jobs):
             done += 1
-            if meta:
+            if isinstance(meta, Exception):
+                failed[dex] = str(meta)
+            elif meta:
                 metas[dex] = meta
             else:
-                missing.append(dex)
+                # El tracker dice que tiene sprites y no salió ninguno: algo no cuadra.
+                failed[dex] = 'sin AnimData.xml o sin animaciones Idle/Walk/Attack'
             if done % 50 == 0 or done == len(jobs):
                 print(f'  {done}/{len(jobs)}', flush=True)
+
+    if failed:
+        # Lo ya bajado queda en caché: relanzando sólo se repite lo que falló.
+        print(f'\nERROR: fallaron {len(failed)} Pokemon; no se escribe {os.path.relpath(OUT_META, ROOT)}:', file=sys.stderr)
+        for dex, why in sorted(failed.items()):
+            print(f'  {dex}: {why}', file=sys.stderr)
+        return 1
+
+    if only and not args.out:
+        # Actualización en su sitio: el resto de fichas se quedan como están.
+        with io.open(OUT_META, encoding='utf-8', newline='') as f:
+            rest = parse_sprites_meta(f.read())
+        rest.update(metas)
+        metas = rest
 
     # Compatibilidad con cachés antiguas: anota qué le falta al shiny.
     for dex, m in metas.items():
@@ -254,34 +374,13 @@ def main():
         if d not in metas and os.path.isdir(os.path.join(OUT_ASSETS, str(d))):
             metas[d] = json.load(open(os.path.join(CACHE, fn), encoding='utf-8'))
 
-    lines = [
-        '/* ============ sprites-meta.js — GENERADO, no editar a mano ============',
-        ' * Lo produce tools/fetch_sprites.py a partir de los AnimData.xml de',
-        ' * SpriteCollab. Va en un .js y no en un .json porque fetch() está',
-        ' * bloqueado en file:// y el juego se abre con doble clic.',
-        ' *',
-        ' * Por Pokémon:    s ShadowSize · a animaciones · sh=1 si hay shiny',
-        ' *                 sa geometría shiny que difiera de la normal (raro)',
-        ' *                 sm animaciones que le faltan al shiny',
-        ' * Por animación:  w,h fotograma · n fotogramas · r filas',
-        ' *                 d duración de cada fotograma (1/60 s)',
-        ' *                 ax,ay ancla al suelo dentro del fotograma',
-        ' * Filas: 0 Down · 1 DownRight · 2 Right · 3 UpRight',
-        ' *        4 Up   · 5 UpLeft    · 6 Left  · 7 DownLeft',
-        ' */',
-        'G.SPRITE_META = {',
-    ]
-    for dex in sorted(metas):
-        lines.append(f'  {dex}: {json.dumps(metas[dex], separators=(",", ":"))},')
-    lines += ['};', '']
     with io.open(OUT_META, 'w', encoding='utf-8', newline='\n') as f:
-        f.write('\n'.join(lines))
+        f.write(render_sprites_meta(metas))
 
     size = sum(os.path.getsize(os.path.join(dp, fn)) for dp, _, fns in os.walk(OUT_ASSETS) for fn in fns)
     print(f'\n{len(metas)} Pokemon ({sum(1 for m in metas.values() if m.get("sh"))} con shiny), {size / 1e6:.1f} MB')
-    if missing:
-        print(f'Fallaron ({len(missing)}): {missing}')
+    return 0
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

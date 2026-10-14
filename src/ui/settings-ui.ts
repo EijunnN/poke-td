@@ -133,12 +133,13 @@ export const SettingsUI = (() => {
       return;
     }
     const nick = G.Social.me ? G.Social.me.name : (G.DB.user || '');
-    const kind = G.DB.mode === 'local' ? 'Cuenta de este navegador' : G.DB.nameAccount ? 'Nombre y contraseña' : 'Google';
+    const kind = G.DB.mode === 'local' ? 'Cuenta de este navegador' : 'Nombre y contraseña';
     box.innerHTML = section('Cuenta')
       + `<div class="set-row"><div class="grow"><b>Apodo</b><small>Es único y no se puede cambiar.</small></div><span class="gold" translate="no">${esc(nick)}</span></div>`
       + `<div class="set-row"><div class="grow"><b>Tipo de cuenta</b></div><span>${esc(kind)}</span></div>`
       + `<div class="set-row"><div class="grow"><b>Partida</b></div><span>${esc(SYNC[st] || st)}</span></div>`
       + `<div class="row wrap" style="gap:8px;margin-top:12px">
+           <button class="btn" id="set-pass">Cambiar contraseña</button>
            <button class="btn" id="set-logout">Cerrar sesión</button>
            <button class="btn danger" id="set-delete">Borrar cuenta</button>
          </div><p class="note" id="set-msg"></p>`;
@@ -153,6 +154,10 @@ export const SettingsUI = (() => {
     box.querySelectorAll('[data-lang]').forEach(b => { b.onclick = () => { if (b.dataset.lang !== G.I18n.lang) G.I18n.set(b.dataset.lang); }; });
     const lo = $('set-login'); if (lo) lo.onclick = () => { close(); leave(); };
     const out = $('set-logout'); if (out) out.onclick = () => { close(); leave(); };
+    const pw = $('set-pass');
+    if (pw) pw.onclick = async () => {
+      if (await askNewPassword()) { $('set-msg').textContent = G.T('Contraseña cambiada.'); G.UI.toast('Contraseña cambiada'); }
+    };
     const del = $('set-delete');
     if (del) del.onclick = async () => {
       const ok = await G.UI.confirmDelete();
@@ -165,6 +170,46 @@ export const SettingsUI = (() => {
       G.Audio.music(null);
       G.Flow.toLogin();
     };
+  }
+
+  /**
+   * Ventana para cambiar la contraseña: la actual y la nueva dos veces.
+   * @returns true si se ha cambiado
+   */
+  function askNewPassword() {
+    return new Promise<boolean>(done => {
+      const el = document.createElement('section');
+      el.className = 'scr dim';
+      el.style.zIndex = '70';
+      el.innerHTML = `<form class="box" style="max-width:380px;width:100%" autocomplete="off">
+        <h3>Cambiar contraseña</h3>
+        <label>Contraseña actual</label>
+        <input class="field" type="password" maxlength="64" autocomplete="current-password" name="old" style="width:100%">
+        <label>Contraseña nueva</label>
+        <input class="field" type="password" maxlength="64" autocomplete="new-password" name="pass" style="width:100%">
+        <label>Repite la nueva</label>
+        <input class="field" type="password" maxlength="64" autocomplete="new-password" name="pass2" style="width:100%">
+        <p class="err" data-err></p>
+        <div style="display:flex;gap:8px;margin-top:8px;justify-content:flex-end;flex-wrap:wrap">
+          <button class="btn ghost" type="button" data-a="no">Cancelar</button>
+          <button class="btn gold" type="submit">Cambiar contraseña</button>
+        </div></form>`;
+      document.body.appendChild(el);
+      const form = el.querySelector('form'), err = el.querySelector<HTMLElement>('[data-err]');
+      const val = (n: string) => (form.elements.namedItem(n) as HTMLInputElement).value;
+      el.querySelector<HTMLElement>('[data-a=no]').onclick = () => { el.remove(); done(false); };
+      form.onsubmit = async e => {
+        e.preventDefault();
+        if (val('pass') !== val('pass2')) { err.textContent = G.T('Las dos contraseñas nuevas no coinciden.'); return; }
+        const ok = el.querySelector<HTMLButtonElement>('[type=submit]');
+        ok.disabled = true;
+        const r = await G.DB.changePassword(val('old'), val('pass'));
+        ok.disabled = false;
+        if (!r.ok) { err.textContent = r.error; return; }
+        el.remove(); done(true);
+      };
+      (form.elements.namedItem('old') as HTMLInputElement).focus();
+    });
   }
 
   /** Cerrar sesión (si estás en una partida, se abandona). */

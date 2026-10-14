@@ -15,6 +15,13 @@
   },
   "include": [
     "server",
-    "tests/server.test.ts"
+    "tests/coop.fast.test.ts",
+    "tests/ranking.test.ts",
+    "tests/realtime.smoke.test.ts",
+    "tests/save-rules.test.ts",
+    "tests/server.test.ts",
+    "tests/social.test.ts",
+    "tests/helpers.ts",
+    "tests/account.test.ts"
   ]
 }

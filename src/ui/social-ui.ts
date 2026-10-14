@@ -160,7 +160,7 @@ import { G } from '../g';
         const room = G.Social.room;
         if (room) {
           G.Net.open(room.id, room.isHost, room.host);
-          G.Net.syncMembers(room.members.map(m => m.uid));
+          G.Net.syncMembers(room.members.map(m => m.uid), room.members.filter(m => m.away).map(m => m.uid));
         } else if (G.Net.open_) G.Net.close();
         if (what === 'room-closed') {
           G.UI.toast('La sala se ha cerrado', 2600);
@@ -186,7 +186,7 @@ import { G } from '../g';
       if (m.uid === room.host) return 'Anfitrión';
       if (!room.isHost) return m.uid === G.Social.uid ? 'Tú' : 'En la sala';
       const mode = G.Net.mode(m.uid);
-      return mode === 'direct' ? 'Conectado' : mode === 'relay' ? 'Conectado (por servidor)' : mode === 'failed' ? 'No se pudo conectar (reintentando…)' : 'Conectando…';
+      return mode === 'relay' ? 'Conectado' : 'Conectando…';
     }
 
     function render() {
@@ -247,12 +247,10 @@ import { G } from '../g';
       const btn = $('lobby-start');
       btn.classList.toggle('hidden', !room.isHost);
       const connecting = ms.some(m => m.uid !== room.host && G.Net.mode(m.uid) === 'connecting');
-      const failed = ms.some(m => m.uid !== room.host && G.Net.mode(m.uid) === 'failed');
-      btn.disabled = !room.isHost || ms.length < 2 || connecting || failed;
+      btn.disabled = !room.isHost || ms.length < 2 || connecting;
       btn.textContent = 'Empezar partida (' + ms.length + '/' + G.Social.MAX_PLAYERS + ')';
       $('lobby-note').textContent = !room.isHost ? 'Cuando el anfitrión empiece, entraréis todos a la vez.'
         : ms.length < 2 ? 'Necesitas al menos un amigo en la sala.'
-        : failed ? 'No se puede conectar con algún amigo: su red (o la tuya) no deja jugar en grupo. Probad con otra wifi o datos móviles; se reintenta solo.'
         : connecting ? 'Conectando con tus amigos…' : 'La partida empieza para todos a la vez.';
     }
 
