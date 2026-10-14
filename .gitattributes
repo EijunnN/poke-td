@@ -1,0 +1,8 @@
+# Saltos de línea: siempre LF, en el repositorio y en disco (Windows incluido).
+# Así git no avisa de conversiones en cada commit y el código es igual en la VPS.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.ico binary
+*.ttf binary
