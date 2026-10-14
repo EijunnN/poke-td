@@ -141,7 +141,8 @@ async function playTD(seed: number) {
     const info = G.TD.info;
     return {
       state: G.Game.state, time: round(G.Game.st.time), wave: info.wave, lives: info.lives, leaked: info.leaked, phase: info.phase,
-      towers: info.towers.map((t: any) => ({ dex: t.dex, x: round(t.x), y: round(t.y), shots: t.shots })),
+      money: info.money, heroLevel: info.heroLevel, powers: info.powers,
+      towers: info.towers.map((t: any) => ({ dex: t.dex, level: t.level, spent: t.spent, x: round(t.x), y: round(t.y), shots: t.shots })),
       player: pl ? nums(pl) : null, enemies: en.length, enemySum: sum,
     };
   }
@@ -151,7 +152,7 @@ async function playTD(seed: number) {
   G.DB.playAsGuest();
   G.DB.save.partner = 25;
   G.DB.grant(25, 'starter');
-  G.Game.start('td');
+  G.Game.start('td', { team: [4, 7, 1, 152] });
 
   const snaps: any[] = [];
   let held: string | null = null;
@@ -169,9 +170,22 @@ async function playTD(seed: number) {
         const d = far ? (Math.abs(ox) > Math.abs(oy) ? (ox > 0 ? 'KeyA' : 'KeyD') : (oy > 0 ? 'KeyW' : 'KeyS')) : DIRS[Math.floor(h.rnd() * 4)];
         if (f % 60 === 0) { held = d; key('keydown', held); }
       }
-    } else if (G.Game.state !== 'over' && f % 20 === 0) {
-      // Las dos primeras cartas son torres: casi siempre una torre, a veces la del héroe.
-      const d = 'Digit' + (h.rnd() < 0.8 ? 1 + Math.floor(h.rnd() * 2) : 3); key('keydown', d); key('keyup', d);
+    }
+    // Con monedas: compra torres de su equipo (hasta 5), mejora alguna, elige la evolución y adelanta oleadas.
+    if (G.Game.state === 'playing' && !G.TD.placing && f % 10 === 0) {
+      const info = G.TD.info;
+      if (info.evo) G.TD.debugEvolve(info.evo[0]);
+      else if (info.towers.length < 5 && f % 20 === 0) G.TD.debugBuy(info.team[info.towers.length % info.team.length]);
+      else if (info.towers.length) G.TD.debugUpgrade(Math.floor(h.rnd() * info.towers.length));
+      if (info.phase === 'break' && f % 600 === 300) G.TD.debugCallWave();
+    }
+    // Torre elegida: la planta en el primer sitio válido alrededor de (100, 120), junto al camino.
+    if (G.Game.state === 'playing' && G.TD.placing) {
+      let done = false;
+      for (let r = 40; r <= 400 && !done; r += 20) for (let k = 0; k < 16 && !done; k++) {
+        const x = 100 + Math.cos(k * 0.3927) * r, y = 120 + Math.sin(k * 0.3927) * r;
+        if (G.TD.canPlace(x, y)) { G.TD.debugPlace(x, y); done = true; }
+      }
     }
     h.frame();
     if (f % 1800 === 1799) snaps.push(snap());
@@ -301,8 +315,12 @@ async function main() {
     const rep = diff(a, td[1]); if (rep) fails.push('caso td: no es reproducible — ' + rep);
     if (mid.wave < 3) fails.push('caso td: en 90 s sólo llega a la oleada ' + mid.wave);
     if (mid.towers.length < 2) fails.push('caso td: tras 90 s hay ' + mid.towers.length + ' torres');
+    if (!mid.towers.some((t: any) => t.level > 1)) fails.push('caso td: ninguna torre se ha mejorado');
+    if (a.some((s: any) => s.money < 0)) fails.push('caso td: monedas en negativo');
     if (!(mid.player.kills > 0)) fails.push('caso td: no ha caído ningún enemigo');
     if (!mid.towers.some((t: any) => t.shots > 0)) fails.push('caso td: ninguna torre ha atacado');
+    // Charmander quema y Squirtle arrastra: si no sale ninguno, los golpes no llegan a los poderes de tipo.
+    if (!(mid.powers.fire > 0)) fails.push('caso td: el Fuego no quema (poderes: ' + JSON.stringify(mid.powers) + ')');
     if (last.state !== 'over') fails.push(`caso td: al abandonar la partida no acaba (estado '${last.state}')`);
     if (golden && RECORD_ONLY !== 'td') {
       const d = golden.td ? diff(golden.td, a) : 'no está grabado (graba con --record-only td)';

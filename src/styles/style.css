@@ -657,6 +657,7 @@ body.touch kbd, body.touch .card .key, body.touch .kbd-hint { display: none !imp
 
 /* ---------- ajustes ---------- */
 #scr-settings { z-index: 60; }
+#scr-guide { z-index: 62; }      /* por delante de Ajustes y de los favoritos de la Defensa */
 .box.settings { width: min(640px, 100%); max-height: calc(100dvh - 24px); display: flex; flex-direction: column; }
 .set-body { overflow-y: auto; padding-right: 4px; min-height: 0; }
 #set-tabs { flex-wrap: wrap; }
@@ -775,6 +776,16 @@ a.btn { text-decoration: none; display: inline-block; color: var(--ink); }
 .news-btn.new .dot { display: block; }
 .box.news-box { width: min(640px, 100%); max-height: calc(100dvh - 90px); display: flex; flex-direction: column; }
 .news-body { overflow-y: auto; padding-right: 4px; }
+/* Cómo se juega (ui/guide-ui.ts) */
+.guide-body h3 { color: var(--gold); margin: 14px 0 6px; font-size: 17px; }
+.guide-body p, .guide-body li { line-height: 1.45; }
+.guide-body ul, .guide-body ol { margin: 4px 0 8px; padding-left: 20px; }
+.guide-body li { margin: 4px 0; }
+.guide-body kbd { display: inline-block; min-width: 1.4em; padding: 0 4px; margin: 0 1px; text-align: center; border: 1px solid rgba(255,255,255,.35); border-bottom-width: 2px; border-radius: 4px; font: inherit; font-size: .9em; }
+.guide-table { width: 100%; border-collapse: collapse; font-size: 14px; margin: 4px 0 8px; }
+.guide-table td { padding: 4px 6px; border-bottom: 1px solid rgba(255,255,255,.08); vertical-align: top; }
+.guide-table.waves tr.boss td { color: var(--gold); }
+.guide-type { display: inline-block; font-style: normal; font-size: 11px; padding: 0 6px; border-radius: 6px; color: #10131c; font-weight: 700; line-height: 16px; white-space: nowrap; }
 .news-day { padding-bottom: 6px; border-bottom: 1px solid rgba(255,255,255,.1); }
 .news-day:last-child { border-bottom: 0; }
 .news-day h3 { color: var(--gold); margin: 14px 0 6px; font-size: 18px; }

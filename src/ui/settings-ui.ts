@@ -8,7 +8,7 @@ export const SettingsUI = (() => {
   const $ = G.UI.$;
   const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const VERSION = '1.2 · 2026-10-09';
-  const REPO = 'https://github.com/JPTER78/pokesurvivor';
+  const REPO = 'https://github.com/EijunnN/poke-td';
   let tab = 'sound';
 
   function init() {
@@ -113,10 +113,9 @@ export const SettingsUI = (() => {
              <li><b>Fuente:</b> Pixelify Sans (OFL).</li>
            </ul>`
         + `<div class="row wrap" style="justify-content:center;gap:8px">
-             ${(window as any).PS_PAGES ? `<a class="btn small" href="${G.I18n.lang === 'en' ? 'en/guide/' : 'guia/'}" target="_blank">Guía y preguntas</a>
-             <a class="btn small" href="${G.I18n.lang === 'en' ? 'en/pokedex/' : 'pokedex/'}" target="_blank">Pokédex</a>` : ''}
+             <button class="btn small" data-guide>Cómo se juega</button>
              <button class="btn small" data-legal>Aviso legal y privacidad</button>
-             <a class="btn small" href="contacto/" target="_blank" rel="noopener">Contacto</a>
+             <a class="btn small" href="${REPO}/issues" target="_blank" rel="noopener">Contacto</a>
              <a class="btn small" href="${REPO}" target="_blank" rel="noopener">Código (GitHub)</a>
            </div>`;
     }
@@ -151,6 +150,7 @@ export const SettingsUI = (() => {
       b.onclick = () => { const v = b.dataset.v; G.Settings.set(b.dataset.k, isNaN(+v) ? v : +v); render(); };
     });
     const full = $('set-full'); if (full) full.onclick = toggleFull;
+    box.querySelectorAll('[data-guide]').forEach(b => { b.onclick = () => G.GuideUI.open(); });
     box.querySelectorAll('[data-lang]').forEach(b => { b.onclick = () => { if (b.dataset.lang !== G.I18n.lang) G.I18n.set(b.dataset.lang); }; });
     const lo = $('set-login'); if (lo) lo.onclick = () => { close(); leave(); };
     const out = $('set-logout'); if (out) out.onclick = () => { close(); leave(); };

@@ -13,7 +13,7 @@ export const MenuUI = (() => {
       b.onclick = () => {
         const go = b.dataset.go;
         if (go === 'play') { if (G.Social.room) G.LobbyUI.open(); else G.Flow.play(); }
-        else if (go === 'td') G.Game.start('td');
+        else if (go === 'td') G.TD.openTeam();
         else if (go === 'dex') openDex();
         else if (go === 'upgrades') openUpgrades();
         else if (go === 'gacha') G.GachaUI.open();

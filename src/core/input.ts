@@ -12,12 +12,20 @@ export const Input = (() => {
 
   function code(e) { return (e.code || e.key).toLowerCase(); }
 
+  /** ¿Se está escribiendo en un campo? Entonces las teclas son del campo, no del juego. */
+  function typing(e: KeyboardEvent) {
+    const el = e.target as HTMLElement | null;
+    return !!el && (el.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName));
+  }
+
   addEventListener('keydown', e => {
+    if (typing(e)) return;
     const c = code(e);
     if (!down.has(c)) pressed.add(c);
     down.add(c);
-    // Evita que el navegador haga scroll con flechas/espacio durante el juego.
-    if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'space', 'tab'].includes(c)) e.preventDefault();
+    // Evita que el navegador haga scroll con flechas/espacio durante la partida. En los
+    // menús no: ahí Tab, flechas y Espacio sirven para moverse entre botones y pulsarlos.
+    if (G.Game && G.Game.state !== 'ui' && ['arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'space', 'tab'].includes(c)) e.preventDefault();
   });
   addEventListener('keyup', e => down.delete(code(e)));
   addEventListener('blur', () => { down.clear(); });

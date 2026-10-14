@@ -5,9 +5,13 @@ Juego de Pokémon para navegador y móvil con dos modos:
 - **Supervivencia** (bullet-heaven / roguelike, estilo Survivor.io): llevas a tu
   compañero, que ataca solo, y aguantas oleadas cada vez más duras, con jefes,
   grietas con legendarios, climas, objetos y movimientos que evolucionan.
-- **Defensa** (tower defense, *prototipo*): los enemigos siguen un camino hasta tu
-  base. Llevas a tu compañero y, entre oleadas, eliges 1 de 3 cartas para plantar a
-  otros Pokémon de tu colección como torres, mejorarlos o mejorar al tuyo.
+- **Defensa** (tower defense): 30 oleadas con tema fijo (bichos, voladores,
+  fantasmas...), un jefe cada 5 y un legendario cada 10, hasta Mewtwo. Con las
+  monedas de la partida compras en la tienda cualquier Pokémon de tu colección y lo
+  plantas donde quieras como torre; al mejorarlo evoluciona. Cada tipo tiene su
+  poder (Hielo congela, Fuego quema, Eléctrico paraliza, Psíquico confunde...) y la
+  tabla de tipos de los juegos manda. Los Pokémon de apoyo (Scyther, Togekiss, Lucario,
+  Meowth, Noctowl) no atacan: dan auras de daño, velocidad, crítico, monedas o alcance.
 
 Sprites de *Pokémon Mundo Misterioso*, **966 Pokémon de las 9 generaciones**,
 shinies, gacha por región, misiones, logros, ranking, amigos y partidas en grupo

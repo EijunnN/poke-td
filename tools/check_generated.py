@@ -11,6 +11,8 @@ byte a byte:
 
   - src/data/pokedex.ts       <- fetch_pokedex.render_pokedex
   - src/data/sprites-meta.ts  <- fetch_sprites.render_sprites_meta
+  - src/data/evolutions.ts    <- fetch_evolutions.render_evolutions, más sanidad de
+                                 datos (todo en la Pokédex, sin ciclos, STAGE coherente)
   - hover_flags.mark_hover    sobre public/assets/pokemon/ no cambia nada
   - CREDITS.md                <- fetch_credits.render_credits
   - public/assets/icons/*.png <- make_icons.icon (píxel a píxel)
@@ -23,7 +25,7 @@ Opciones, más lentas (escriben sólo en una carpeta temporal, nunca en el repo)
              public/assets/fonts tabla a tabla (glifos incluidos), ignorando
              head.modified y el checksum, que cambian en cada generación.
   --red      descarga unos pocos Pokémon (REDES) con los fetch_* y compara con
-             lo que hay: filas de la Pokédex, fichas de sprites-meta (sin `hv`,
+             lo que hay: filas de la Pokédex, cadenas evolutivas (EVO_REDES), fichas de sprites-meta (sin `hv`,
              que lo pone hover_flags), PNG píxel a píxel y créditos. Si PokeAPI
              o SpriteCollab ya no devuelven lo mismo, falla y dice qué difiere.
   --pokemon  con --red, otros Pokémon: --red --pokemon 494,847,908
@@ -47,6 +49,7 @@ from PIL import Image, ImageChops
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import fetch_credits       # noqa: E402
+import fetch_evolutions    # noqa: E402
 import fetch_pokedex       # noqa: E402
 import fetch_sprites       # noqa: E402
 import hover_flags         # noqa: E402
@@ -59,6 +62,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # Para --red: uno con hv y shiny (12), shiny con geometría distinta (16 y 909, tienen `sa`),
 # sin shiny (588), legendario (144) y de gen 9 (909).
 REDES = [12, 16, 144, 588, 909]
+# Para --red, cadenas evolutivas: lineal de tres (1), con preevolución (25), Eevee (133),
+# Tyrogue (236) y Wurmple (265), ramificadas, y uno sin evolución (150).
+EVO_REDES = [1, 25, 133, 236, 265, 150]
 
 
 def read(path):
@@ -91,6 +97,24 @@ def check_pokedex():
         print('FALLA  src/data/pokedex.ts: no se encontró ninguna fila')
         return False
     return same_text(f'src/data/pokedex.ts ({len(rows)} filas)', text, fetch_pokedex.render_pokedex(rows))
+
+
+def check_evolutions():
+    path = os.path.join(ROOT, 'src', 'data', 'evolutions.ts')
+    text = read(path)
+    evolutions, stage = fetch_evolutions.parse_evolutions(text)
+    if not evolutions:
+        print('FALLA  src/data/evolutions.ts: no se encontró ninguna evolución')
+        return False
+    ok = same_text(f'src/data/evolutions.ts ({len(evolutions)} con evolución, {len(stage)} en alguna cadena)',
+                   text, fetch_evolutions.render_evolutions(evolutions, stage))
+    dexes = {r['dex'] for r in fetch_pokedex.parse_pokedex(read(os.path.join(ROOT, 'src', 'data', 'pokedex.ts')))}
+    problems = fetch_evolutions.validate(evolutions, stage, dexes)
+    for p in problems[:10]:
+        print(f'FALLA  evolutions.ts: {p}')
+    if not problems:
+        print('OK     evolutions.ts: todo en la Pokédex, sin ciclos y STAGE coherente con EVOLUTIONS')
+    return ok and not problems
 
 
 def check_sprites_meta():
@@ -188,6 +212,7 @@ def check_fallos():
                 expect('netutil: sin red levanta FetchError', True)
             for name, main, fname in (('fetch_pokedex', fetch_pokedex.main, 'pokedex.ts'),
                                       ('fetch_sprites', fetch_sprites.main, 'sprites-meta.ts'),
+                                      ('fetch_evolutions', fetch_evolutions.main, 'evolutions.ts'),
                                       ('fetch_credits', fetch_credits.main, 'CREDITS.md')):
                 out = os.path.join(tmp, name)
                 err = io.StringIO()
@@ -252,6 +277,9 @@ def check_red(tmp, dexes=REDES):
         print(f'OK     PokeAPI: {len(dexes)} filas iguales a src/data/pokedex.ts')
     ok &= ok_pd
 
+    # PokeAPI -> cadenas evolutivas (sólo las de EVO_REDES; se compara lo que toca a esas cadenas)
+    ok &= check_red_evolutions()
+
     # SpriteCollab -> fichas y PNG
     sp = os.path.join(tmp, 'sprites')
     if fetch_sprites.main(['--only', ','.join(map(str, dexes)), '--out', sp]):
@@ -314,6 +342,38 @@ def check_red(tmp, dexes=REDES):
     return ok
 
 
+def check_red_evolutions(dexes=EVO_REDES):
+    try:
+        urls = sorted({fetch_evolutions.chain_url_of(d) for d in dexes})
+    except netutil.FetchError as e:
+        print(f'FALLA  PokeAPI cadenas evolutivas: {e}')
+        return False
+    chains, failed = fetch_evolutions.fetch_chains(urls, verbose=False)
+    if failed:
+        print(f'FALLA  PokeAPI cadenas evolutivas: {failed}')
+        return False
+    allowed = fetch_evolutions.allowed_dexes()
+    evo, stage = fetch_evolutions.build_evolutions(chains, allowed)
+    have_evo, have_stage = fetch_evolutions.parse_evolutions(read(os.path.join(ROOT, 'src', 'data', 'evolutions.ts')))
+    members = set()
+
+    def collect(node):
+        members.add(fetch_evolutions.species_id(node))
+        for n in node['evolves_to']:
+            collect(n)
+    for c in chains:
+        collect(c['chain'])
+    ok = True
+    for d in sorted(members & allowed):
+        if evo.get(d) != have_evo.get(d) or stage.get(d) != have_stage.get(d):
+            print(f'FALLA  PokeAPI evolución {d}: cambió\n    archivo:  {have_evo.get(d)} etapa {have_stage.get(d)}'
+                  f'\n    PokeAPI:  {evo.get(d)} etapa {stage.get(d)}')
+            ok = False
+    if ok:
+        print(f'OK     PokeAPI: {len(chains)} cadenas ({len(members & allowed)} Pokémon) iguales a src/data/evolutions.ts')
+    return ok
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description='Comprueba que los archivos generados coinciden con sus scripts.')
     ap.add_argument('--fuentes', action='store_true', help='regenera las .ttf y las compara')
@@ -322,7 +382,7 @@ def main(argv=None):
     ap.add_argument('--todo', action='store_true', help='todo lo anterior')
     args = ap.parse_args(argv)
 
-    results = [check_pokedex(), check_sprites_meta(), check_credits(), check_icons(), check_fallos()]
+    results = [check_pokedex(), check_evolutions(), check_sprites_meta(), check_credits(), check_icons(), check_fallos()]
     if args.fuentes or args.red or args.todo:
         with tempfile.TemporaryDirectory(prefix='check_generated_') as tmp:
             if args.fuentes or args.todo:

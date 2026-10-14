@@ -518,7 +518,7 @@ G.I18n.add({
   'Este mes ya no quedan plazas para cuentas nuevas (vuelven el 1 de {x}). Mientras, puedes jugar como invitado.': 'There are no new account slots left this month (they reopen on {x} 1). Meanwhile, you can play as a guest.',
   'El juego ha fallado: tu partida se ha guardado hasta aquí': 'The game crashed: your run has been saved up to this point',
   'Pausa: esperando a {x} (anfitrión)…': 'Paused: waiting for {x} (host)…',
-  'Novedades': "What's new",
+  'Novedades': "What's new", 'Cómo se juega': 'How to play', '¿Cómo se juega?': 'How to play?',
   'Hay una versión nueva del juego: actualizando en {x} s…': 'A new version of the game is out: updating in {x} s…',
   'No se pudo conectar (reintentando…)': 'Could not connect (retrying…)',
   'No se puede conectar con algún amigo: su red (o la tuya) no deja jugar en grupo. Probad con otra wifi o datos móviles; se reintenta solo.':

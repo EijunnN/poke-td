@@ -26,4 +26,4 @@ docs/CONTACTOS_CREADORES.md
 dist/
 
 # Base de datos del servidor (SQLite)
-data/
+/data/

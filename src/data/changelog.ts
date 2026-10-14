@@ -36,9 +36,17 @@ export const CHANGELOG: ChangelogEntry[] = [
     ['Victini, Meowscarada y Barraskewda tienen los sprites nuevos de SpriteCollab, y Barraskewda ya tiene versión shiny.',
      'Victini, Meowscarada and Barraskewda have the new SpriteCollab sprites, and Barraskewda now has a shiny version.']
   ] },
-  { d: '2026-10-14', title: ['Modo Defensa (prototipo)', 'Defense mode (prototype)'], new: [
-    ['Modo Defensa, en pruebas: los enemigos siguen un camino hasta tu base. Llevas a tu compañero y, entre oleadas, eliges 1 de 3 cartas para plantar a otros Pokémon como torres, mejorarlos o mejorar al tuyo. Todavía no da recompensas.',
-     'Defense mode, in testing: enemies follow a path to your base. You control your partner and, between waves, pick 1 of 3 cards to plant other Pokémon as towers, upgrade them or upgrade your own. It gives no rewards yet.']
+  { d: '2026-10-14', title: ['Modo Defensa', 'Defense mode'], new: [
+    ['Modo Defensa, en pruebas: 30 oleadas que siguen un camino hasta tu base, cada una con su tema (bichos, voladores, fantasmas...) y una pista para defenderte. Cada 5 sale un jefe y cada 10 un legendario, hasta Mewtwo.',
+     'Defense mode, in testing: 30 waves follow a path to your base, each with its theme (bugs, flyers, ghosts...) and a hint on how to defend. Every 5th wave brings a boss and every 10th a legendary, up to Mewtwo.'],
+    ['Con las monedas de la partida compras en la tienda cualquier Pokémon de tu colección y lo plantas donde quieras como torre. Al mejorarlo sube su ataque y evoluciona en los niveles 3 y 5. Puedes elegir a quién ataca y venderlo.',
+     'With the coins you earn in the game you buy any Pokémon from your collection in the shop and plant it anywhere as a tower. Upgrading it raises its attack and it evolves at levels 3 and 5. You can choose who it attacks and sell it.'],
+    ['Cada tipo tiene su poder: Hielo congela, Fuego quema, Eléctrico paraliza, Psíquico confunde, Agua arrastra hacia atrás, Siniestro remata... y la tabla de tipos manda (Tierra no le hace nada a un volador).',
+     'Each type has its power: Ice freezes, Fire burns, Electric paralyzes, Psychic confuses, Water drags back, Dark finishes off... and the type chart rules (Ground does nothing to a flyer).'],
+    ['Pokémon de apoyo: no atacan, refuerzan a las torres cercanas. Scyther (Danza Espada, +daño), Togekiss (Viento Afín, +velocidad), Lucario y Absol (Foco Energía, +crítico), Meowth (Día de Pago, +monedas) y Noctowl (Vista Lince, +alcance). Dos auras iguales no se suman.',
+     'Support Pokémon: they do not attack, they boost nearby towers. Scyther (Swords Dance, +damage), Togekiss (Tailwind, +speed), Lucario and Absol (Focus Energy, +crits), Meowth (Pay Day, +coins) and Noctowl (Keen Eye, +range). Two auras of the same kind do not stack.'],
+    ['Al colocar una torre se ve su alcance, lo que no se puede ocupar y por qué. Todavía no da recompensas.',
+     'When placing a tower you see its range, where you cannot build and why. It gives no rewards yet.']
   ] },
   { d: '2026-10-13', title: ['La Sentencia de Arceus', 'The Judgment of Arceus'], new: [
     ['La Sentencia de Arceus: al llegar al minuto 30, Arceus baja del cielo y te lleva a las Ruinas del Juicio. Es invencible, te persigue cada vez más deprisa y lanza pilares de luz, rayos y ondas; si te toca, te quita casi media vida. Cada 5 segundos acude un legendario con el doble de vida y de daño que el anterior. ¿Cuánto aguantarás?',
