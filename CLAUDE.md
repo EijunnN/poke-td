@@ -6,6 +6,10 @@ servidores, dominio ni cuentas con el original.
 ## Estructura
 - `src/` — el juego, en TypeScript. `src/main.ts` carga los módulos en orden; cada
   uno se apunta en `G` (`src/g.ts`) y declara su tipo en `Registry`.
+- Modos de juego: `src/game.ts` lleva el bucle, el lienzo, la pausa y los menús;
+  lo de dentro de la partida lo pone un modo que cumple `GameMode` (`src/run.ts`).
+  `src/modes/survivor.ts` es el de hordas. Un modo nuevo se añade en `src/modes/`,
+  se importa en `main.ts` y se apunta en `MODES` de `game.ts`.
 - `public/` — estáticos servidos tal cual (`assets/` con sprites, fuente e iconos; PWA).
 - `server/` — servidor Bun: sirve `dist/` y llevará API y tiempo real (sustituye a Firebase).
 - `tests/` — pruebas adversariales diferenciales (`golden.json` es la referencia).
