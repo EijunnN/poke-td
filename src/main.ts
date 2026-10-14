@@ -70,6 +70,7 @@ import './ui/support-ui';
 import './ui/news-ui';
 import './core/updater';
 import './modes/survivor';
+import './modes/td';
 import './game';
 import './boot';
 

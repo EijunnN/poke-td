@@ -39,6 +39,8 @@ export interface GameMode {
   keysPlay(): void;
   /** Lo del modo que se dibuja dentro del mundo, ordenado por Y con lo demás. */
   drawables(): { y: number; draw(ctx: CanvasRenderingContext2D): void }[];
+  /** Opcional: algo pintado en el suelo, debajo de todo (el camino del tower defense). */
+  drawGround?(ctx: CanvasRenderingContext2D): void;
   render(v: View): void;
   /** Abandona la partida (se guarda lo conseguido). */
   quit(): void;

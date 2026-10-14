@@ -20,7 +20,7 @@ export const Game = (() => {
   let last = 0;
 
   /** Los modos de juego que se pueden empezar, por id. */
-  const MODES: Record<string, () => GameMode> = { survivor: () => G.Survivor };
+  const MODES: Record<string, () => GameMode> = { survivor: () => G.Survivor, td: () => G.TD };
 
   /** Tu Pokémon en la partida en curso (null en los menús antes de jugar). */
   const player = () => Run.mode ? Run.mode.player : null;
@@ -165,6 +165,7 @@ export const Game = (() => {
     const t = performance.now() / 1000;
     G.World.drawGround(ctx, cam);
     G.World.drawLiquid(ctx, cam, t);
+    if (player() && Run.state !== 'ui' && Run.mode.drawGround) Run.mode.drawGround(ctx);
     G.Hazards.draw(ctx);
     G.Combat.drawGroundFields(ctx);
     G.Pickups.draw(ctx);

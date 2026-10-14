@@ -36,6 +36,7 @@ export const World = (() => {
   const KIND = ['floor', 'wall', 'liquid'];
 
   let seed = 1, biome = 0;
+  let clearR = 9;                          // radio del claro inicial, en tiles (ver reset)
   let arena = null;                        // { tx, ty, r } en tiles
   const data = new Map();                  // "cx,cy" -> datos del chunk
   let images = new Map();                  // "cx,cy" -> canvas horneado
@@ -84,8 +85,8 @@ export const World = (() => {
       return FLOOR;
     }
     const d = Math.hypot(tx, ty);
-    if (d < 9) return FLOOR;                          // claro inicial
-    const ramp = G.U.clamp((d - 9) / 8, 0, 1);       // aparición suave
+    if (d < clearR) return FLOOR;                     // claro inicial
+    const ramp = G.U.clamp((d - clearR) / 8, 0, 1);  // aparición suave
     if (fbm(tx / 13, ty / 13, seed + 101) < 0.04 + 0.23 * ramp) return LIQUID;
     if (fbm(tx / 8, ty / 8, seed + 202) > 1 - 0.27 * ramp) return WALL;
     return FLOOR;
@@ -124,7 +125,7 @@ export const World = (() => {
     for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
       if (c.terr[j * N + i] !== FLOOR) continue;
       const tx = c.cx * N + i, ty = c.cy * N + j;
-      if (Math.hypot(tx, ty) < 7) continue;
+      if (Math.hypot(tx, ty) < clearR - 2) continue;
       if (broken.has(tx + ',' + ty)) continue;
 
       // Necesita suelo alrededor para no pegarse a paredes / agua.
@@ -150,7 +151,7 @@ export const World = (() => {
       let type = null, kind = 0;
       // Interactivos (raros), lejos del claro del principio.
       const hs = H(tx, ty, seed + 909);
-      if (open && Math.hypot(tx, ty) > 12 && hs < 0.0032) {
+      if (open && Math.hypot(tx, ty) > clearR + 3 && hs < 0.0032) {
         type = hs < 0.0004 ? 'altar' : hs < 0.0008 ? 'spring' : hs < 0.0011 ? 'bigchest' : 'trap';
         kind = Math.floor(H(tx, ty, seed + 910) * (type === 'altar' ? 4 : 3));
       }
@@ -552,8 +553,10 @@ export const World = (() => {
 
   // ---------------- control ----------------
 
-  function reset(s) {
+  /** @param clear  radio (en tiles) del claro sin obstáculos alrededor del origen */
+  function reset(s, clear = 9) {
     seed = (s | 0) || 1;
+    clearR = clear;
     data.clear(); images.clear(); broken.clear();
     fade = null; arena = null;
   }

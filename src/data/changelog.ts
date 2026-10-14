@@ -19,6 +19,10 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { d: '2026-10-14', title: ['Modo Defensa (prototipo)', 'Defense mode (prototype)'], new: [
+    ['Modo Defensa, en pruebas: los enemigos siguen un camino hasta tu base. Llevas a tu compañero y, entre oleadas, eliges 1 de 3 cartas para plantar a otros Pokémon como torres, mejorarlos o mejorar al tuyo. Todavía no da recompensas.',
+     'Defense mode, in testing: enemies follow a path to your base. You control your partner and, between waves, pick 1 of 3 cards to plant other Pokémon as towers, upgrade them or upgrade your own. It gives no rewards yet.']
+  ] },
   { d: '2026-10-14', title: ['Recupera tu cuenta con Gmail', 'Recover your account with Gmail'], new: [
     ['Si juegas con nombre y contraseña, puedes vincular tu Gmail: si un día olvidas la contraseña, entras con Google y es tu misma cuenta. Te lo ofrecemos al entrar.',
      'If you play with a name and password, you can link your Gmail: if you ever forget your password, sign in with Google and it is the same account. We offer it when you sign in.']
