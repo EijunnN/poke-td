@@ -4,13 +4,15 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "server": "bun --watch server/index.ts",
     "build": "tsc --noEmit && vite build",
-    "check": "tsc --noEmit",
+    "check": "tsc --noEmit && tsc --noEmit -p tsconfig.server.json",
     "start": "bun server/index.ts",
-    "test": "node tests/adversarial.ts",
+    "test": "bun test tests/server.test.ts && node tests/adversarial.ts && node tests/sync.e2e.ts",
     "test:record": "node tests/adversarial.ts --record"
   },
   "devDependencies": {
+    "@types/bun": "^1.4.3",
     "playwright-core": "^1.48.0",
     "typescript": "^5.6.0",
     "vite": "^6.0.0"

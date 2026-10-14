@@ -11,7 +11,9 @@ servidores, dominio ni cuentas con el original.
   `src/modes/survivor.ts` es el de hordas y `src/modes/td.ts` el de Defensa (prototipo). Un modo nuevo se añade en `src/modes/`,
   se importa en `main.ts` y se apunta en `MODES` de `game.ts`.
 - `public/` — estáticos servidos tal cual (`assets/` con sprites, fuente e iconos; PWA).
-- `server/` — servidor Bun: sirve `dist/` y llevará API y tiempo real (sustituye a Firebase).
+- `server/` — servidor Bun: sirve `dist/` y la API de cuentas y guardado (`server/api.ts`)
+  sobre SQLite (`server/db.ts`, archivo en `data/`). Sustituye a Firebase; amigos, ranking
+  y cooperativo (`src/net/`) siguen sin portar y están apagados (`G.DB.online` es false).
 - `tests/` — pruebas adversariales diferenciales (`golden.json` es la referencia).
 - `tools/` — scripts de datos (PokeAPI, SpriteCollab). `docs/GDD.md` — diseño.
 - `legacy/` — lo del original que ya no se usa (Firebase, Cloudflare, páginas SEO,
@@ -19,10 +21,15 @@ servidores, dominio ni cuentas con el original.
   hay que portarlas al servidor nuevo.
 
 ## Comandos (Bun)
-- `bun run dev` — desarrollo (Vite). `G` se ve en la consola sólo aquí.
-- `bun run check` — tipos (`tsc --noEmit`).
-- `bun run test` — pruebas adversariales: partidas con azar y reloj fijos, comparadas
-  con `tests/golden.json`. Un refactor o una migración NO debe cambiar el resultado.
+- `bun run dev` — desarrollo (Vite). `G` se ve en la consola sólo aquí. Con `bun run server`
+  a la vez, `/api` va al servidor (cuentas y guardado de verdad); sin él, modo local.
+- `bun run check` — tipos del juego y del servidor.
+- `bun run test` — las tres baterías adversariales:
+  - `tests/server.test.ts`: la API contra entradas hostiles (bun test).
+  - `tests/adversarial.ts`: partidas con azar y reloj fijos, comparadas con
+    `tests/golden.json`. Un refactor o una migración NO debe cambiar el resultado.
+  - `tests/sync.e2e.ts`: el juego contra el servidor con dos navegadores (guardado cruzado,
+    sesión, servidor caído).
 - `bun run test:record` — regraba la referencia. Sólo cuando se cambia la jugabilidad
   a propósito; nunca para "arreglar" una prueba que falla tras un refactor.
 - `bun run build` — genera `dist/` (incluye `version.json`). `bun run start` lo sirve.

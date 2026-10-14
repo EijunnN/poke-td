@@ -24,3 +24,6 @@ docs/CONTACTOS_CREADORES.md
 
 # Salida del build
 dist/
+
+# Base de datos del servidor (SQLite)
+data/

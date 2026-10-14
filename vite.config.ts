@@ -7,8 +7,10 @@ import { join } from 'node:path';
 // actualiza solo (ver src/core/updater.ts).
 const VERSION = Date.now().toString(36);
 
-export default defineConfig(({ command }) => ({
+export default defineConfig(({ command, mode }) => ({
   define: { __APP_VERSION__: JSON.stringify(command === 'build' ? VERSION : null) },
+  // En desarrollo, /api va al servidor Bun (`bun run server`). Las pruebas no lo usan.
+  server: mode === 'test' ? {} : { proxy: { '/api': process.env.API_TARGET || 'http://127.0.0.1:8080' } },
   build: {
     // public/assets/ (sprites, fuente, iconos) se copia tal cual a dist/assets/:
     // lo empaquetado va aparte para no mezclarse.

@@ -285,7 +285,7 @@ async function main() {
     // Un puerto libre de verdad (con el 0, el cliente de Vite se lía con su websocket).
     const { createServer: tcp } = await import('node:net');
     const port = await new Promise<number>(r => { const t = tcp(); t.listen(0, '127.0.0.1', () => { const p = (t.address() as any).port; t.close(() => r(p)); }); });
-    vite = await createServer({ root: join(HERE, '..'), logLevel: 'error', server: { port, strictPort: true, host: '127.0.0.1', hmr: false, watch: null } });
+    vite = await createServer({ root: join(HERE, '..'), mode: 'test', logLevel: 'error', server: { port, strictPort: true, host: '127.0.0.1', hmr: false, watch: null } });
     await vite.listen();
     url = vite.resolvedUrls.local[0] + (arg('--path') || '');
   }
