@@ -1,6 +1,8 @@
 import { G } from '../g';
 import { Link, type LinkStatus, type ServerMsg } from './link';
 import { roomMax } from '../modes/td-geom';
+import type { SaveData } from '../core/db';
+import type { CoopConfig } from './coop';
 /* ============ social.ts — amigos, en línea, invitaciones y salas ============
  * Sólo funciona con cuenta en el servidor (G.DB.online). Dos caminos hacia server/:
  *
@@ -45,7 +47,17 @@ export interface Room {
 /** Una sala de la lista de salas públicas. */
 export interface PublicRoom { id: string; host: string; hostName: string; mode: 'survivor' | 'td'; map: string; n: number; max: number; started: boolean; watchers: number }
 export interface Invite { from: string; name: string; room: string; at: number }
+/** Perfil público de un jugador (lo que devuelve getProfile; el servidor puede omitir campos). */
+export interface PublicProfile {
+  name?: string | null; title?: string; favs?: { dex: number; shiny?: boolean }[]; medals?: string[];
+  best?: { solo?: number; group?: number; level?: number; bosses?: number; legends?: number; kills?: number; medals?: number };
+}
 type Presence = Pick<Friend, 'online' | 'play' | 'room' | 'seen'>;
+/** La sala tal y como viene del servidor (JSON; toRoom la normaliza). */
+interface RoomWire {
+  id: string; host: string; members?: Member[]; open?: boolean; started?: boolean; pub?: boolean;
+  mode?: string; map?: unknown; watchers?: { uid: string; name: string }[]; max?: number;
+}
 
 export const Social = (() => {
   const VALID = /^[A-Za-z0-9_ñÑáéíóúÁÉÍÓÚ]{3,16}$/;
@@ -64,7 +76,7 @@ export const Social = (() => {
    */
   let want: { id: string; pub: boolean; mode: 'survivor' | 'td'; map: string } | null = null;
   /** La sala que miras como espectador y la partida que se juega en ella (o null). */
-  let watching: { room: Room; cfg: any } | null = null;
+  let watching: { room: Room; cfg: CoopConfig } | null = null;
   const invites = new Map<string, Invite>();  // de quién -> invitación
   const listeners = new Set<(what: string) => void>();
   let started = false, playing = false, friendsAt = 0, loadSeq = 0, loading: Promise<void> | null = null;
@@ -87,7 +99,7 @@ export const Social = (() => {
     started = true;
     uid = s.uid;
     // El apodo es el nombre de la cuenta, que ya es único.
-    me = { uid, name: s.name };
+    me = { uid, name: s.name! };
     Link.connect(s.token);
     loadFriends();
     publishProfile(true);
@@ -103,7 +115,7 @@ export const Social = (() => {
     if (!VALID.test(name)) return { ok: false, error: 'El apodo debe tener 3-16 letras, números o _.' };
     const s = G.DB.session;
     if (!s) return { ok: false, error: 'Entra con tu cuenta para elegir apodo.' };
-    if (name.toLowerCase() !== s.name.toLowerCase()) return { ok: false, error: 'Aquí tu apodo es el nombre de tu cuenta (' + s.name + ').' };
+    if (name.toLowerCase() !== s.name!.toLowerCase()) return { ok: false, error: 'Aquí tu apodo es el nombre de tu cuenta (' + s.name + ').' };
     if (!started) await start();
     return { ok: true };
   }
@@ -236,18 +248,18 @@ export const Social = (() => {
   // ---------------- salas ----------------
 
   function memberInfo() {
-    const s = G.DB.save;
-    return { dex: s.partner, shiny: !!s.partnerShiny && G.DB.ownsShiny(s.partner) };
+    const s = G.DB.save!;
+    return { dex: s.partner, shiny: !!s.partnerShiny && G.DB.ownsShiny(s.partner!) };
   }
 
   /** La sala tal y como la manda el servidor. */
-  function toRoom(r: any): Room {
+  function toRoom(r: RoomWire): Room {
     return { id: r.id, host: r.host, isHost: r.host === uid, members: r.members || [], open: !!r.open, started: !!r.started,
              pub: !!r.pub, mode: r.mode === 'td' ? 'td' : 'survivor', map: typeof r.map === 'string' ? r.map : 'random',
-             watchers: Array.isArray(r.watchers) ? r.watchers : [], max: Number.isInteger(r.max) && r.max > 0 ? r.max : MAX_PLAYERS };
+             watchers: Array.isArray(r.watchers) ? r.watchers : [], max: typeof r.max === 'number' && Number.isInteger(r.max) && r.max > 0 ? r.max : MAX_PLAYERS };
   }
   /** Aplica la sala tal y como la manda el servidor. */
-  function applyRoom(r: any) {
+  function applyRoom(r: RoomWire) {
     room = toRoom(r);
     if (want && want.id === room.id && room.isHost) {
       room.pub = want.pub; room.mode = want.mode; room.map = want.map; room.max = roomMax(want.mode, want.map);
@@ -276,7 +288,7 @@ export const Social = (() => {
   }
 
   /** Empiezas a mirar la partida de una sala pública. → la partida (cfg) o un error */
-  async function watch(id: string): Promise<{ ok: boolean; error?: string; cfg?: any }> {
+  async function watch(id: string): Promise<{ ok: boolean; error?: string; cfg?: CoopConfig }> {
     if (room) return { ok: false, error: 'Sal de tu sala para mirar otra partida.' };
     const r = await Link.request({ k: 'room.watch', id }).catch(() => null);
     if (!r || !r.ok) return { ok: false, error: (r && r.error) || 'No se pudo entrar a mirar.' };
@@ -374,7 +386,7 @@ export const Social = (() => {
 
   /** Lo que se enseña de ti (también para tu vista previa, sin subirlo). */
   function profileData() {
-    const s = G.DB.save, st = s.stats, prof: any = s.profile || {};
+    const s = G.DB.save!, st = s.stats, prof: Partial<SaveData['profile']> = s.profile || {};
     const unlocked = G.AchDefs.LIST.filter(a => s.ach && s.ach[a.id]);
     const medals = unlocked.slice().sort((a, b) => (b.tier - a.tier) || (s.ach[b.id] - s.ach[a.id])).slice(0, 8).map(a => a.id);
     return {
@@ -407,8 +419,8 @@ export const Social = (() => {
   }
 
   /** El perfil público de otro jugador. */
-  const profCache = new Map<string, { at: number; v: any }>();
-  async function getProfile(other: string) {
+  const profCache = new Map<string, { at: number; v: PublicProfile }>();
+  async function getProfile(other: string): Promise<PublicProfile | null> {
     if (!started) return null;
     // El tuyo sale de tu partida (sin pedir nada y siempre al día).
     if (other === uid && me) return Object.assign(profileData(), { name: me.name });

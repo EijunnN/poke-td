@@ -36,20 +36,20 @@ export const Types = (() => {
     steel:    { fire: .5, water: .5, electric: .5, ice: 2, rock: 2, steel: .5, fairy: 2 },
     fairy:    { fire: .5, fighting: 2, poison: .5, dragon: 2, dark: 2, steel: .5 }
   };
-  const SOFT = { 2: 1.6, 0.5: 0.6, 0: 0.3 };
+  const SOFT: Record<number, number> = { 2: 1.6, 0.5: 0.6, 0: 0.3 };
   const MIN = 0.3, MAX = 2.4;
 
   /** Multiplicador de un ataque de tipo `atk` contra un Pokémon de tipos `def`. */
-  function mult(atk, def) {
+  function mult(atk: PokeType, def?: readonly PokeType[] | null): number {
     const row = CHART[atk];
     if (!row || !def) return 1;
     let m = 1;
-    for (const t of def) if (row[t] != null) m *= SOFT[row[t]];
+    for (const t of def) if (row[t] != null) m *= SOFT[row[t]!];
     return G.U.clamp(m, MIN, MAX);
   }
 
   /** 'super' | 'weak' | null, para enseñar el aviso. */
-  function label(m) { return m > 1.05 ? 'super' : m < 0.95 ? 'weak' : null; }
+  function label(m: number): 'super' | 'weak' | null { return m > 1.05 ? 'super' : m < 0.95 ? 'weak' : null; }
 
   return { CHART, mult, label };
 })();

@@ -15,8 +15,19 @@ import { G } from '../g';
  *
  * Cooperativo: lo decide el anfitrión y lo manda con 'wx'.
  */
+interface ClimaDef {
+  name: string; icon: string; color: string; tint: [number, number, number, number];
+  mult: Record<string, number>; safe?: string[]; slow?: boolean; hint: string;
+}
+/** Clima en curso. */
+interface Clima { kind: string; t: number; dur: number }
+/** Partícula de pantalla (lluvia, nieve, arena, motas de sol). */
+interface Particula { x: number; y: number; vx: number; vy: number; a: number; c: string; t: number; life: number }
+/** Lo que el clima necesita del jugador. */
+interface Afectado { x: number; y: number; hp: number; maxHp: number; bodyH: number; dead: boolean; mon: { types: string[] } }
+
 export const Weather = (() => {
-  const KINDS = {
+  const KINDS: Record<string, ClimaDef> = {
     sun:  { name: 'Sol abrasador', icon: 'wsun', color: '#ffcb3d', tint: [255, 190, 90, 0.07],
             mult: { fire: 1.5, water: 0.5 }, hint: 'el Fuego se potencia y el Agua se debilita' },
     rain: { name: 'Lluvia', icon: 'wrain', color: '#7fb8ff', tint: [50, 90, 170, 0.09],
@@ -30,16 +41,18 @@ export const Weather = (() => {
             mult: { ghost: 1.3, fairy: 1.3, psychic: 1.3 }, hint: 'Fantasma, Hada y Psíquico se potencian' }
   };
   // Probabilidad de cada clima según el bioma (bosque, cueva, volcán).
-  const BIOME_W = [
+  const BIOME_W: Record<string, number>[] = [
     { rain: 3, fog: 2, sun: 1.5, snow: 0.5, sand: 0.5 },
     { fog: 3, snow: 2.5, rain: 1, sand: 1 },
     { sun: 3, sand: 3, fog: 1 }
   ];
   const FROM = 120, CHECK = 60, CHANCE = 0.18;
+  // Partículas en pantalla a intensidad plena, por clima.
+  const DENSIDAD: Record<string, number> = { rain: 70, snow: 45, sand: 40, sun: 14, fog: 0 };
 
-  let cur = null;           // { kind, t, dur }
+  let cur: Clima | null = null;
   let checkT = CHECK, chipT = 0;
-  let parts = [];
+  let parts: Particula[] = [];
   const authority = () => !G.Coop.active || G.Coop.isHost;
 
   function reset() { cur = null; checkT = CHECK; chipT = 0; parts = []; }
@@ -47,7 +60,7 @@ export const Weather = (() => {
   function def() { return cur ? KINDS[cur.kind] : null; }
 
   /** Multiplicador de daño de un ataque de este tipo con el clima actual. */
-  function mult(type) {
+  function mult(type: string) {
     const d = def();
     return d && d.mult[type] ? 1 + (d.mult[type] - 1) * level() : 1;
   }
@@ -59,18 +72,19 @@ export const Weather = (() => {
   }
 
   /** ¿Le afecta el daño de arena/nieve a un Pokémon con estos tipos? */
-  function hurts(types) {
+  function hurts(types: string[]) {
     const d = def();
-    return !!(d && d.safe && !types.some(t => d.safe.includes(t)));
+    const safe = d && d.safe;
+    return !!(safe && !types.some(t => safe.includes(t)));
   }
 
   /** Factor de velocidad (nieve) para un Pokémon con estos tipos. */
-  function speedFor(types) {
+  function speedFor(types: string[]) {
     const d = def();
     return d && d.slow && !types.includes('ice') ? 1 - 0.1 * level() : 1;
   }
 
-  function start(kind, dur) {
+  function start(kind: string, dur: number) {
     cur = { kind, t: 0, dur };
     const d = KINDS[kind];
     G.Spawner.say(d.name + ': ' + d.hint, 3.4, true);
@@ -83,14 +97,14 @@ export const Weather = (() => {
     cur.dur = Math.min(cur.dur, cur.t + 3);
   }
 
-  function pick(biome) {
+  function pick(biome: number) {
     const w = BIOME_W[biome % BIOME_W.length];
     let r = Math.random() * Object.values(w).reduce((a, b) => a + b, 0);
     for (const k in w) { r -= w[k]; if (r <= 0) return k; }
     return 'rain';
   }
 
-  function update(dt, time, pl) {
+  function update(dt: number, time: number, pl: Afectado | null) {
     if (cur) {
       cur.t += dt;
       if (cur.t >= cur.dur) cur = null;
@@ -113,10 +127,10 @@ export const Weather = (() => {
         const d = Math.max(1, pl.maxHp * 0.012);
         if (pl.hp > d + 1) {
           pl.hp -= d;
-          G.FX.dmgText(pl.x, pl.y - pl.bodyH - 4, '-' + Math.round(d), def().color);
+          G.FX.dmgText(pl.x, pl.y - pl.bodyH - 4, '-' + Math.round(d), def()!.color);
         }
       }
-      if (authority() && cur && def().safe && level() > 0.5) {
+      if (authority() && cur && def()!.safe && level() > 0.5) {
         for (const e of G.EnemyMgr.all()) {
           if (e.dead || e.remote || e.boss) continue;
           if (!hurts(e.types || [])) continue;
@@ -129,12 +143,12 @@ export const Weather = (() => {
   }
 
   /** Cooperativo: el anfitrión manda el clima. */
-  function onEvent(ev) { if (ev[1]) start(ev[1], ev[2]); else stop(); }
+  function onEvent(ev: (string | number)[]) { if (ev[1]) start(ev[1] as string, ev[2] as number); else stop(); }
 
   // ---------------- dibujo (en pantalla) ----------------
 
   /** Partículas suaves y un tinte leve. Se llama después de dibujar el mundo. */
-  function draw(ctx, w, h, dt) {
+  function draw(ctx: CanvasRenderingContext2D, w: number, h: number, dt: number) {
     const d = def();
     const k = level();
     if (!d || k <= 0) { parts.length = 0; return; }
@@ -142,7 +156,7 @@ export const Weather = (() => {
     ctx.fillStyle = `rgba(${r},${g},${b},${a * k})`;
     ctx.fillRect(0, 0, w, h);
 
-    const want = { rain: 70, snow: 45, sand: 40, sun: 14, fog: 0 }[cur.kind] * k * (w / 1280);
+    const want = DENSIDAD[cur!.kind] * k * (w / 1280);
     while (parts.length < want) parts.push(spawn(w, h, true));
     if (parts.length > want + 4) parts.length = Math.ceil(want);
     const s = Math.max(2, Math.round(w / 640));          // un "píxel" del juego
@@ -152,15 +166,15 @@ export const Weather = (() => {
       if (p.y > h + 20 || p.x < -40 || p.x > w + 40 || p.t > p.life) { parts[i] = spawn(w, h, false); continue; }
       ctx.globalAlpha = p.a * k;
       ctx.fillStyle = p.c;
-      if (cur.kind === 'rain') { for (let j = 0; j < 4; j++) ctx.fillRect(Math.round(p.x - j * s * 0.5), Math.round(p.y - j * s * 1.5), s * 0.5, s * 1.5); }
-      else if (cur.kind === 'sand') ctx.fillRect(Math.round(p.x), Math.round(p.y), s * 3, s * 0.5);
+      if (cur!.kind === 'rain') { for (let j = 0; j < 4; j++) ctx.fillRect(Math.round(p.x - j * s * 0.5), Math.round(p.y - j * s * 1.5), s * 0.5, s * 1.5); }
+      else if (cur!.kind === 'sand') ctx.fillRect(Math.round(p.x), Math.round(p.y), s * 3, s * 0.5);
       else ctx.fillRect(Math.round(p.x), Math.round(p.y), s, s);
     }
     ctx.globalAlpha = 1;
   }
 
-  function spawn(w, h, anywhere) {
-    const kind = cur.kind;
+  function spawn(w: number, h: number, anywhere: boolean): Particula {
+    const kind = cur!.kind;
     const y = anywhere ? Math.random() * h : -10;
     if (kind === 'rain') return { x: Math.random() * (w + 200), y, vx: -120, vy: 720, a: 0.5, c: '#cfe2ff', t: 0, life: 9 };
     if (kind === 'snow') return { x: Math.random() * w, y, vx: G.U.rand(-20, 20), vy: G.U.rand(40, 80), a: 0.7, c: '#ffffff', t: 0, life: 20 };
@@ -174,13 +188,13 @@ export const Weather = (() => {
     get current() { return cur && level() > 0 ? Object.assign({ left: Math.max(0, cur.dur - cur.t) }, cur, KINDS[cur.kind]) : null; },
     get vignette() { return cur && cur.kind === 'fog' ? level() : 0; },
     /** Pone un clima ya (la arena de la grieta; no se manda: cada uno lo pone). */
-    force(kind, dur) { start(kind, dur); },
+    force(kind: string, dur: number) { start(kind, dur); },
     /** Quita el clima de golpe (al salir de la arena). */
     clear() { cur = null; parts.length = 0; },
     /** Cooperativo: el clima en curso (para reenviárselo a quien vuelve tras un corte). */
     snapshot() { return cur ? { kind: cur.kind, t: Math.round(cur.t * 10) / 10, dur: cur.dur } : null; },
     /** Cooperativo: pone el clima tal y como lo manda el anfitrión (sin aviso ni sonido). */
-    restore(s) {
+    restore(s: Clima | null) {
       if (!s) { cur = null; return; }
       if (!KINDS[s.kind] || !(s.dur > 0) || !(s.t >= 0) || s.t > s.dur) return;
       cur = { kind: s.kind, t: s.t, dur: s.dur };

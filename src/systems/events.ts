@@ -1,4 +1,8 @@
 import { G } from '../g';
+import type { Player } from '../entities/player';
+import type { EnemyDef } from '../data/enemies';
+import type { PokeType } from '../data/types';
+import type { SystemHostEv } from '../net/coop';
 /* ============ events.js — eventos a mitad de partida y duendes del tesoro ============
  *
  * Cada 4-5 minutos (nunca con un jefe vivo ni en la grieta) pasa uno de estos:
@@ -19,13 +23,37 @@ import { G } from '../g';
  * Cooperativo: decide el anfitrión y avisa con 'ev' (ver coop.js). Todos ven lo
  * mismo y el premio es para todos.
  */
+type EventId = 'horde' | 'gold' | 'lost';
+/** Los mensajes de red de los eventos (['ev', ...]). */
+type EventEv = Extract<SystemHostEv, { 0: 'ev' }>;
+type Anim = InstanceType<typeof G.Sprites.Animator>;
+/** Fuente del HUD: (peso, tamaño) -> valor para ctx.font. */
+type FontFn = (weight: number, size: number) => string;
+
+/** El evento en curso: segundos vividos y de duración; `type` y `defs` sólo en la horda. */
+interface CurEvent { id: EventId; t: number; dur: number; type?: PokeType | null; defs?: EnemyDef[] }
+
+/** El Pokémon perdido: qué hace, adónde hay que llevarlo y cómo se dibuja. */
+interface LostMon {
+  dex: number; name: string; x: number; y: number; hp: number; maxHp: number;
+  state: 'wait' | 'follow'; follow: Player | null; tx: number; ty: number;
+  t: number; anim: Anim; r: number; hitCd: number; netT: number;
+  grant?: boolean; moving?: boolean; flash?: number;
+}
+
+/** Lo que hace falta para crear (o recibir por la red) un Pokémon perdido. */
+type LostInit = Pick<LostMon, 'dex' | 'x' | 'y' | 'tx' | 'ty' | 'hp' | 'state'> & { grant?: boolean };
+
+/** Algo que se dibuja ordenado por Y con el resto de la escena. */
+interface Sortable { y: number; draw(ctx: CanvasRenderingContext2D): void }
+
 export const Events = (() => {
   const EVERY = [240, 300], DUR = 30, LOST_TIME = 120;
   const THIEF_FIRST = [120, 240], THIEF_NEXT = [240, 360], THIEF_LIFE = 15;
   const authority = () => !G.Coop.active || G.Coop.isHost;
 
-  let nextT = 0, cur = null, last = null, thiefT = 0, thieves = 0;
-  let lost = null;      // { dex, name, x, y, hp, maxHp, state, follow, tx, ty, t, anim, r, hitCd, netT, grant }
+  let nextT = 0, cur: CurEvent | null = null, last: EventId | null = null, thiefT = 0, thieves = 0;
+  let lost: LostMon | null = null;
 
   function reset() {
     nextT = G.U.rand(EVERY[0], EVERY[1]);
@@ -35,7 +63,7 @@ export const Events = (() => {
 
   // ---------------- ciclo ----------------
 
-  function update(dt, players, time) {
+  function update(dt: number, players: Player[], time: number) {
     if (cur) {
       cur.t += dt;
       if (cur.id !== 'lost' && cur.t >= cur.dur && authority()) end();
@@ -56,11 +84,11 @@ export const Events = (() => {
     if (nextT > 0) return;
     if (G.EnemyMgr.bossAlive()) { nextT = 10; return; }
     nextT = G.U.rand(EVERY[0], EVERY[1]);
-    const ids = ['horde', 'gold', 'lost'].filter(id => id !== last);
+    const ids = (['horde', 'gold', 'lost'] as EventId[]).filter(id => id !== last);
     start(G.U.pick(ids), time, players);
   }
 
-  function start(id, time, players) {
+  function start(id: EventId, time: number, players: Player[]) {
     last = id;
     if (id === 'horde') {
       const types = G.Enemies.hordeTypes(time);
@@ -83,13 +111,13 @@ export const Events = (() => {
 
   function announce() {
     if (!cur) return;
-    if (cur.id === 'horde') say('¡Horda de tipo ' + G.U.TYPE_NAME[cur.type] + '!', 3, G.U.TYPE_COLOR[cur.type]);
+    if (cur.id === 'horde') say('¡Horda de tipo ' + G.U.TYPE_NAME[cur.type!] + '!', 3, G.U.TYPE_COLOR[cur.type!]);
     else if (cur.id === 'gold') say('¡Hora dorada! Doble de experiencia', 3, '#ffd23f');
     else if (lost) say('¡Un ' + lost.name + ' se ha perdido! Búscalo y llévalo a la marca', 3.4, '#7dffb0');
     G.Audio.sfx(cur.id === 'gold' ? 'shiny' : 'surge');
   }
 
-  function say(text, secs, _color?: string) { G.Spawner.say(text, secs, true); }
+  function say(text: string, secs: number, _color?: string) { G.Spawner.say(text, secs, true); }
 
   function end() {
     if (!cur) return;
@@ -98,18 +126,18 @@ export const Events = (() => {
   }
 
   /** Lo que sale durante una horda (lo usa G.Enemies.bagAt). */
-  function bag() { return cur && cur.id === 'horde' && cur.defs.length ? cur.defs : null; }
+  function bag() { return cur && cur.id === 'horde' && cur.defs!.length ? cur.defs! : null; }
 
   // ---------------- duende del tesoro ----------------
 
-  function spawnThief(players: any[], time) {
+  function spawnThief(players: Player[], time: number) {
     const gold = Math.random() < 0.25;
     const dex = gold ? 1000 : 52;
     const mon = G.DEX_BY[dex];
     if (!mon || !G.SPRITE_META[dex]) return;
     const pl = G.U.pick(players.filter(p => !p.dead).length ? players.filter(p => !p.dead) : players);
     G.Sprites.preload([dex]);
-    const def = { dex, name: mon.name, behavior: 'thief', hp: Math.round(60 * (1 + time / 95) * (gold ? 1.5 : 1)),
+    const def: EnemyDef = { dex, name: mon.name, behavior: 'thief', hp: Math.round(60 * (1 + time / 95) * (gold ? 1.5 : 1)),
                   spd: 92, dmg: 0, xp: 10, loot: gold ? 'ticket10' : 'coins' };
     for (let i = 0; i < 12; i++) {
       const a = Math.random() * 6.2832, d = G.U.rand(230, 300);
@@ -128,12 +156,12 @@ export const Events = (() => {
 
   // ---------------- Pokémon perdido ----------------
 
-  function spawnLost(players: any[]) {
+  function spawnLost(players: Player[]) {
     const alive = players.filter(p => !p.dead);
     const pl = G.U.pick(alive.length ? alive : players);
     const pool = G.DEX.filter(p => p.rarity <= 3 && !p.leg && G.SPRITE_META[p.dex] && !G.Sprites.hovers(p.dex));
     const mon = G.U.pick(pool);
-    let at = null, to = null;
+    let at: [number, number] | null = null, to: [number, number] | null = null;
     for (let i = 0; i < 20 && !at; i++) {
       const a = Math.random() * 6.2832, d = G.U.rand(220, 300);
       const x = pl.x + Math.cos(a) * d, y = pl.y + Math.sin(a) * d * 0.8;
@@ -150,14 +178,14 @@ export const Events = (() => {
     return true;
   }
 
-  function makeLost(o) {
+  function makeLost(o: LostInit) {
     const mon = G.DEX_BY[o.dex];
     lost = Object.assign({ name: mon ? mon.name : '', maxHp: 100, t: 0, hitCd: 0, netT: 0, follow: null,
                            anim: new G.Sprites.Animator(o.dex, 1), r: G.Sprites.bodyRadius(o.dex) }, o);
   }
 
-  function lostTick(dt, players) {
-    const L = lost;
+  function lostTick(dt: number, players: Player[]) {
+    const L = lost!;
     L.t += dt;
     L.anim.update(dt);
     if (!authority()) { L.anim.loop(L.moving ? 'Walk' : 'Idle'); return; }
@@ -167,7 +195,7 @@ export const Events = (() => {
       if (p) { L.state = 'follow'; L.follow = p; say('¡' + L.name + ' te sigue! Llévalo a la marca verde', 3, '#7dffb0'); G.Audio.sfx('confirm'); }
       L.moving = false;
     } else {
-      const p = L.follow && !L.follow.dead ? L.follow : players.find(o => !o.dead) || L.follow;
+      const p = L.follow && !L.follow.dead ? L.follow : players.find(o => !o.dead) || L.follow!;
       const d = G.U.dist(L.x, L.y, p.x, p.y), keep = p.r + L.r + 14;
       L.moving = d > keep;
       if (L.moving) {
@@ -192,7 +220,7 @@ export const Events = (() => {
         if (L.hp <= 0) return gone('¡' + L.name + ' se ha asustado y ha huido…!');
       }
     }
-    if (L.flash > 0) L.flash -= dt;
+    if (L.flash && L.flash > 0) L.flash -= dt;
     if (L.t > LOST_TIME) return gone(L.name + ' se ha cansado de esperar y se ha ido…');
 
     if (G.Coop.isHost && (L.netT -= dt) <= 0) {
@@ -203,7 +231,7 @@ export const Events = (() => {
   }
 
   function rescued() {
-    const L = lost;
+    const L = lost!;
     for (let i = 0; i < 12; i++) G.Pickups.drop('coin', L.tx + G.U.rand(-40, 40), L.ty + G.U.rand(-30, 30), 5);
     G.Pickups.drop('ticket', L.tx, L.ty - 12, 1);
     if (G.Coop.isHost) G.Coop.broadcast(['ev', 'rw', L.dex, L.grant ? 1 : 0]);
@@ -213,17 +241,17 @@ export const Events = (() => {
   }
 
   /** En cada ordenador: cura, y si toca, el Pokémon se une a tu colección. */
-  function reward(dex, grant) {
+  function reward(dex: number, grant: boolean | undefined) {
     const pl = G.Game.player;
     if (pl && !pl.dead) { pl.heal(pl.maxHp * 0.5); G.FX.ring(pl.x, pl.y, 6, 70, '#5fe08a', 0.5, 3); }
-    const name = (G.DEX_BY[dex] || {}).name || '';
-    G.FX.burst(lost ? lost.tx : pl.x, lost ? lost.ty - 10 : pl.y, '#7dffb0', 24, 180);
+    const name = G.DEX_BY[dex]?.name || '';
+    G.FX.burst(lost ? lost.tx : pl!.x, lost ? lost.ty - 10 : pl!.y, '#7dffb0', 24, 180);
     G.Audio.sfx('legend');
     if (grant && G.onRescue) G.onRescue(dex, name);
     else say('¡Has llevado a ' + name + ' a casa! Te lo agradece', 3.2, '#7dffb0');
   }
 
-  function gone(msg) {
+  function gone(msg: string) {
     if (G.Coop.isHost) G.Coop.broadcast(['ev', 'lx', msg]);
     say(msg, 3);
     lost = null;
@@ -232,15 +260,15 @@ export const Events = (() => {
 
   // ---------------- red ----------------
 
-  function onNet(ev) {
+  function onNet(ev: EventEv) {
     switch (ev[1]) {
-      case 's': cur = { id: ev[2], t: 0, dur: ev[2] === 'lost' ? Infinity : DUR, type: ev[3] || null }; break;
+      case 's': cur = { id: ev[2] as EventId, t: 0, dur: ev[2] === 'lost' ? Infinity : DUR, type: (ev[3] || null) as PokeType | null }; break;
       case 'e': cur = null; break;
       case 'lp': {
         const [, , dex, x, y, hp, follow, tx, ty, dir, moving] = ev;
         if (!lost || lost.dex !== dex) makeLost({ dex, x, y, tx, ty, hp, state: follow ? 'follow' : 'wait' });
-        Object.assign(lost, { x, y, hp, tx, ty, moving: !!moving, state: follow ? 'follow' : 'wait' });
-        lost.anim.dir = dir;
+        Object.assign(lost!, { x, y, hp, tx, ty, moving: !!moving, state: follow ? 'follow' : 'wait' });
+        lost!.anim.dir = dir;
         break;
       }
       case 'rw': reward(ev[2], !!ev[3]); lost = null; break;
@@ -251,11 +279,11 @@ export const Events = (() => {
   // ---------------- dibujo ----------------
 
   /** El Pokémon perdido y la marca, para ordenarlos por Y con el resto. */
-  function drawables() {
+  function drawables(): Sortable[] {
     if (!lost) return [];
     const L = lost;
     const now = performance.now() / 1000;
-    const goal = {
+    const goal: Sortable = {
       y: L.ty - 4000,          // en el suelo, debajo de todo
       draw(ctx) {
         const k = 0.5 + Math.sin(now * 4) * 0.5;
@@ -270,7 +298,7 @@ export const Events = (() => {
         G.Icons.draw(ctx, 'heart', Math.round(L.tx - 8), Math.round(L.ty - 30 - k * 6), 16);
       }
     };
-    const mon = {
+    const mon: Sortable = {
       y: L.y,
       draw(ctx) {
         ctx.save();
@@ -279,7 +307,7 @@ export const Events = (() => {
         ctx.beginPath(); ctx.ellipse(L.x, L.y, L.r * 1.5, L.r * 0.6, 0, 0, 6.2832); ctx.fill();
         ctx.restore();
         G.Sprites.drawShadow(ctx, L.dex, L.x, L.y, 1);
-        L.anim.draw(ctx, L.x, L.y, { flash: L.flash > 0 });
+        L.anim.draw(ctx, L.x, L.y, { flash: !!L.flash && L.flash > 0 });
         const h = G.Sprites.bodyHeight(L.dex, 1);
         if (L.state === 'wait') {
           // "!" que bota encima: está esperando a que lo toques.
@@ -299,10 +327,10 @@ export const Events = (() => {
   }
 
   /** Flecha en el borde hacia el Pokémon perdido (o hacia la marca, si ya te sigue). */
-  function drawHud(ctx, w, h, pl, F) {
+  function drawHud(ctx: CanvasRenderingContext2D, w: number, h: number, pl: Player, F: FontFn) {
     const cam = G.Camera;
     if (lost) {
-      const L = lost, to = L.state === 'wait' ? [L.x, L.y - 10] : [L.tx, L.ty];
+      const L = lost, to: [number, number] = L.state === 'wait' ? [L.x, L.y - 10] : [L.tx, L.ty];
       edgeArrow(ctx, w, h, cam, to[0], to[1], '#7dffb0', (L.state === 'wait' ? L.name : 'Marca') + ' · ' +
                 Math.round(G.U.dist(pl.x, pl.y, to[0], to[1]) / 32) + ' m', F);
     }
@@ -311,18 +339,18 @@ export const Events = (() => {
     }
     if (cur && cur.id !== 'lost') {
       const left = Math.max(0, Math.ceil(cur.dur - cur.t));
-      const txt = (cur.id === 'gold' ? 'HORA DORADA' : 'HORDA ' + G.U.TYPE_NAME[cur.type].toUpperCase()) + ' · ' + left + ' s';
+      const txt = (cur.id === 'gold' ? 'HORA DORADA' : 'HORDA ' + G.U.TYPE_NAME[cur.type!].toUpperCase()) + ' · ' + left + ' s';
       ctx.save();
       ctx.font = F(800, 12); ctx.textAlign = 'center';
       ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,.8)';
       ctx.strokeText(txt, w / 2, 112);
-      ctx.fillStyle = cur.id === 'gold' ? '#ffd23f' : G.U.TYPE_COLOR[cur.type] || '#fff';
+      ctx.fillStyle = cur.id === 'gold' ? '#ffd23f' : G.U.TYPE_COLOR[cur.type!] || '#fff';
       ctx.fillText(txt, w / 2, 112);
       ctx.restore();
     }
   }
 
-  function edgeArrow(ctx, w, h, cam, x, y, col, label, F) {
+  function edgeArrow(ctx: CanvasRenderingContext2D, w: number, h: number, cam: typeof G.Camera, x: number, y: number, col: string, label: string, F: FontFn) {
     const sx = (x - cam.left()) * cam.scale, sy = (y - cam.top()) * cam.scale;
     if (sx > 0 && sx < w && sy > 0 && sy < h) return;
     const M = 44, ex = G.U.clamp(sx, M, w - M), ey = G.U.clamp(sy, M + 70, h - M - 80);
@@ -352,7 +380,7 @@ export const Events = (() => {
     get golden() { return !!cur && cur.id === 'gold'; },
     get current() { return cur ? cur.id : null; },
     /** Para pruebas. */
-    debugStart(id) { start(id, G.Game.st.time, G.Game.everyone()); },
+    debugStart(id: EventId) { start(id, G.Game.st.time, G.Game.everyone()); },
     debugThief() { spawnThief(G.Game.everyone(), G.Game.st.time); },
     _dbg() { return lost && { x: lost.x, y: lost.y, tx: lost.tx, ty: lost.ty, state: lost.state, hp: lost.hp }; }
   };

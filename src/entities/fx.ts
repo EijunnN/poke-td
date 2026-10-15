@@ -11,27 +11,39 @@ interface PxOpts { vx?: number; vy?: number; life?: number; size?: number; grav?
 interface SpOpts { vx?: number; vy?: number; life?: number; scale?: number; angle?: number; spin?: number; grav?: number; frameRate?: number; fade?: boolean }
 interface MoveFx { pal?: string; melee?: string; beam?: string }
 
+interface Part { x: number; y: number; vx: number; vy: number; t: number; life: number; color: string; s: number; grav: number; drag: number }
+/** Sprite de efecto, o centelleo de shiny (twinkle: sin forma ni paleta). */
+interface Sprite {
+  x: number; y: number; vx: number; vy: number; t: number; life: number;
+  twinkle?: boolean; shape?: string; pal?: string; scale?: number; angle?: number; spin?: number;
+  grav?: number; fr?: number; fade?: boolean;
+}
+interface Texto { x: number; y: number; vy: number; t: number; life: number; s: string; color: string; big: boolean }
+interface Ring { x: number; y: number; r0: number; r1: number; color: string; life: number; t: number; width: number }
+interface Slash { x: number; y: number; angle: number; radius: number; arc: number; pal: string; t: number; life: number }
+interface Beam { x: number; y: number; angle: number; len: number; width: number; pal: string; shape: string | null; t: number; life: number; seed: number }
+
 export const FX = (() => {
   const PX = G.Sprites.PX;
   // Topes según la calidad (Ajustes → Gráficos): bajo, medio, alto.
   const CAP_PARTS = [350, 800, 1400], CAP_SPRITES = [110, 210, 320], CAP_TEXTS = [25, 45, 70], DENS = [0.35, 0.65, 1];
   const q = () => G.Settings.fx;
-  let parts = [], sprites = [], texts = [], rings = [], slashes = [], beams = [];
+  let parts: Part[] = [], sprites: Sprite[] = [], texts: Texto[] = [], rings: Ring[] = [], slashes: Slash[] = [], beams: Beam[] = [];
 
   function clear() { parts = []; sprites = []; texts = []; rings = []; slashes = []; beams = []; }
 
-  const snap = v => Math.round(v / PX) * PX;
+  const snap = (v: number) => Math.round(v / PX) * PX;
 
   // ---------------- partículas ----------------
 
   /** Partícula cuadrada. o: { vx, vy, life, size (en píxeles de arte), grav, drag } */
-  function px(x, y, color, o: PxOpts = {}) {
+  function px(x: number, y: number, color: string, o: PxOpts = {}) {
     if (parts.length >= CAP_PARTS[q()]) return;
     parts.push({ x, y, vx: o.vx || 0, vy: o.vy || 0, t: 0, life: o.life || 0.4, color,
                  s: (o.size || 1) * PX, grav: o.grav || 0, drag: o.drag == null ? 0.9 : o.drag });
   }
 
-  function burst(x, y, color, n = 8, power = 110) {
+  function burst(x: number, y: number, color: string, n = 8, power = 110) {
     n = Math.max(1, Math.round(n * DENS[q()]));
     for (let i = 0; i < n; i++) {
       const a = Math.random() * 6.2832, s = G.U.rand(power * 0.35, power);
@@ -39,7 +51,7 @@ export const FX = (() => {
     }
   }
 
-  function spark(x, y, color, dirX, dirY, n = 4) {
+  function spark(x: number, y: number, color: string, dirX: number, dirY: number, n = 4) {
     n = Math.max(1, Math.round(n * DENS[q()]));
     const base = Math.atan2(dirY, dirX);
     for (let i = 0; i < n; i++) {
@@ -49,7 +61,7 @@ export const FX = (() => {
   }
 
   /** Sprite de efecto suelto. o: { vx, vy, life, scale, angle, spin, grav, frameRate, fade } */
-  function sp(shape, pal, x, y, o: SpOpts = {}) {
+  function sp(shape: string, pal: string, x: number, y: number, o: SpOpts = {}) {
     if (sprites.length >= CAP_SPRITES[q()]) return;
     sprites.push({ shape, pal, x, y, vx: o.vx || 0, vy: o.vy || 0, t: 0, life: o.life || 0.4,
                    scale: o.scale || 1, angle: o.angle || 0, spin: o.spin || 0, grav: o.grav || 0,
@@ -57,13 +69,13 @@ export const FX = (() => {
   }
 
   /** Centelleo de shiny (cruz de píxeles que nace y se apaga). */
-  function twinkle(x, y) {
+  function twinkle(x: number, y: number) {
     if (sprites.length >= CAP_SPRITES[q()]) return;
     sprites.push({ twinkle: true, x, y, vx: 0, vy: -8, t: 0, life: G.U.rand(0.45, 0.7) });
   }
 
   /** Partículas de estela de los proyectiles, según el material. */
-  function trail(kind, pal, x, y, vx, vy) {
+  function trail(kind: string, pal: string, x: number, y: number, vx: number, vy: number) {
     if (Math.random() > DENS[q()]) return;          // en calidad baja, menos estela
     const P = G.VFX.PAL[pal] || G.VFX.PAL.normal;
     const back = Math.atan2(-vy, -vx);
@@ -78,22 +90,22 @@ export const FX = (() => {
     }
   }
 
-  function dmgText(x, y, value, color = '#ffffff', big = false) {
+  function dmgText(x: number, y: number, value: string | number, color = '#ffffff', big = false) {
     // Con cientos de golpes por segundo no se leen igual: tope de 70 (los
     // grandes, como "¡Muy eficaz!" o los de jefe, siempre entran).
     // Ajustes → "Números de daño": los números se ocultan; los avisos de texto no.
     if ((typeof value === 'number' || /^-\d/.test(value)) && !G.Settings.get('dmgNumbers')) return;
     if (texts.length >= CAP_TEXTS[q()]) { if (!big) return; texts.shift(); }
-    texts.push({ x: x + G.U.rand(-6, 6), y, vy: -46, t: 0, life: big ? 0.95 : 0.62, s: value, color, big });
+    texts.push({ x: x + G.U.rand(-6, 6), y, vy: -46, t: 0, life: big ? 0.95 : 0.62, s: String(value), color, big });
   }
 
   /** Anillo de onda (puntos de píxel). */
-  function ring(x, y, r0, r1, color, life = 0.3, width = 3) {
+  function ring(x: number, y: number, r0: number, r1: number, color: string, life = 0.3, width = 3) {
     rings.push({ x, y, r0, r1, color, life, t: 0, width });
   }
 
   /** Golpe cuerpo a cuerpo. fx: { pal, melee } (ver G.VFX.forMove). */
-  function slash(x, y, angle, radius, arc, color, fx: MoveFx = {}) {
+  function slash(x: number, y: number, angle: number, radius: number, arc: number, color: string, fx: MoveFx = {}) {
     const pal = fx.pal || 'normal';
     slashes.push({ x, y, angle, radius, arc, pal, t: 0, life: 0.22 });
     const mx = x + Math.cos(angle) * radius * 0.7, my = y + Math.sin(angle) * radius * 0.7;
@@ -113,7 +125,7 @@ export const FX = (() => {
   }
 
   /** Rayo recto. fx: { pal, beam } — beam = forma que viaja por él o 'lightning'. */
-  function beam(x, y, angle, len, width, color, fx: MoveFx = {}) {
+  function beam(x: number, y: number, angle: number, len: number, width: number, color: string, fx: MoveFx = {}) {
     beams.push({ x, y, angle, len, width, pal: fx.pal || 'normal', shape: fx.beam || null, t: 0, life: 0.2, seed: Math.random() * 100 });
     sp('impact', fx.pal || 'normal', x + Math.cos(angle) * 10, y + Math.sin(angle) * 10, { life: 0.12, scale: 1 });
     sp('impact', fx.pal || 'normal', x + Math.cos(angle) * len, y + Math.sin(angle) * len, { life: 0.18, scale: 1.5 });
@@ -121,7 +133,7 @@ export const FX = (() => {
 
   // ---------------- actualización ----------------
 
-  function update(dt) {
+  function update(dt: number) {
     for (let i = parts.length - 1; i >= 0; i--) {
       const p = parts[i];
       p.t += dt;
@@ -137,7 +149,7 @@ export const FX = (() => {
       if (s.t >= s.life) { sprites.splice(i, 1); continue; }
       s.vy += (s.grav || 0) * dt;
       s.x += s.vx * dt; s.y += s.vy * dt;
-      if (s.spin) s.angle += s.spin * dt;
+      if (s.spin) s.angle! += s.spin * dt;
     }
     for (let i = texts.length - 1; i >= 0; i--) {
       const t = texts[i];
@@ -145,7 +157,8 @@ export const FX = (() => {
       if (t.t >= t.life) { texts.splice(i, 1); continue; }
       t.y += t.vy * dt; t.vy *= 0.94;
     }
-    for (const arr of [rings, slashes, beams]) {
+    const timed: { t: number; life: number }[][] = [rings, slashes, beams];
+    for (const arr of timed) {
       for (let i = arr.length - 1; i >= 0; i--) {
         arr[i].t += dt;
         if (arr[i].t >= arr[i].life) arr.splice(i, 1);
@@ -156,9 +169,9 @@ export const FX = (() => {
   // ---------------- dibujo ----------------
 
   // La transparencia va a escalones (1 · ,66 · ,33) para que no parezca vectorial.
-  const step = k => k > 0.66 ? 1 : k > 0.33 ? 0.66 : 0.33;
+  const step = (k: number) => k > 0.66 ? 1 : k > 0.33 ? 0.66 : 0.33;
 
-  function drawBeam(ctx, b) {
+  function drawBeam(ctx: CanvasRenderingContext2D, b: Beam) {
     const k = 1 - b.t / b.life;
     const P = G.VFX.PAL[b.pal] || G.VFX.PAL.normal;
     const a = Math.round(b.angle / (Math.PI / 16)) * (Math.PI / 16);
@@ -200,7 +213,7 @@ export const FX = (() => {
     ctx.restore();
   }
 
-  function drawSlash(ctx, s) {
+  function drawSlash(ctx: CanvasRenderingContext2D, s: Slash) {
     const k = 1 - s.t / s.life;
     const P = G.VFX.PAL[s.pal] || G.VFX.PAL.normal;
     const half = Math.min(s.arc, 6.2832) / 2;
@@ -219,7 +232,7 @@ export const FX = (() => {
     ctx.globalAlpha = 1;
   }
 
-  function drawRing(ctx, r) {
+  function drawRing(ctx: CanvasRenderingContext2D, r: Ring) {
     const k = r.t / r.life;
     const rad = G.U.lerp(r.r0, r.r1, k);
     const n = Math.max(10, Math.ceil(rad * 6.2832 / (PX * 2)));
@@ -233,7 +246,7 @@ export const FX = (() => {
     ctx.globalAlpha = 1;
   }
 
-  function draw(ctx) {
+  function draw(ctx: CanvasRenderingContext2D) {
     for (const b of beams) drawBeam(ctx, b);
     for (const s of slashes) drawSlash(ctx, s);
     for (const r of rings) drawRing(ctx, r);
@@ -248,24 +261,28 @@ export const FX = (() => {
     for (const s of sprites) {
       const k = 1 - s.t / s.life;
       if (s.twinkle) { G.Icons.twinkle(ctx, s.x, s.y, s.t / s.life, PX); continue; }
-      G.VFX.draw(ctx, s.shape, s.pal, s.x, s.y, {
+      G.VFX.draw(ctx, s.shape!, s.pal!, s.x, s.y, {
         angle: s.angle, scale: s.scale, alpha: s.fade ? step(k) : 1,
-        frame: Math.floor(s.t * s.fr)
+        frame: Math.floor(s.t * s.fr!)
       });
     }
 
     // Números de daño.
-    for (const t of texts) {
-      const k = 1 - t.t / t.life;
+    // (el estado del lienzo se fija una vez; sólo cambian el alfa, el color y, a veces, la letra)
+    if (texts.length) {
       ctx.save();
-      ctx.globalAlpha = Math.min(1, k * 2.2);
-      ctx.font = (t.big ? '700 20px' : '700 13px') + ' Pixelify,"Segoe UI",sans-serif';
       ctx.textAlign = 'center';
       ctx.lineWidth = 3;
       ctx.strokeStyle = 'rgba(0,0,0,.75)';
-      ctx.strokeText(t.s, t.x, t.y);
-      ctx.fillStyle = t.color;
-      ctx.fillText(t.s, t.x, t.y);
+      let big: boolean | null = null;
+      for (const t of texts) {
+        const k = 1 - t.t / t.life;
+        if (!!t.big !== big) { big = !!t.big; ctx.font = (big ? '700 20px' : '700 13px') + ' Pixelify,"Segoe UI",sans-serif'; }
+        ctx.globalAlpha = Math.min(1, k * 2.2);
+        ctx.strokeText(t.s, t.x, t.y);
+        ctx.fillStyle = t.color;
+        ctx.fillText(t.s, t.x, t.y);
+      }
       ctx.restore();
     }
   }

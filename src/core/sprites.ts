@@ -53,13 +53,13 @@ export const Sprites = (() => {
    * que ctx.filter en cada dibujo, que era lo que más ralentizaba con muchos
    * enemigos a la vez.
    */
-  const whites = new WeakMap<HTMLImageElement, HTMLCanvasElement>();
-  function white(img: HTMLImageElement) {
+  const whites = new WeakMap<HTMLImageElement | HTMLCanvasElement, HTMLCanvasElement>();
+  function white(img: HTMLImageElement | HTMLCanvasElement) {
     let c = whites.get(img);
     if (c) return c;
     c = document.createElement('canvas');
     c.width = img.width; c.height = img.height;
-    const x = c.getContext('2d');
+    const x = c.getContext('2d')!;
     x.drawImage(img, 0, 0);
     x.globalCompositeOperation = 'source-in';
     x.fillStyle = '#ffffff';
@@ -88,7 +88,7 @@ export const Sprites = (() => {
   function animMeta(dex: number, anim: string, shiny = false): AnimMeta | null {
     const m = meta(dex);
     if (!m) return null;
-    const name = animName(dex, anim, shiny);
+    const name = animName(dex, anim, shiny)!;
     if (shiny && m.sh && m.sa && m.sa[name]) return m.sa[name];
     return m.a[name] || null;
   }

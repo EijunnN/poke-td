@@ -1,7 +1,9 @@
 import { G } from '../g';
+import type { Friend, Invite, Member, Room } from '../net/social';
+import type { CoopConfig } from '../net/coop';
 /* ============ social-ui.js — apodo, amigos, sala e invitaciones ============ */
   const $ = G.UI.$;
-  const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const esc = (s: unknown) => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 
   /** ¿Se puede usar lo online? Si no, explica por qué. */
   function needOnline() {
@@ -14,18 +16,18 @@ import { G } from '../g';
   // ======================= APODO =======================
 
   export const NickUI = (() => {
-    let then = null, skipped = false;
+    let then: (() => void) | null = null, skipped = false;
 
     function init() {
-      $('nick-form').onsubmit = async e => {
+      $('nick-form').onsubmit = async (e: Event) => {
         e.preventDefault();
         $('nick-err').textContent = '';
-        $('nick-ok').disabled = true;
-        const r = await G.Social.claimNick($('nick-in').value);
-        $('nick-ok').disabled = false;
-        if (!r.ok) { $('nick-err').textContent = r.error; G.Audio.sfx('error'); return; }
+        $<HTMLButtonElement>('nick-ok').disabled = true;
+        const r = await G.Social.claimNick($<HTMLInputElement>('nick-in').value);
+        $<HTMLButtonElement>('nick-ok').disabled = false;
+        if (!r.ok) { $('nick-err').textContent = r.error || ''; G.Audio.sfx('error'); return; }
         G.Audio.sfx('confirm');
-        G.UI.toast('Tu apodo es ' + G.Social.me.name);
+        G.UI.toast('Tu apodo es ' + G.Social.me!.name);
         const cb = then; then = null;
         if (cb) cb(); else G.MenuUI.open();
       };
@@ -37,8 +39,8 @@ import { G } from '../g';
       then = next || null;
       G.UI.show('scr-nick');
       $('nick-err').textContent = '';
-      $('nick-in').value = '';
-      setTimeout(() => $('nick-in').focus(), 50);
+      $<HTMLInputElement>('nick-in').value = '';
+      setTimeout(() => $<HTMLInputElement>('nick-in').focus(), 50);
     }
 
     return { init, open, get skipped() { return skipped; } };
@@ -46,7 +48,7 @@ import { G } from '../g';
   G.NickUI = NickUI;
 
   /** Abre `fn` si tienes apodo; si no, pide el apodo primero. */
-  function withNick(fn) {
+  function withNick(fn: () => void) {
     if (!needOnline()) return;
     if (G.Social.me) { fn(); return; }
     G.Social.start().then(r => { if (r === 'ok') fn(); else G.NickUI.open(fn); });
@@ -56,19 +58,19 @@ import { G } from '../g';
 
   export const FriendsUI = (() => {
     function init() {
-      $('fr-add').onsubmit = async e => {
+      $('fr-add').onsubmit = async (e: Event) => {
         e.preventDefault();
-        const name = $('fr-name').value;
+        const name = $<HTMLInputElement>('fr-name').value;
         msg('');
         const r = await G.Social.request(name);
-        msg(r.ok ? (r as any).msg : r.error, !r.ok);
-        if (r.ok) $('fr-name').value = '';
+        msg(r.ok ? r.msg : r.error, !r.ok);
+        if (r.ok) $<HTMLInputElement>('fr-name').value = '';
       };
       $('fr-room').onclick = () => G.LobbyUI.open();
       G.Social.on(() => { if (G.UI.isOpen('scr-friends')) render(); });
     }
 
-    function msg(t: string, bad?: boolean) {
+    function msg(t?: string, bad?: boolean) {
       $('fr-msg').textContent = t || '';
       $('fr-msg').style.color = bad ? '#ffb0b8' : '';
       if (t) G.Audio.sfx(bad ? 'error' : 'confirm');
@@ -77,7 +79,7 @@ import { G } from '../g';
     function open() { withNick(() => { G.UI.show('scr-friends', true); msg(''); render(); G.Social.refreshPresence(); }); }
 
     /** "hace 5 min", "hace 2 h", "hace 3 días". */
-    function ago(t) {
+    function ago(t: number) {
       const m = Math.max(1, Math.round((Date.now() - t) / 60000));
       if (m < 60) return 'hace ' + m + ' min';
       const h = Math.round(m / 60);
@@ -85,7 +87,7 @@ import { G } from '../g';
       return 'hace ' + Math.round(h / 24) + ' días';
     }
 
-    function stateText(f) {
+    function stateText(f: Friend) {
       if (f.status === 'in') return 'Quiere ser tu amigo';
       if (f.status === 'out') return 'Solicitud enviada';
       if (!f.online) return f.seen ? 'Visto ' + ago(f.seen) : 'Desconectado';
@@ -97,7 +99,7 @@ import { G } from '../g';
       $('fr-me').innerHTML = 'Tu apodo: <b class="gold" translate="no">' + esc(G.Social.me ? G.Social.me.name : '') + '</b> · dáselo a tus amigos para que te añadan.';
       $('fr-room').classList.toggle('hidden', !room);
       const list = G.Social.friends.sort((a, b) => {
-        const rank = f => f.status === 'in' ? 0 : f.status === 'ok' ? (f.online ? (f.play ? 2 : 1) : 3) : 4;
+        const rank = (f: Friend) => f.status === 'in' ? 0 : f.status === 'ok' ? (f.online ? (f.play ? 2 : 1) : 3) : 4;
         return rank(a) - rank(b) || a.name.localeCompare(b.name);
       });
       const box = $('fr-list');
@@ -112,9 +114,9 @@ import { G } from '../g';
         const dot = f.status !== 'ok' ? 'pend' : !f.online ? 'off' : f.play ? 'play' : 'on';
         const inRoom = room && room.members.some(m => m.uid === f.uid);
         el.innerHTML = `<i class="dot ${dot}"></i><b translate="no"><a href="#" class="plink" title="Ver su perfil">${esc(f.name)}</a></b><span class="st">${inRoom ? 'En tu sala' : stateText(f)}</span><span class="grow"></span>`;
-        if (f.status === 'ok') el.querySelector<HTMLElement>('.plink').onclick = e => { e.preventDefault(); G.ProfileUI.show(f.uid); };
-        else el.querySelector<HTMLElement>('.plink').onclick = e => e.preventDefault();
-        const btn = (txt, cls, fn) => {
+        if (f.status === 'ok') el.querySelector<HTMLElement>('.plink')!.onclick = e => { e.preventDefault(); G.ProfileUI.show(f.uid); };
+        else el.querySelector<HTMLElement>('.plink')!.onclick = e => e.preventDefault();
+        const btn = (txt: string, cls: string, fn: () => unknown) => {
           const b = document.createElement('button');
           b.className = 'btn small ' + cls; b.textContent = txt; b.onclick = fn; el.appendChild(b); return b;
         };
@@ -166,8 +168,8 @@ import { G } from '../g';
         G.MenuUI.open();
       };
       $('lobby-menu').onclick = () => G.MenuUI.open();
-      $('lobby-start').onclick = start;
-      $('lobby-start').dataset.sfx = 'confirm';
+      $<HTMLButtonElement>('lobby-start').onclick = start;
+      $<HTMLButtonElement>('lobby-start').dataset.sfx = 'confirm';
       // Conecta / desconecta la red al entrar o salir de una sala.
       G.Social.on(what => {
         const room = G.Social.room;
@@ -196,7 +198,7 @@ import { G } from '../g';
     }
 
     /** El modo (y el mapa de la Defensa): botones para el anfitrión; para los demás, lo que ha elegido. */
-    function renderMode(room) {
+    function renderMode(room: Room) {
       const box = $('lobby-mode');
       document.querySelectorAll('.lobby-access').forEach(el => el.remove());
       // Si la sala aún no sabe a qué se juega (recién creada), se le dice.
@@ -208,7 +210,7 @@ import { G } from '../g';
         return;
       }
       box.innerHTML = '<b>Modo:</b>';
-      const chip = (label, on, fn) => {
+      const chip = (label: string, on: boolean, fn: () => void) => {
         const b = document.createElement('button');
         b.className = 'btn small' + (on ? ' gold' : '');
         b.textContent = label;
@@ -249,7 +251,7 @@ import { G } from '../g';
 
     function close() { G.UI.hide('scr-lobby'); }
 
-    function connText(m, room) {
+    function connText(m: Member, room: Room) {
       if (m.uid === room.host) return 'Anfitrión';
       if (!room.isHost) return m.uid === G.Social.uid ? 'Tú' : 'En la sala';
       const mode = G.Net.mode(m.uid);
@@ -284,7 +286,7 @@ import { G } from '../g';
           box.appendChild(c);
         }
       }
-      box.querySelectorAll('.conn').forEach(el => {
+      box.querySelectorAll<HTMLElement>('.conn').forEach(el => {
         const m = ms.find(x => x.uid === el.dataset.u);
         if (!m) return;
         const t = connText(m, room);
@@ -313,7 +315,7 @@ import { G } from '../g';
         }
       }
 
-      const btn = $('lobby-start');
+      const btn = $<HTMLButtonElement>('lobby-start');
       btn.classList.toggle('hidden', !room.isHost);
       const connecting = ms.some(m => m.uid !== room.host && G.Net.mode(m.uid) === 'connecting');
       const over = ms.length - room.max;
@@ -328,14 +330,14 @@ import { G } from '../g';
     function start() {
       const room = G.Social.room;
       if (!room || !room.isHost || room.members.length < 2 || room.members.length > room.max) return;
-      const cfg: { k: string; [key: string]: any } = {
+      const cfg: CoopConfig & { k: string; mode?: 'survivor' | 'td'; map?: string } = {
         k: 'start', seed: Math.floor(Math.random() * 1e6), host: room.host,
         members: room.members.map(m => ({ uid: m.uid, name: m.name, dex: m.dex, shiny: !!m.shiny }))
       };
       // Defensa: el mapa elegido (o uno al azar, el mismo para todos).
       if (game.mode === 'td') { cfg.mode = 'td'; cfg.map = game.map === 'random' ? G.U.pick(G.TD_MAPS).id : game.map; }
       G.Social.setOpen(false);
-      G.Net.broadcast(cfg);
+      G.Net.broadcast({ ...cfg });
       G.Flow.startCoop(cfg);
     }
 
@@ -346,7 +348,7 @@ import { G } from '../g';
   // ======================= INVITACIONES =======================
 
   export const InvitePop = (() => {
-    let cur = null;
+    let cur: Invite | null = null;
 
     function init() {
       $('inv-yes').onclick = async () => {

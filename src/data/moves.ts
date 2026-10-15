@@ -78,6 +78,34 @@ export interface MoveDef {
   maxLvl?: number;
 }
 
+/** Los movimientos que sólo piden `mon.types` (poolFor / startFor). */
+export interface MoveLearner {
+  types: readonly PokeType[];
+  start?: string;
+}
+
+/** Movimiento en una run: la ficha con las mejoras aplicadas y su estado (ver Moves.instance). */
+export interface MoveInstance extends Omit<MoveDef, 'ups'> {
+  /** La ficha base, con la escalera de mejoras. */
+  def: MoveDef;
+  lvl: number;
+  /** Cuenta atrás hasta el siguiente disparo. */
+  t: number;
+  /** Cuándo se lanzó por última vez (performance.now), para la animación del HUD. */
+  castAt?: number;
+  evolved?: boolean;
+  baseName?: string;
+}
+
+/** Qué hace falta para evolucionar un movimiento y qué cambia. */
+export interface MoveEvoInfo {
+  name: string;
+  needs: string;
+  needName: string;
+  text: string;
+  ready: boolean;
+}
+
 export const Moves = (() => {
   const LADDERS: Record<MoveKind, MoveUpgrade[]> = {
     projectile: [
@@ -457,8 +485,8 @@ export const Moves = (() => {
   // Pegaban bien, pero había que arriesgar mucho más que con los de distancia.
   for (const m of RAW) {
     if (m.kind !== 'melee') continue;
-    m.dmg = Math.round(m.dmg * 1.2);
-    m.radius = Math.round(m.radius * 1.25);
+    m.dmg = Math.round(m.dmg! * 1.2);
+    m.radius = Math.round(m.radius! * 1.25);
     if (m.arc) m.arc = Math.min(3, +(m.arc * 1.25).toFixed(2));
   }
 
@@ -474,7 +502,7 @@ export const Moves = (() => {
   }
 
   /** Movimientos que este Pokémon puede aprender (sus tipos + normal). */
-  function poolFor(mon) {
+  function poolFor(mon: MoveLearner): string[] {
     const ids = new Set(POOL.normal);
     for (const t of mon.types) for (const id of (POOL[t] || [])) ids.add(id);
     return [...ids];
@@ -484,49 +512,52 @@ export const Moves = (() => {
    * Instancia de movimiento en una run: los números base de `def` con todas
    * las mejoras de la escalera hasta `lvl` ya aplicadas.
    */
-  function instance(id, lvl = 1) {
+  function instance(id: string, lvl = 1): MoveInstance {
     const def = BY_ID[id];
-    const s = Object.assign({}, def, { id, def, lvl, t: 0 });
+    const s: MoveInstance & { ups?: MoveUpgrade[] } = Object.assign({}, def, { id, def, lvl, t: 0 });
     delete s.ups;
-    for (let i = 0; i < lvl - 1; i++) applyMods(s, def.ups[i].m);
+    for (let i = 0; i < lvl - 1; i++) applyMods(s, def.ups![i].m);
     return s;
   }
 
-  const MULT = ['dmg', 'cd', 'speed', 'radius', 'dur', 'amount', 'arc', 'width', 'spread', 'life', 'size', 'rate'];
-  const ADD = ['count', 'pierce', 'stacks'];
+  const MULT: string[] = ['dmg', 'cd', 'speed', 'radius', 'dur', 'amount', 'arc', 'width', 'spread', 'life', 'size', 'rate'];
+  const ADD: string[] = ['count', 'pierce', 'stacks'];
 
-  function applyMods(s, m) {
-    for (const k in m) {
-      if (MULT.includes(k) && s[k] != null) s[k] *= m[k];
-      else if (ADD.includes(k)) s[k] = (s[k] || 0) + m[k];
-      else s[k] = m[k];
+  function applyMods(s: MoveInstance, m: MoveMods) {
+    // Los mods son números y se aplican a los campos numéricos de la instancia.
+    const t = s as unknown as Record<string, number | undefined>;
+    const mm = m as Record<string, number>;
+    for (const k in mm) {
+      if (MULT.includes(k) && t[k] != null) t[k]! *= mm[k];
+      else if (ADD.includes(k)) t[k] = (t[k] || 0) + mm[k];
+      else t[k] = mm[k];
     }
   }
 
   /** Sube de nivel una instancia ya creada. */
-  function levelUp(s) {
-    if (s.lvl >= s.def.maxLvl) return false;
-    applyMods(s, s.def.ups[s.lvl - 1].m);
+  function levelUp(s: MoveInstance): boolean {
+    if (s.lvl >= s.def.maxLvl!) return false;
+    applyMods(s, s.def.ups![s.lvl - 1].m);
     s.lvl++;
     return true;
   }
 
   /** Texto de la próxima mejora, para la carta de subida de nivel. */
-  function nextUpText(s) {
-    return s.lvl >= s.def.maxLvl ? null : s.def.ups[s.lvl - 1].t;
+  function nextUpText(s: MoveInstance): string | null {
+    return s.lvl >= s.def.maxLvl! ? null : s.def.ups![s.lvl - 1].t;
   }
 
   /** Movimiento inicial según el tipo principal (si el Pokémon no trae uno). */
-  const START = {
+  const START: Partial<Record<PokeType, string>> = {
     fire: 'ember', water: 'water-gun', grass: 'vine-whip', electric: 'thunder-shock',
     psychic: 'confusion', poison: 'sludge', ground: 'mud-shot', flying: 'gust',
     bug: 'bug-bite', rock: 'rock-throw', ice: 'ice-beam', fighting: 'karate-chop',
     ghost: 'shadow-ball', dragon: 'dragon-rage', fairy: 'fairy-wind', steel: 'metal-claw',
     dark: 'bite', normal: 'tackle'
   };
-  function startFor(mon) {
+  function startFor(mon: MoveLearner): string {
     if (mon.start && BY_ID[mon.start]) return mon.start;
-    for (const t of mon.types) if (START[t]) return START[t];
+    for (const t of mon.types) if (START[t]) return START[t]!;
     return 'tackle';
   }
 
@@ -536,7 +567,7 @@ export const Moves = (() => {
    * vez la mejora de su condición (`needs`, un id de LevelUp.STATS). Sale una
    * carta dorada. Los potenciadores (buff) no evolucionan.
    */
-  const NEED_NAME = { hp: 'Vigor', atk: 'Potencia', spd: 'Carrera', cd: 'Reflejos', def: 'Coraza',
+  const NEED_NAME: Record<string, string> = { hp: 'Vigor', atk: 'Potencia', spd: 'Carrera', cd: 'Reflejos', def: 'Coraza',
                       rgn: 'Síntesis', mag: 'Imán', xp: 'Aprendizaje' };
   const EVO: Record<string, [string, string]> = {
     'tackle': ['Derribo', 'hp'],             'quick-attack': ['Velocidad Extrema', 'spd'],
@@ -589,19 +620,19 @@ export const Moves = (() => {
   };
 
   /** ¿Puede evolucionar ya? → { name, needs, needName, text, ready } o null */
-  function evoInfo(m, statsTaken) {
+  function evoInfo(m: MoveInstance, statsTaken?: Record<string, number> | null): MoveEvoInfo | null {
     const e = EVO[m.id];
-    if (!e || m.evolved || m.lvl < m.def.maxLvl || !EVO_MODS[m.kind]) return null;
+    if (!e || m.evolved || m.lvl < m.def.maxLvl! || !EVO_MODS[m.kind]) return null;
     const [name, needs] = e;
-    return { name, needs, needName: NEED_NAME[needs], text: EVO_MODS[m.kind].t,
+    return { name, needs, needName: NEED_NAME[needs], text: EVO_MODS[m.kind]!.t,
              ready: !!(statsTaken && statsTaken[needs]) };
   }
 
   /** Evoluciona una instancia (cambia nombre y potencia; sigue siendo del mismo tipo). */
-  function evolve(m) {
+  function evolve(m: MoveInstance): boolean {
     const e = EVO[m.id];
     if (!e || m.evolved) return false;
-    applyMods(m, EVO_MODS[m.kind].m);
+    applyMods(m, EVO_MODS[m.kind]!.m);
     m.baseName = m.name;
     m.name = e[0];
     m.evolved = true;

@@ -1,4 +1,6 @@
 import { G } from '../g';
+import type { CameraT } from '../core/camera';
+import type { ArenaTheme } from './tiles';
 /* ============ world.js — arena abierta infinita con obstáculos ============
  *
  * Terreno por tile, determinista (ruido de valor con semilla):
@@ -27,61 +29,89 @@ import { G } from '../g';
  * Los chunks se separan en DATOS (baratos, siempre) e IMAGEN (horneada a
  * resolución de arte y sólo para los visibles).
  */
+export type PropTipo = 'tree' | 'rock' | 'chest' | 'grass' | 'altar' | 'spring' | 'bigchest' | 'trap';
+
+/** Objeto del escenario (ver la cabecera). */
+export interface Prop {
+  id: number; type: PropTipo; tx: number; ty: number; kind: number;
+  x: number; y: number; r: number; hp: number; maxHp: number;
+  solid: boolean; flat: boolean; destructible: boolean; flash: number; wiggle: number;
+  used: boolean; charge: number; open: number;      // altar / manantial / cofre con candado
+}
+
+/** Datos de un chunk de N×N tiles. */
+interface ChunkData {
+  cx: number; cy: number; terr: Uint8Array;
+  props: Prop[]; propAt: Map<string, Prop>; liquids: number[];     // liquids: pares tx, ty
+}
+
+/** Arena de la grieta tal y como la pide quien la crea (en tiles). */
+interface ArenaCfg { tx: number; ty: number; r: number; type: string }
+interface Arena extends ArenaCfg { th: ArenaTheme }
+
+/** Efecto del charco sobre quien lo pisa: frena (slow), quema (dmg cada "every" s) o resbala (slide). */
+interface LiquidEffect { slow?: number; dmg?: number; flat?: number; every?: number; color?: string; slide?: boolean; immune?: string[] }
+
+/** Cambio de bioma en curso: la paleta vieja (from) y sus imágenes. */
+interface Fade { from: number; images: Map<string, HTMLCanvasElement>; t: number }
+
 export const World = (() => {
   const T = G.Tiles.T;                     // px de arte por tile
   const N = 16;                            // tiles por chunk
   const TS = T * G.Sprites.PX;             // tamaño de tile en mundo (32)
   const CW = N * TS;                       // tamaño de chunk en mundo (512)
   const FLOOR = 0, WALL = 1, LIQUID = 2;
-  const KIND = ['floor', 'wall', 'liquid'];
+  const KIND = ['floor', 'wall', 'liquid'] as const;
 
   let seed = 1, biome = 0;
   let clearR = 9;                          // radio del claro inicial, en tiles (ver reset)
-  let arena = null;                        // { tx, ty, r } en tiles
-  const data = new Map();                  // "cx,cy" -> datos del chunk
-  let images = new Map();                  // "cx,cy" -> canvas horneado
+  let arena: Arena | null = null;          // { tx, ty, r } en tiles
+  const data = new Map<string, ChunkData>();                  // "cx,cy" -> datos del chunk
+  let images = new Map<string, HTMLCanvasElement>();                  // "cx,cy" -> canvas horneado
   // Cambio de bioma: durante FADE segundos se funde la paleta vieja con la nueva.
   const FADE = 2.6;
-  let fade = null;                         // { from, images, t }
+  let fade: Fade | null = null;
   const MAX_IMAGES = 48, MAX_DATA = 400;
   const broken = new Set();                // props destruidos: "tx,ty"
   let nextPropId = 1;
 
   // ---------------- ruido ----------------
 
-  const H = (x, y, s) => G.U.hash(x, y, s);
+  const H = (x: number, y: number, s: number): number => G.U.hash(x, y, s);
 
-  function vnoise(x, y, s) {
+  function vnoise(x: number, y: number, s: number) {
     const xi = Math.floor(x), yi = Math.floor(y);
     const xf = x - xi, yf = y - yi;
     const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf);
     const a = H(xi, yi, s), b = H(xi + 1, yi, s), c = H(xi, yi + 1, s), d = H(xi + 1, yi + 1, s);
     return (a + (b - a) * u) * (1 - v) + (c + (d - c) * u) * v;
   }
-  const fbm = (x, y, s) => vnoise(x, y, s) * 0.65 + vnoise(x * 2.13 + 17, y * 2.13 - 9, s + 1) * 0.35;
+  const fbm = (x: number, y: number, s: number) => vnoise(x, y, s) * 0.65 + vnoise(x * 2.13 + 17, y * 2.13 - 9, s + 1) * 0.35;
 
   /** Terreno "puro" de un tile (sin caché). */
-  function arenaDist(tx, ty) { return arena ? Math.hypot(tx - arena.tx, ty - arena.ty) : Infinity; }
+  function arenaDist(tx: number, ty: number) { return arena ? Math.hypot(tx - arena.tx, ty - arena.ty) : Infinity; }
 
   /**
    * Pasillo libre de la arena: donde aparecéis (sur) y el legendario (norte).
    * Con `clear` en el tema, además un claro donde aterriza Arceus (5 al norte).
    */
-  function arenaSafe(tx, ty) {
-    const lx = tx - arena.tx, ly = ty - arena.ty;
+  function arenaSafe(tx: number, ty: number) {
+    const a = arena!;
+    const lx = tx - a.tx, ly = ty - a.ty, clear = a.th.clear || 0;
     return (Math.abs(lx) <= 2 && ly >= -6 && ly <= 5) || Math.hypot(lx, ly) < 2.5 ||
-           (arena.th.clear > 0 && Math.hypot(lx, ly + 5) < arena.th.clear);
+           (clear > 0 && Math.hypot(lx, ly + 5) < clear);
   }
 
-  function terrainRaw(tx, ty) {
+  function terrainRaw(tx: number, ty: number) {
     const ad = arenaDist(tx, ty);
     if (ad < arena_outer()) {
-      if (ad >= arena.r) return WALL;
+      const a = arena!;
+      if (ad >= a.r) return WALL;
       if (arenaSafe(tx, ty)) return FLOOR;
-      const th = arena.th;
+      const th = a.th;
       // Columnas de 2×2 (cobertura) y charcos según el tipo de la arena.
-      if (th.pillars && ad < arena.r - 2 && H(tx >> 1, ty >> 1, seed + 31 + arena.tx) < th.pillars) return WALL;
-      if (th.pools && ad < arena.r - 1.5 && fbm(tx / 3.2, ty / 3.2, seed + 37 + arena.tx) < th.pools) return LIQUID;
+      if (th.pillars && ad < a.r - 2 && H(tx >> 1, ty >> 1, seed + 31 + a.tx) < th.pillars) return WALL;
+      if (th.pools && ad < a.r - 1.5 && fbm(tx / 3.2, ty / 3.2, seed + 37 + a.tx) < th.pools) return LIQUID;
       return FLOOR;
     }
     const d = Math.hypot(tx, ty);
@@ -94,7 +124,7 @@ export const World = (() => {
 
   // ---------------- datos de chunk ----------------
 
-  function chunkData(cx, cy) {
+  function chunkData(cx: number, cy: number) {
     const k = cx + ',' + cy;
     let c = data.get(k);
     if (c) return c;
@@ -107,13 +137,13 @@ export const World = (() => {
       c.terr[j * N + i] = t;
       if (t === LIQUID) c.liquids.push(tx, ty);
     }
-    if (data.size > MAX_DATA) data.delete(data.keys().next().value);
+    if (data.size > MAX_DATA) data.delete(data.keys().next().value!);
     data.set(k, c);
     placeProps(c);
     return c;
   }
 
-  function terrainAt(tx, ty) {
+  function terrainAt(tx: number, ty: number) {
     const cx = Math.floor(tx / N), cy = Math.floor(ty / N);
     const c = data.get(cx + ',' + cy) || chunkData(cx, cy);
     return c.terr[(ty - cy * N) * N + (tx - cx * N)];
@@ -121,7 +151,7 @@ export const World = (() => {
 
   const arena_outer = () => (arena ? arena.r + 7 : 0);
 
-  function placeProps(c) {
+  function placeProps(c: ChunkData) {
     for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
       if (c.terr[j * N + i] !== FLOOR) continue;
       const tx = c.cx * N + i, ty = c.cy * N + j;
@@ -138,7 +168,7 @@ export const World = (() => {
       if (ad < arena_outer() + 2) {
         if (!arena || ad >= arena.r - 1.2 || arenaSafe(tx, ty)) continue;
         const pr = arena.th.props, hh = H(tx, ty, seed + 777);
-        let at = null;
+        let at: PropTipo | null = null;
         if (open && hh < (pr.tree || 0)) at = 'tree';
         else if (open && hh < (pr.tree || 0) + (pr.rock || 0)) at = 'rock';
         else if (hh > 1 - (pr.grass || 0)) at = 'grass';
@@ -148,7 +178,7 @@ export const World = (() => {
 
       const h = H(tx, ty, seed + 404);
       const grove = fbm(tx / 10, ty / 10, seed + 505) > 0.6;
-      let type = null, kind = 0;
+      let type: PropTipo | null = null, kind = 0;
       // Interactivos (raros), lejos del claro del principio.
       const hs = H(tx, ty, seed + 909);
       if (open && Math.hypot(tx, ty) > clearR + 3 && hs < 0.0032) {
@@ -168,7 +198,7 @@ export const World = (() => {
     }
   }
 
-  const PROP = {
+  const PROP: Record<PropTipo, { solid: boolean; hp: number; r: number; flat?: boolean }> = {
     tree:  { solid: true,  hp: Infinity, r: 13 },
     rock:  { solid: true,  hp: 34,       r: 12 },
     chest: { solid: true,  hp: 22,       r: 12 },
@@ -178,9 +208,9 @@ export const World = (() => {
     bigchest: { solid: true,  hp: Infinity, r: 14 },
     trap:     { solid: false, hp: Infinity, r: 9, flat: true }
   };
-  const SPECIAL = new Set(['altar', 'spring', 'bigchest', 'trap']);
+  const SPECIAL = new Set<string>(['altar', 'spring', 'bigchest', 'trap']);
 
-  function makeProp(type, tx, ty, kind = 0) {
+  function makeProp(type: PropTipo, tx: number, ty: number, kind = 0): Prop {
     const d = PROP[type];
     return {
       id: nextPropId++, type, tx, ty, kind,
@@ -194,11 +224,11 @@ export const World = (() => {
 
   // ---------------- consultas ----------------
 
-  const tileOf = v => Math.floor(v / TS);
+  const tileOf = (v: number) => Math.floor(v / TS);
 
-  function kindAt(x, y) { return KIND[terrainAt(tileOf(x), tileOf(y))]; }
-  function isWall(x, y) { return terrainAt(tileOf(x), tileOf(y)) === WALL; }
-  function isLiquid(x, y) { return terrainAt(tileOf(x), tileOf(y)) === LIQUID; }
+  function kindAt(x: number, y: number) { return KIND[terrainAt(tileOf(x), tileOf(y))]; }
+  function isWall(x: number, y: number) { return terrainAt(tileOf(x), tileOf(y)) === WALL; }
+  function isLiquid(x: number, y: number) { return terrainAt(tileOf(x), tileOf(y)) === LIQUID; }
   function liquidKind() { return G.Tiles.BIOMES[biome].liquid; }
 
   /**
@@ -206,7 +236,7 @@ export const World = (() => {
    *   { slow, dmg, every, color, slide }  (dmg en % de vida máxima)
    * Los de su tipo no sufren el suyo (Fuego en lava, Veneno en veneno...).
    */
-  const LIQ = {
+  const LIQ: Record<string, LiquidEffect> = {
     water: { slow: 0.6, immune: ['water'] },     // los de tipo agua nadan sin frenarse
     swamp: { slow: 0.45, immune: ['water'] },
     lava:   { dmg: 0.06, flat: 5, every: 0.5, color: '#ff8a3d', immune: ['fire'] },
@@ -214,20 +244,21 @@ export const World = (() => {
     spark:  { dmg: 0.045, flat: 4, every: 0.7, color: '#ffe14d', immune: ['electric', 'ground'] },
     ice:    { slide: true, immune: ['ice'] }
   };
-  function liquidEffect(types) {
+  function liquidEffect(types?: string[] | null): LiquidEffect {
     const e = LIQ[liquidKind()] || LIQ.water;
-    if (e.immune && types && types.some(t => e.immune.includes(t))) return {};
+    const im = e.immune;
+    if (im && types && types.some(t => im.includes(t))) return {};
     return e;
   }
 
-  function propAtTile(tx, ty) {
+  function propAtTile(tx: number, ty: number) {
     const cx = Math.floor(tx / N), cy = Math.floor(ty / N);
     const c = data.get(cx + ',' + cy) || chunkData(cx, cy);
     return c.propAt.get(tx + ',' + ty) || null;
   }
 
   /** ¿Se puede pasar por esta casilla andando? (pathing.js) */
-  function walkable(tx, ty) {
+  function walkable(tx: number, ty: number) {
     const t = terrainAt(tx, ty);
     if (t === WALL) return false;
     if (t === LIQUID && (LIQ[liquidKind()] || {}).dmg) return false;   // lava, veneno, descarga
@@ -236,7 +267,7 @@ export const World = (() => {
   }
 
   /** ¿Hay sitio para que algo de radio r esté aquí? */
-  function isFree(x, y, r = 12, allowLiquid = false) {
+  function isFree(x: number, y: number, r = 12, allowLiquid = false) {
     const t0x = tileOf(x - r), t1x = tileOf(x + r), t0y = tileOf(y - r), t1y = tileOf(y + r);
     for (let ty = t0y; ty <= t1y; ty++) for (let tx = t0x; tx <= t1x; tx++) {
       const t = terrainAt(tx, ty);
@@ -248,8 +279,8 @@ export const World = (() => {
   }
 
   /** Objetos destructibles (incluida la hierba) que tocan un círculo. */
-  function propsInCircle(x, y, r) {
-    const out = [];
+  function propsInCircle(x: number, y: number, r: number) {
+    const out: Prop[] = [];
     const c0x = Math.floor((x - r) / CW), c1x = Math.floor((x + r) / CW);
     const c0y = Math.floor((y - r) / CW), c1y = Math.floor((y + r) / CW);
     for (let cy = c0y; cy <= c1y; cy++) for (let cx = c0x; cx <= c1x; cx++) {
@@ -263,8 +294,8 @@ export const World = (() => {
   }
 
   /** Objetos interactivos (altares, manantiales, cofres con candado, trampas) cerca. */
-  function specialsNear(x, y, r) {
-    const out = [];
+  function specialsNear(x: number, y: number, r: number) {
+    const out: Prop[] = [];
     const c0x = Math.floor((x - r) / CW), c1x = Math.floor((x + r) / CW);
     const c0y = Math.floor((y - r) / CW), c1y = Math.floor((y + r) / CW);
     for (let cy = c0y; cy <= c1y; cy++) for (let cx = c0x; cx <= c1x; cx++) {
@@ -276,8 +307,8 @@ export const World = (() => {
   }
 
   /** Roca o cofre más cercano (para apuntar cuando no hay enemigos). */
-  function nearestBreakable(x, y, r) {
-    let best = null, bd = r * r;
+  function nearestBreakable(x: number, y: number, r: number) {
+    let best: Prop | null = null, bd = r * r;
     for (const p of propsInCircle(x, y, r)) {
       if (!p.solid) continue;
       const d = G.U.dist2(x, y, p.x, p.y);
@@ -290,7 +321,7 @@ export const World = (() => {
    * Empuja un círculo fuera de paredes y objetos sólidos (deslizando).
    * Devuelve true si ha chocado con algo.
    */
-  function collide(e) {
+  function collide(e: { x: number; y: number; r: number }) {
     const r = e.r;
     let hit = false;
     for (let pass = 0; pass < 2; pass++) {
@@ -331,7 +362,7 @@ export const World = (() => {
   }
 
   /** ¿Choca un proyectil aquí? Devuelve 'wall', el prop sólido, o null. */
-  function projectileBlock(x, y, r) {
+  function projectileBlock(x: number, y: number, r: number): 'wall' | Prop | null {
     const tx = tileOf(x), ty = tileOf(y);
     if (terrainAt(tx, ty) === WALL) return 'wall';
     for (let b = -1; b <= 1; b++) for (let a = -1; a <= 1; a++) {
@@ -343,7 +374,7 @@ export const World = (() => {
 
   // ---------------- daño a objetos ----------------
 
-  function damageProp(p, amount, color = '#fff') {
+  function damageProp(p: Prop, amount: number, color = '#fff') {
     if (!p.destructible || p.hp <= 0) return false;
     p.hp -= amount;
     p.flash = 0.08;
@@ -353,7 +384,7 @@ export const World = (() => {
   }
 
   /** Rompe el objeto de esa casilla (llega por la red en cooperativo). */
-  function breakAt(tx, ty) {
+  function breakAt(tx: number, ty: number) {
     const k = tx + ',' + ty;
     if (broken.has(k)) return;
     const c = data.get(Math.floor(tx / N) + ',' + Math.floor(ty / N));
@@ -361,7 +392,7 @@ export const World = (() => {
     if (p) destroyProp(p, true); else broken.add(k);
   }
 
-  function destroyProp(p, fromNet = false) {
+  function destroyProp(p: Prop, fromNet = false) {
     broken.add(p.tx + ',' + p.ty);
     if (G.Coop.active && !fromNet) G.Coop.propBroken(p);
     const cx = Math.floor(p.tx / N), cy = Math.floor(p.ty / N);
@@ -418,17 +449,17 @@ export const World = (() => {
 
   // ---------------- dibujo ----------------
 
-  function chunkImage(cx, cy, bi = biome, cache = images) {
+  function chunkImage(cx: number, cy: number, bi = biome, cache = images) {
     const k = cx + ',' + cy;
     let img = cache.get(k);
     if (img) return img;
-    const at = (tx, ty) => KIND[terrainAt(tx, ty)];
+    const at = (tx: number, ty: number) => KIND[terrainAt(tx, ty)];
     // Campo continuo de "tierra"; tiles.js lo muestrea en rejilla y lo
     // interpola por píxel para que las manchas tengan bordes orgánicos.
     const S = 6 * G.Tiles.T;
-    const dirtField = (gx, gy) => fbm(gx / S, gy / S, seed + 303);
+    const dirtField = (gx: number, gy: number) => fbm(gx / S, gy / S, seed + 303);
     img = G.Tiles.paintChunk(cx, cy, N, at, dirtField, bi, seed);
-    if (cache.size > MAX_IMAGES) cache.delete(cache.keys().next().value);
+    if (cache.size > MAX_IMAGES) cache.delete(cache.keys().next().value!);
     cache.set(k, img);
     return img;
   }
@@ -436,22 +467,22 @@ export const World = (() => {
   /** 0..1 del fundido de bioma (suavizado), o null si no hay. */
   function fadeK() { if (!fade) return null; const x = Math.min(1, fade.t / FADE); return x * x * (3 - 2 * x); }
 
-  function visibleChunks(cam, pad = 0) {
-    const out = [];
+  function visibleChunks(cam: CameraT, pad = 0) {
+    const out: [number, number][] = [];
     const x0 = Math.floor((cam.left() - pad) / CW), x1 = Math.floor((cam.left() + cam.w + pad) / CW);
     const y0 = Math.floor((cam.top() - pad) / CW), y1 = Math.floor((cam.top() + cam.h + pad) / CW);
     for (let cy = y0; cy <= y1; cy++) for (let cx = x0; cx <= x1; cx++) out.push([cx, cy]);
     return out;
   }
 
-  function drawGround(ctx, cam) {
+  function drawGround(ctx: CanvasRenderingContext2D, cam: CameraT) {
     ctx.imageSmoothingEnabled = false;
     const k = fadeK();
     for (const [cx, cy] of visibleChunks(cam)) {
       // +1 de solape: con escalas no enteras evita juntas entre chunks.
       if (k == null) { ctx.drawImage(chunkImage(cx, cy), cx * CW, cy * CW, CW + 1, CW + 1); continue; }
       // Fundido: el bioma viejo debajo y el nuevo apareciendo encima.
-      ctx.drawImage(chunkImage(cx, cy, fade.from, fade.images), cx * CW, cy * CW, CW + 1, CW + 1);
+      ctx.drawImage(chunkImage(cx, cy, fade!.from, fade!.images), cx * CW, cy * CW, CW + 1, CW + 1);
       ctx.globalAlpha = k;
       ctx.drawImage(chunkImage(cx, cy), cx * CW, cy * CW, CW + 1, CW + 1);
       ctx.globalAlpha = 1;
@@ -459,7 +490,7 @@ export const World = (() => {
   }
 
   /** Brillos animados sobre el agua / burbujas de la lava (y del veneno y la electricidad). */
-  function drawLiquid(ctx, cam, t) {
+  function drawLiquid(ctx: CanvasRenderingContext2D, cam: CameraT, t: number) {
     const B = G.Tiles.BIOMES[biome];
     const lava = B.liquid === 'lava' || B.liquid === 'poison' || B.liquid === 'spark';
     ctx.fillStyle = B.foam;
@@ -483,15 +514,15 @@ export const World = (() => {
   }
 
   /** Props visibles, para mezclarlos en el orden por Y con las entidades. */
-  function visibleProps(cam) {
-    const out = [];
+  function visibleProps(cam: CameraT) {
+    const out: Prop[] = [];
     for (const [cx, cy] of visibleChunks(cam, 60)) {
       for (const p of chunkData(cx, cy).props) if (cam.sees(p.x, p.y, 70)) out.push(p);
     }
     return out;
   }
 
-  function drawProp(ctx, p, t) {
+  function drawProp(ctx: CanvasRenderingContext2D, p: Prop, t: number) {
     const P = G.Sprites.PX;
     const variant = p.type === 'grass' ? (Math.sin(t * 2.4 + p.wiggle) > 0.55 ? 1 : 0)
                   : p.type === 'rock' ? (p.hp < p.maxHp * 0.5 ? 1 : 0)
@@ -534,17 +565,17 @@ export const World = (() => {
     const k = fadeK();
     if (k != null) {
       // El objeto viejo se desvanece mientras aparece el nuevo.
-      const old = G.Tiles.propSprite(fade.from, p.type, variant);
+      const old = G.Tiles.propSprite(fade!.from, p.type, variant);
       ctx.globalAlpha = 1 - k;
       ctx.drawImage(old, Math.round(p.x - old.width * P / 2), Math.round(p.y - old.height * P + (p.type === 'grass' ? 4 : 2)), old.width * P, old.height * P);
       ctx.globalAlpha = k;
     }
     ctx.drawImage(img, x, y, w, h);
-    if (p.flash > 0) { ctx.globalAlpha = 0.6; ctx.drawImage(G.Sprites.white(img), x, y, w, h); }
+    if (p.flash > 0) { ctx.globalAlpha = 0.6; ctx.drawImage(G.Sprites.white(img as unknown as HTMLImageElement), x, y, w, h); }
     ctx.restore();
   }
 
-  function update(dt, cam) {
+  function update(dt: number, cam: CameraT) {
     if (fade && (fade.t += dt) >= FADE) fade = null;
     for (const [cx, cy] of visibleChunks(cam, 60)) {
       for (const p of chunkData(cx, cy).props) if (p.flash > 0) p.flash -= dt;
@@ -554,7 +585,7 @@ export const World = (() => {
   // ---------------- control ----------------
 
   /** @param clear  radio (en tiles) del claro sin obstáculos alrededor del origen */
-  function reset(s, clear = 9) {
+  function reset(s: number, clear = 9) {
     seed = (s | 0) || 1;
     clearR = clear;
     data.clear(); images.clear(); broken.clear();
@@ -568,7 +599,7 @@ export const World = (() => {
    * vuelve a empezar. (Antes, pasado el último, hacia el minuto 84, se pedía
    * un bioma que no existe: pantalla negra, el juego roto y niveles sin fin.)
    */
-  function setBiome(i, instant = false) {
+  function setBiome(i: number, instant = false) {
     const n = G.Tiles.BIOMES.length;
     const b = ((i % n) + n) % n;
     if (b === biome) return;
@@ -580,12 +611,16 @@ export const World = (() => {
 
   function biomeName() { return G.Tiles.BIOMES[biome].name; }
 
-  /** Viñeta en coordenadas de pantalla. */
-  function drawVignette(ctx, w, h) {
-    const g = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.34, w / 2, h / 2, Math.max(w, h) * 0.78);
-    g.addColorStop(0, 'rgba(0,0,0,0)');
-    g.addColorStop(1, 'rgba(0,0,0,.5)');
-    ctx.fillStyle = g;
+  /** Viñeta en coordenadas de pantalla (el degradado se guarda por tamaño). */
+  let vigW = 0, vigH = 0, vigG: CanvasGradient | null = null;
+  function drawVignette(ctx: CanvasRenderingContext2D, w: number, h: number) {
+    if (!vigG || vigW !== w || vigH !== h) {
+      const g = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.34, w / 2, h / 2, Math.max(w, h) * 0.78);
+      g.addColorStop(0, 'rgba(0,0,0,0)');
+      g.addColorStop(1, 'rgba(0,0,0,.5)');
+      vigG = g; vigW = w; vigH = h;
+    }
+    ctx.fillStyle = vigG;
     ctx.fillRect(0, 0, w, h);
   }
 
@@ -593,12 +628,12 @@ export const World = (() => {
     TS, CW, reset, setBiome, biomeName, liquidKind, liquidEffect, walkable,
     kindAt, isWall, isLiquid, isFree, collide, projectileBlock, propsInCircle, nearestBreakable,
     damageProp, breakAt, specialsNear, update,
-    breakProp(p) { if (!broken.has(p.tx + ',' + p.ty)) destroyProp(p); },
+    breakProp(p: Prop) { if (!broken.has(p.tx + ',' + p.ty)) destroyProp(p); },
     /** Arena de la grieta: { tx, ty, r } (en tiles) o null. */
-    setArena(a) {
-      arena = a;
-      if (!a) return;
-      a.th = G.Tiles.ARENA_THEMES[a.type] || G.Tiles.ARENA_THEMES.normal;
+    setArena(a: ArenaCfg | null) {
+      if (!a) { arena = null; return; }
+      const th = G.Tiles.ARENA_THEMES[a.type] || G.Tiles.ARENA_THEMES.normal;
+      arena = Object.assign(a, { th });                // se queda también en a.th
       // Olvida los chunks de esa zona (si se hubieran generado antes).
       const R = a.r + 9;
       for (const k of [...data.keys(), ...images.keys()]) {

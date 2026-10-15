@@ -1,5 +1,8 @@
 import { G } from '../g';
 import { Run, type GameMode, type View } from '../run';
+import type { Player } from '../entities/player';
+import type { CoopApi, CoopConfig } from '../net/coop';
+import type { Pickup, PickupCollector } from '../entities/pickup';
 /* ============ survivor.ts — modo Survivor: la partida de hordas ============
  * Todo lo que es de este modo: empezar y acabar la run, el paso de simulación,
  * cartas de nivel, vínculos, objetos, recogida y el pegamento del cooperativo.
@@ -10,10 +13,13 @@ import { Run, type GameMode, type View } from '../run';
  * nivel esperan a que elijan todos y un compañero caído se levanta si otro
  * se queda a su lado. Ver net/coop.ts.
  */
+/** Resumen de la partida que se manda por red al acabar (ver summary). */
+interface RunSummary { t: number; ki: number; bo: number; co: number; lv: number; t1: number; t10: number; why?: string }
+
 export const Survivor = (() => {
   let time = 0, pendingLevels = 0;
-  let pl = null;
-  let caught = [];          // shinies conseguidos en esta run
+  let pl: Player = null!;   // (null fuera de partida, ver endRun)
+  let caught: { dex: number; isNew: boolean }[] = [];          // shinies conseguidos en esta run
   let biome = -1;
 
   const st = { get time() { return time; } };
@@ -36,12 +42,12 @@ export const Survivor = (() => {
   let spectating = false;
 
   /** @param coop  { seed, host, members } para una partida en grupo (con `watch`, como espectador) */
-  function start(coop = null) {
+  function start(coop: CoopConfig | null = null) {
     holdBy = []; awayBy = null;
     ownHold = false; choiceQ = []; bondQueued = false; flashT = 0;
     spectating = !!(coop && coop.watch);
-    const save = G.DB.save;
-    const mon = G.DEX_BY[save.partner];
+    const save = G.DB.save!;
+    const mon = G.DEX_BY[save.partner!];
     const perks = G.Upgrades.perks(G.DB.upgradesOf(mon.dex));
 
     G.UI.hideAll();
@@ -113,12 +119,12 @@ export const Survivor = (() => {
 
   // Destello de pantalla completa (viaje a la grieta).
   let flashT = 0, flashDur = 1, flashCol = '#fff';
-  function flash(col, dur) { flashCol = col; flashDur = dur; flashT = dur; }
+  function flash(col: string, dur: number) { flashCol = col; flashDur = dur; flashT = dur; }
 
   function teamState() {
     return { time, level: pl.level, xp: pl.xp, xpNext: pl.xpNext, kills: pl.kills, bosses: pl.bosses, coins: pl.coins, t1: pl.t1, t10: pl.t10 };
   }
-  function summary() { return { t: time, ki: pl.kills, bo: pl.bosses, co: pl.coins, lv: pl.level, t1: pl.t1, t10: pl.t10 }; }
+  function summary(): RunSummary { return { t: time, ki: pl.kills, bo: pl.bosses, co: pl.coins, lv: pl.level, t1: pl.t1, t10: pl.t10 }; }
 
   /** Lo que el cooperativo necesita del juego. */
   /**
@@ -138,7 +144,7 @@ export const Survivor = (() => {
     if (save_) G.DB.commit('run');
   }
 
-  const coopApi = {
+  const coopApi: CoopApi = {
     team: teamState,
     summary,
     // Invitado: el anfitrión manda el reloj y lo del equipo.
@@ -163,7 +169,7 @@ export const Survivor = (() => {
       drainChoices();
     },
     shiny(dex) { G.onShinyCaught({ dex, name: (G.DEX_BY[dex] || {}).name || '' }); },
-    over(d) {
+    over(d: RunSummary | null) {
       if (d) Object.assign(pl, { kills: d.ki, bosses: d.bo, coins: d.co, level: Math.max(pl.level, d.lv || 1), t1: d.t1 || pl.t1, t10: d.t10 || pl.t10 });
       if (d && d.t) time = d.t;
       if (d && d.why === 'host') G.UI.toast('El anfitrión ha terminado la partida', 3200);
@@ -206,11 +212,11 @@ export const Survivor = (() => {
       }
     }
   };
-  let awayBy = null;
+  let awayBy: string | null = null;
   const awayText = () => 'Pausa: esperando a ' + awayBy + ' (anfitrión)…';
 
   /** Has llevado a casa a un Pokémon perdido y se une a ti (events.js). */
-  G.onRescue = (dex, name) => {
+  G.onRescue = (dex: number, name: string) => {
     if (!G.DB.save || !pl) return;
     const isNew = !G.DB.owns(dex);
     if (isNew) { G.DB.grant(dex, 'rescue'); G.DB.commit(true); }
@@ -220,7 +226,7 @@ export const Survivor = (() => {
   };
 
   /** Un shiny salvaje cae: te lo quedas (y la versión normal si no la tenías). */
-  G.onShinyCaught = e => {
+  G.onShinyCaught = (e: { dex: number; name: string }) => {
     if (!G.DB.save || !pl) return;
     if (G.Coop.isHost) G.Coop.shinyCaught(e);
     const isNew = G.DB.grantShiny(e.dex, 'wild');
@@ -240,7 +246,7 @@ export const Survivor = (() => {
       Run.state = 'over';
       G.Audio.music(null);
       G.RunUI.closeLevelUp();
-      pl = null;
+      pl = null!;
       G.Spectate.ended('La partida que mirabas ha terminado');
       return;
     }
@@ -292,7 +298,7 @@ export const Survivor = (() => {
       moves: pl.moves, caught,
       breakdown: Object.entries(parts).filter(([, v]) => v).map(([k, v]) => `${k} ${v}`).join(' · ') +
                  (mul > 1 ? ` · ×${mul.toFixed(2)} Fortuna` : '')
-    }, () => { pl = null; G.Flow.afterRun(); });
+    }, () => { pl = null!; G.Flow.afterRun(); });
   }
 
   /*
@@ -422,10 +428,10 @@ export const Survivor = (() => {
 
   // ---------------- recogida ----------------
 
-  const PICK_SFX = { xp: 'xp', xpBig: 'xp', coin: 'coin', heal: 'heal', bomb: 'break', magnet: 'confirm', ticket: 'shiny', ticket10: 'legend', item: 'legend' };
+  const PICK_SFX: Record<string, string> = { xp: 'xp', xpBig: 'xp', coin: 'coin', heal: 'heal', bomb: 'break', magnet: 'confirm', ticket: 'shiny', ticket10: 'legend', item: 'legend' };
 
   /** Has cogido un objeto: si no llevas ninguno te lo pones; si no, eliges. */
-  function offerItem(id) {
+  function offerItem(id: string) {
     if (!pl || !G.Items.BY[id]) return;
     if (!pl.item) { equipItem(id); return; }
     // Se para el juego mientras eliges; en grupo, para todos (como con las
@@ -451,7 +457,8 @@ export const Survivor = (() => {
   }
 
   /** @param who  quien lo ha cogido (en cooperativo puede ser un compañero) */
-  function onCollect(p, who = pl) {
+  function onCollect(p: Pickup, collector: PickupCollector = pl) {
+    const who = collector as Player;
     const mine = who === pl;
     if (G.Coop.active && !G.Coop.isHost) {
       // Copia de un objeto del anfitrión: el efecto lo decide él.
@@ -461,16 +468,16 @@ export const Survivor = (() => {
     if (G.Coop.active) G.Coop.collected(p, who);
     if (mine || p.kind === 'bomb') G.Audio.sfx(PICK_SFX[p.kind]);
     if (p.kind === 'xp' || p.kind === 'xpBig') {
-      pendingLevels += pl.gainXp(p.value * (G.Coop.active ? G.Coop.xpFactor() : 1));
+      pendingLevels += pl.gainXp((p.value as number) * (G.Coop.active ? G.Coop.xpFactor() : 1));
       return;
     }
     if (p.kind === 'coin') {
-      pl.coins += p.value;
+      pl.coins += p.value as number;
       G.FX.dmgText(who.x, who.y - who.bodyH - 6, '+' + p.value, '#ffd23f');
       return;
     }
     if (p.kind === 'item') {
-      if (mine) offerItem(p.value);
+      if (mine) offerItem(p.value as string);
       return;
     }
     if (p.kind === 'ticket' || p.kind === 'ticket10') {
@@ -503,7 +510,7 @@ export const Survivor = (() => {
 
   let deathT = 0;
 
-  function update(dt) {
+  function update(dt: number) {
     const coop = G.Coop.active;
     if (flashT > 0) flashT -= dt;
     choiceTick();
@@ -580,14 +587,14 @@ export const Survivor = (() => {
   }
 
   /** Caído en grupo: un compañero a tu lado te va levantando. */
-  function reviveTick(dt) {
+  function reviveTick(dt: number) {
     const helper = G.Coop.puppets().some(p => !p.dead && G.U.dist2(p.x, p.y, pl.x, pl.y) < 56 * 56);
     pl.reviveT = helper ? (pl.reviveT || 0) + dt : Math.max(0, (pl.reviveT || 0) - dt * 0.5);
     if (pl.reviveT >= G.Player.REVIVE_TIME) pl.revive(0.5);
   }
 
   /** Anfitrión: si caéis todos, se acaba (tras ver caer al último). */
-  function checkAllDown(dt) {
+  function checkAllDown(dt: number) {
     if (G.Rift.inArena || !G.Coop.players().every(p => p.dead)) { deathT = 0; return; }
     deathT += dt;
     if (deathT > 1.6) {
@@ -704,7 +711,7 @@ export const Survivor = (() => {
     quit: quitRun,
     levelXp, flash, offerBond,
     /** Para pruebas: salta el reloj de la run. */
-    debugTime(t) { tampered = true; time = t; },
+    debugTime(t: number) { tampered = true; time = t; },
     /** La partida se ha tocado con herramientas de prueba: no sube al ranking. */
     tamper() { tampered = true; },
     /** Para grabar vídeos: abre las cartas de subir de nivel. */

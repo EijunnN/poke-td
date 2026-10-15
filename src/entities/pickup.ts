@@ -8,14 +8,24 @@ import { G } from '../g';
  * demás reciben una copia. Todos vuelan hacia el jugador más cercano; quien
  * decide quién lo ha cogido es el anfitrión.
  */
-interface Orb { kind: string; x: number; y: number; value: any; vx: number; vy: number; t: number; pulled: boolean; id?: number }
+/** Qué es un objeto del suelo. */
+export type PickupKind = 'xp' | 'xpBig' | 'heal' | 'magnet' | 'bomb' | 'coin' | 'ticket' | 'ticket10' | 'item';
+
+/** Orbe de experiencia u objeto del suelo; `value` es la cantidad, o el id del objeto en 'item'. */
+export interface Pickup { kind: PickupKind; x: number; y: number; value: number | string; vx: number; vy: number; t: number; pulled: boolean; id: number }
+
+/** Un objeto recién creado, todavía sin id (lo pone push o addRemote). */
+type NewPickup = Omit<Pickup, 'id'>;
+
+/** Quien recoge: posición, radio del imán y si está caído. */
+export interface PickupCollector { x: number; y: number; magnet: number; dead?: boolean }
 
 export const Pickups = (() => {
-  let list = [];
+  let list: Pickup[] = [];
   const MAX = 420;
   let nextId = 1;
 
-  const KIND = {
+  const KIND: Record<PickupKind, { color: string; glow: string; r: number }> = {
     xp:    { color: '#7fe0ff', glow: '#2a8fd0', r: 4.5 },
     xpBig: { color: '#ffd95e', glow: '#c08a10', r: 7 },
     heal:  { color: '#5fe08a', glow: '#1f8f4d', r: 6.5 },
@@ -34,36 +44,37 @@ export const Pickups = (() => {
   function clear() { list = []; }
   function all() { return list; }
 
-  function push(o) {
+  function push(o: NewPickup) {
     // En cooperativo sólo el anfitrión crea objetos (las copias llegan por la red).
     if (G.Coop.active && !G.Coop.isHost) return;
-    o.id = nextId++;
-    list.push(o);
-    if (G.Coop.isHost) G.Coop.pickupAdded(o);
+    const p = o as Pickup;
+    p.id = nextId++;
+    list.push(p);
+    if (G.Coop.isHost) G.Coop.pickupAdded(p);
     if (list.length > MAX) {
       // Fusiona los dos más antiguos de XP para no crecer sin límite.
       const i = list.findIndex(p => p.kind === 'xp' || p.kind === 'xpBig');
       if (i >= 0) {
         const a = list.splice(i, 1)[0];
         const j = list.findIndex(p => p.kind === 'xp' || p.kind === 'xpBig');
-        if (j >= 0) { list[j].value += a.value; list[j].kind = 'xpBig'; }
+        if (j >= 0) { list[j].value = (list[j].value as number) + (a.value as number); list[j].kind = 'xpBig'; }
         if (G.Coop.isHost) G.Coop.pickupGone(a.id);
       } else {
-        const a = list.shift();
+        const a = list.shift()!;
         if (G.Coop.isHost) G.Coop.pickupGone(a.id);
       }
     }
   }
 
   /** Copia de un objeto del anfitrión. */
-  function addRemote(id, kind, x, y, value) {
+  function addRemote(id: number, kind: PickupKind, x: number, y: number, value: number | string) {
     if (list.some(p => p.id === id)) return;
-    const o = orb(kind, x, y, value);
+    const o = orb(kind, x, y, value) as Pickup;
     o.id = id;
     list.push(o);
   }
 
-  function removeId(id) {
+  function removeId(id: number): Pickup | null {
     const i = list.findIndex(p => p.id === id);
     if (i < 0) return null;
     return list.splice(i, 1)[0];
@@ -73,7 +84,7 @@ export const Pickups = (() => {
   function pullAll() { for (const o of list) o.pulled = true; }
 
   /** @param plain  sólo la experiencia (los legendarios de la Sentencia de Arceus) */
-  function dropXp(x, y, value, boss = false, legend = false, plain = false) {
+  function dropXp(x: number, y: number, value: number, boss = false, legend = false, plain = false) {
     if (boss) {
       // Los jefes revientan en un montón de orbes grandes + recompensas.
       for (let i = 0; i < 14; i++) {
@@ -99,11 +110,11 @@ export const Pickups = (() => {
   }
 
   /** Suelta un objeto suelto: 'heal' | 'magnet' | 'bomb' | 'coin'. */
-  function drop(kind, x, y, value: number | string = 0) {
+  function drop(kind: PickupKind, x: number, y: number, value: number | string = 0) {
     push(orb(kind, x, y, value));
   }
 
-  function orb(kind, x, y, value): Orb {
+  function orb(kind: PickupKind, x: number, y: number, value: number | string): NewPickup {
     const a = Math.random() * 6.2832;
     return {
       kind, x, y, value,
@@ -116,14 +127,14 @@ export const Pickups = (() => {
    * @param players  un jugador o la lista de jugadores (los caídos no recogen)
    * @param onCollect(pickup, jugador)
    */
-  function update(dt, players, onCollect) {
+  function update<P extends PickupCollector>(dt: number, players: P | P[], onCollect: (p: Pickup, pl: P) => void) {
     if (!Array.isArray(players)) players = [players];
     for (let i = list.length - 1; i >= 0; i--) {
       const p = list[i];
       p.t += dt * 4;
 
       // El jugador vivo más cercano (en solitario, siempre tú).
-      let pl = null, d2 = Infinity;
+      let pl: P | null = null, d2 = Infinity;
       for (const o of players) {
         if (o.dead && players.length > 1) continue;
         const dd = G.U.dist2(o.x, o.y, p.x, p.y);
@@ -154,7 +165,7 @@ export const Pickups = (() => {
     }
   }
 
-  function draw(ctx) {
+  function draw(ctx: CanvasRenderingContext2D) {
     for (const p of list) {
       if (!G.Camera.sees(p.x, p.y, 30)) continue;
       const k = KIND[p.kind];
@@ -185,7 +196,7 @@ export const Pickups = (() => {
         ctx.beginPath(); ctx.ellipse(p.x, y, r * sx * 0.5, r * 0.5, 0, 0, 6.2832); ctx.fill();
       } else {
         // Baya, imán y bomba: su icono pixel art.
-        const ICON = { heal: 'berry', magnet: 'magnet', bomb: 'bomb', ticket: 'ticket', ticket10: 'ticket10' };
+        const ICON: Partial<Record<PickupKind, string>> = { heal: 'berry', magnet: 'magnet', bomb: 'bomb', ticket: 'ticket', ticket10: 'ticket10' };
         const sz = p.kind === 'ticket10' || p.kind === 'item' ? 24 : 18;
         if (p.kind === 'item') {
           // Objeto: brillo dorado latiendo, para que se vea desde lejos.
@@ -194,7 +205,7 @@ export const Pickups = (() => {
           ctx.beginPath(); ctx.arc(p.x, y, 18, 0, 6.2832); ctx.fill();
           ctx.globalAlpha = 1;
         }
-        G.Icons.draw(ctx, p.kind === 'item' ? p.value : ICON[p.kind], p.x - sz / 2, y - sz / 2 - 1, sz);
+        G.Icons.draw(ctx, p.kind === 'item' ? p.value as string : ICON[p.kind]!, p.x - sz / 2, y - sz / 2 - 1, sz);
         continue;
       }
       ctx.fillStyle = 'rgba(255,255,255,.8)';

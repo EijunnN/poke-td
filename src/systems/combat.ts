@@ -1,4 +1,9 @@
 import { G } from '../g';
+import type { Player } from '../entities/player';
+import type { Enemy } from '../entities/enemy';
+import type { MoveInstance } from '../data/moves';
+import type { PokeType } from '../data/types';
+import type { Projectile } from '../entities/projectile';
 /* ============ combat.js — ejecución de movimientos y colisiones ============
  * Sólo se ejecuta el movimiento ACTIVO del jugador. Cada `kind` tiene aquí su
  * implementación. Todos los ataques dañan también los objetos destructibles
@@ -13,19 +18,45 @@ import { G } from '../g';
  * Lo que se queda en el mapa un rato (minas, meteoros que caen, torretas,
  * charcos del rastro) vive en `fields` y se actualiza/dibuja aquí.
  */
+/**
+ * Movimiento en combate. Cada `kind` lee los campos numéricos que le tocan; moves.ts se los da
+ * y al resto no (quedan undefined, de ahí los `| 0` y `|| 0` al usarlos).
+ */
+type Move = MoveInstance & Required<Pick<MoveInstance, 'dmg' | 'radius' | 'speed' | 'size' | 'life' | 'width' | 'arc' | 'count' | 'pierce' | 'stacks' | 'amount' | 'stat'>>;
+type Vis = ReturnType<typeof G.VFX.forMove>;
+/** Lo que un campo guarda de quien lo lanzó y del movimiento. */
+interface FieldBase {
+  owner: Player; ghost: boolean; m: Move; col: string; vis: Vis;
+  x: number; y: number; t: number; dmg: number;
+  gone?: boolean;
+  life?: number;
+}
+type Field = FieldBase & (
+  | { kind: 'mine'; arm: number; life: number; r: number }
+  | { kind: 'meteor'; fall: number; r: number }
+  | { kind: 'turret'; life: number; shotT: number; kick?: number }
+  | { kind: 'patch'; life: number; r: number; tick: number }
+);
+type PatchField = Extract<Field, { kind: 'patch' }>;
+/** Blanco de `chain`: un enemigo vivo (el blanco apuntado puede ser una roca o un cofre). */
+const isLiveEnemy = (t: Player['target']): t is Enemy => !!t && !t.dead && !!t.hurt;
+/** moves.ts da a cada movimiento los campos numéricos de su `kind`; aquí se leen sin comprobar. */
+const asMove = (m: MoveInstance) => m as Move;
+
 export const Combat = (() => {
   let ghost = false;
-  let fields = [];
+  let fields: Field[] = [];
+
 
   // ---------------- ejecutar el movimiento activo ----------------
 
-  function tick(dt, pl, now) {
+  function tick(dt: number, pl: Player, now: number) {
     if (pl.dead) return;
     // Vínculos: todos los movimientos del hueco activo, cada uno con su recarga.
-    for (const m of pl.activeGroup()) tickMove(dt, pl, m, now);
+    for (const m of pl.activeGroup()) tickMove(dt, pl, asMove(m), now);
   }
 
-  function tickMove(dt, pl, m, now) {
+  function tickMove(dt: number, pl: Player, m: Move, now: number) {
     if (m.kind === 'orbit') { orbit(pl, m, dt, now); return; }
 
     m.t -= dt;
@@ -45,7 +76,7 @@ export const Combat = (() => {
     run(pl, m);
   }
 
-  function run(pl, m) {
+  function run(pl: Player, m: Move) {
     switch (m.kind) {
       case 'projectile': fireProjectiles(pl, m); break;
       case 'melee':      melee(pl, m); break;
@@ -65,8 +96,8 @@ export const Combat = (() => {
   }
 
   const TARGETED = ['melee', 'beam', 'projectile', 'boomerang', 'chain', 'meteor', 'dash', 'cone'];
-  function needsTarget(m) { return TARGETED.includes(m.kind); }
-  function reach(m) {
+  function needsTarget(m: Move) { return TARGETED.includes(m.kind); }
+  function reach(m: Move) {
     if (m.kind === 'melee') return m.radius + 30;
     if (m.kind === 'beam') return m.radius + 20;
     if (m.kind === 'boomerang') return m.radius + 40;
@@ -77,14 +108,14 @@ export const Combat = (() => {
     return 520;
   }
 
-  function payload(m) {
+  function payload(m: Move) {
     return { burn: m.burn || 0, poison: m.poison || 0, slow: m.slow || 0, knock: m.knock || 0, mtype: m.type };
   }
 
   /** Tabla de tipos × clima para un ataque de tipo `type` contra `e`. */
-  function typeK(type, e) { return G.Types.mult(type, e.types) * G.Weather.mult(type); }
+  function typeK(type: PokeType, e: Enemy) { return G.Types.mult(type, e.types) * G.Weather.mult(type); }
 
-  function fireProjectiles(pl, m) {
+  function fireProjectiles(pl: Player, m: Move) {
     const col = G.U.TYPE_COLOR[m.type];
     const vis = G.VFX.forMove(m);
     const n = Math.max(1, m.count | 0);
@@ -97,14 +128,14 @@ export const Combat = (() => {
         vx: Math.cos(a) * m.speed, vy: Math.sin(a) * m.speed,
         dmg: m.dmg * pl.atk, r: m.size, life: m.life,
         pierce: m.pierce | 0, color: col, homing: m.homing || 0,
-        hits: new Set(), vis, ghost, owner: pl
+        hits: new Set<number>(), vis, ghost, owner: pl
       }, payload(m)));
     }
     G.FX.spark(pl.x + Math.cos(pl.aim) * (pl.visR || pl.r), pl.y - G.LIFT + Math.sin(pl.aim) * (pl.visR || pl.r),
                col, Math.cos(pl.aim), Math.sin(pl.aim), 3);
   }
 
-  function nova(pl, m) {
+  function nova(pl: Player, m: Move) {
     const col = G.U.TYPE_COLOR[m.type];
     const vis = G.VFX.forMove(m);
     const n = Math.max(3, m.count | 0);
@@ -115,18 +146,18 @@ export const Combat = (() => {
         vx: Math.cos(a) * m.speed, vy: Math.sin(a) * m.speed,
         dmg: m.dmg * pl.atk, r: m.size, life: m.life,
         pierce: m.pierce | 0, color: col, homing: m.homing || 0,
-        hits: new Set(), vis, ghost, owner: pl
+        hits: new Set<number>(), vis, ghost, owner: pl
       }, payload(m)));
     }
     G.FX.ring(pl.x, pl.y, (pl.visR || pl.r), (pl.visR || pl.r) * 4, col, 0.3, 3);
   }
 
-  function inArc(px, py, x, y, aim, half) {
+  function inArc(px: number, py: number, x: number, y: number, aim: number, half: number) {
     const a = Math.atan2(y - py, x - px);
     return Math.abs(((a - aim + Math.PI * 3) % 6.2832) - Math.PI) <= half;
   }
 
-  function melee(pl, m) {
+  function melee(pl: Player, m: Move) {
     const col = G.U.TYPE_COLOR[m.type];
     const half = Math.min(m.arc, 6.2832) / 2;
     G.FX.slash(pl.x, pl.y - G.LIFT * 0.5, pl.aim, m.radius, m.arc, col, G.VFX.forMove(m));
@@ -141,7 +172,7 @@ export const Combat = (() => {
     }
   }
 
-  function beam(pl, m) {
+  function beam(pl: Player, m: Move) {
     const col = G.U.TYPE_COLOR[m.type];
     const w = m.width;
     const ca = Math.cos(pl.aim), sa = Math.sin(pl.aim);
@@ -156,7 +187,7 @@ export const Combat = (() => {
     G.Camera.kick(0.08);
 
     const mx = pl.x + ca * len / 2, my = pl.y + sa * len / 2;
-    const onBeam = (x, y, r) => {
+    const onBeam = (x: number, y: number, r: number) => {
       const px = x - pl.x, py = y - pl.y;
       const along = px * ca + py * sa;
       if (along < -r || along > len + r) return false;
@@ -170,7 +201,7 @@ export const Combat = (() => {
     }
   }
 
-  function aura(pl, m) {
+  function aura(pl: Player, m: Move) {
     const col = G.U.TYPE_COLOR[m.type];
     G.FX.ring(pl.x, pl.y, m.radius * 0.5, m.radius, col, 0.28, 2);
     const vis = G.VFX.forMove(m);
@@ -191,8 +222,8 @@ export const Combat = (() => {
     for (const p of G.World.propsInCircle(pl.x, pl.y, m.radius)) G.World.damageProp(p, m.dmg * pl.atk, col);
   }
 
-  function buff(pl, m) {
-    pl.addBuff(m.stat, m.amount, m.dur, m.stacks | 0);
+  function buff(pl: Player, m: Move) {
+    pl.addBuff(m.stat, m.amount, m.dur!, m.stacks | 0);
     const col = G.U.TYPE_COLOR[m.type];
     G.FX.ring(pl.x, pl.y, (pl.visR || pl.r) * 2.4, (pl.visR || pl.r) * 1.1, col, 0.35, 2.5);
     const vis = G.VFX.forMove(m);
@@ -205,7 +236,7 @@ export const Combat = (() => {
   // ---------------- familias nuevas (2026-10-10) ----------------
 
   /** Bumerán: sale hacia el enemigo, se para y vuelve a ti golpeando a la ida y a la vuelta. */
-  function boomerang(pl, m) {
+  function boomerang(pl: Player, m: Move) {
     const col = G.U.TYPE_COLOR[m.type], vis = G.VFX.forMove(m);
     const n = Math.max(1, m.count | 0), spread = m.spread || 0.5;
     const out = m.radius / m.speed;                       // segundos de ida
@@ -214,15 +245,15 @@ export const Combat = (() => {
       G.Projectiles.spawn(Object.assign({
         x: pl.x, y: pl.y, vx: Math.cos(a) * m.speed, vy: Math.sin(a) * m.speed,
         dmg: m.dmg * pl.atk, r: m.size, life: out * 4 + 1.5, pierce: 999, color: col,
-        hits: new Set(), vis, ghost, owner: pl, boom: out, bsp: m.speed * 1.1
+        hits: new Set<number>(), vis, ghost, owner: pl, boom: out, bsp: m.speed * 1.1
       }, payload(m)));
     }
   }
 
   /** Cadena: golpea a un enemigo y salta a los siguientes más cercanos (cada salto, algo menos). */
-  function chain(pl, m) {
+  function chain(pl: Player, m: Move) {
     const col = G.U.TYPE_COLOR[m.type], vis = G.VFX.forMove(m);
-    let cur = pl.target && !pl.target.dead && pl.target.hurt ? pl.target : G.Projectiles.nearest(G.EnemyMgr.all(), pl.x, pl.y, reach(m));
+    let cur: Enemy | null = isLiveEnemy(pl.target) ? pl.target : G.Projectiles.nearest(G.EnemyMgr.all(), pl.x, pl.y, reach(m));
     if (!cur) return;
     let fx = pl.x, fy = pl.y - G.LIFT, k = 1;
     const done = new Set();
@@ -238,7 +269,7 @@ export const Combat = (() => {
       }
       k *= 0.85;
       fx = tx; fy = ty;
-      let best = null, bd = m.radius * m.radius;
+      let best: Enemy | null = null, bd = m.radius * m.radius;
       for (const e of G.EnemyMgr.queryCircle(cur.x, cur.y, m.radius)) {
         if (done.has(e.id)) continue;
         const d = G.U.dist2(cur.x, cur.y, e.x, e.y);
@@ -250,7 +281,7 @@ export const Combat = (() => {
   }
 
   /** Minas: se quedan en el suelo y estallan cuando un enemigo las pisa. */
-  function mines(pl, m) {
+  function mines(pl: Player, m: Move) {
     const col = G.U.TYPE_COLOR[m.type], vis = G.VFX.forMove(m);
     const n = Math.max(1, m.count | 0);
     for (let i = 0; i < n; i++) {
@@ -264,7 +295,7 @@ export const Combat = (() => {
   }
 
   /** Meteoros: caen del cielo sobre enemigos cercanos (la sombra avisa dónde). */
-  function meteors(pl, m) {
+  function meteors(pl: Player, m: Move) {
     const col = G.U.TYPE_COLOR[m.type], vis = G.VFX.forMove(m);
     const n = Math.max(1, m.count | 0);
     const near = G.EnemyMgr.queryCircle(pl.x, pl.y, reach(m)).filter(e => !e.dead);
@@ -278,7 +309,7 @@ export const Combat = (() => {
   }
 
   /** Torreta: deja algo en el suelo que dispara solo un rato. */
-  function turret(pl, m) {
+  function turret(pl: Player, m: Move) {
     const col = G.U.TYPE_COLOR[m.type], vis = G.VFX.forMove(m);
     const a = pl.aim + Math.PI + G.U.rand(-0.6, 0.6);
     fields.push({ kind: 'turret', owner: pl, ghost, m, col, vis, x: pl.x + Math.cos(a) * 26, y: pl.y + Math.sin(a) * 20,
@@ -289,7 +320,7 @@ export const Combat = (() => {
   }
 
   /** Embestida: cruzas como un rayo hacia el enemigo y golpeas a todo lo del camino. */
-  function dash(pl, m) {
+  function dash(pl: Player, m: Move) {
     const col = G.U.TYPE_COLOR[m.type], vis = G.VFX.forMove(m);
     const ca = Math.cos(pl.aim), sa = Math.sin(pl.aim);
     const sx = pl.x, sy = pl.y;
@@ -317,14 +348,14 @@ export const Combat = (() => {
   }
 
   /** Rastro: vas dejando charcos que dañan a lo que pasa por encima. */
-  function trailPatch(pl, m) {
+  function trailPatch(pl: Player, m: Move) {
     const col = G.U.TYPE_COLOR[m.type], vis = G.VFX.forMove(m);
     // Parado no deja uno nuevo encima del anterior (sólo de vez en cuando).
     // El último se apunta por movimiento: dos rastros (Tóxico + Rueda Fuego) no se pisan.
     const lastBy = pl.lastPatch || (pl.lastPatch = {});
     const last = lastBy[m.id];
     if (last && G.U.dist2(last.x, last.y, pl.x, pl.y) < (m.radius * 0.9) ** 2 && last.t < 1) return;
-    const f = { kind: 'patch', owner: pl, ghost, m, col, vis, x: pl.x, y: pl.y, t: 0, life: m.dur || 3, r: m.radius,
+    const f: PatchField = { kind: 'patch', owner: pl, ghost, m, col, vis, x: pl.x, y: pl.y, t: 0, life: m.dur || 3, r: m.radius,
                 tick: 0, dmg: m.dmg * pl.atk };
     fields.push(f);
     lastBy[m.id] = f;
@@ -333,7 +364,7 @@ export const Combat = (() => {
   }
 
   /** Abanico corto: muchos disparos rápidos que no llegan lejos (aliento, chorro...). */
-  function cone(pl, m) {
+  function cone(pl: Player, m: Move) {
     const col = G.U.TYPE_COLOR[m.type], vis = G.VFX.forMove(m);
     const n = Math.max(2, m.count | 0), arc = m.arc || 0.9;
     for (let i = 0; i < n; i++) {
@@ -342,21 +373,21 @@ export const Combat = (() => {
       G.Projectiles.spawn(Object.assign({
         x: pl.x + Math.cos(a) * 4, y: pl.y + Math.sin(a) * 4, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
         dmg: m.dmg * pl.atk, r: m.size, life: m.life * G.U.rand(0.85, 1.05), pierce: m.pierce | 0, color: col,
-        hits: new Set(), vis, ghost, owner: pl
+        hits: new Set<number>(), vis, ghost, owner: pl
       }, payload(m)));
     }
     G.FX.spark(pl.x + Math.cos(pl.aim) * (pl.visR || pl.r), pl.y - G.LIFT + Math.sin(pl.aim) * (pl.visR || pl.r), col, Math.cos(pl.aim), Math.sin(pl.aim), 5);
   }
 
   /** Daño de un campo (mina, meteoro, charco) a todo lo que hay en su círculo. */
-  function blast(f, r, k = 1) {
+  function blast(f: Field, r: number, k = 1) {
     if (f.ghost) return;
     const pl = f.owner, m = f.m;
     for (const e of G.EnemyMgr.queryCircle(f.x, f.y, r)) hit(pl, e, f.dmg * k, f.col, e.x - f.x, e.y - f.y, m.knock || 0, m);
     for (const p of G.World.propsInCircle(f.x, f.y, r)) G.World.damageProp(p, f.dmg * k, f.col);
   }
 
-  function updateFields(dt) {
+  function updateFields(dt: number) {
     for (let i = fields.length - 1; i >= 0; i--) {
       const f = fields[i];
       f.t += dt;
@@ -390,12 +421,12 @@ export const Combat = (() => {
             G.Projectiles.spawn(Object.assign({
               x: f.x, y: f.y, vx: Math.cos(a) * (m.speed || 300), vy: Math.sin(a) * (m.speed || 300),
               dmg: f.dmg, r: m.size || 6, life: 1.4, pierce: m.pierce | 0, color: f.col,
-              hits: new Set(), vis: f.vis, ghost: f.ghost, owner: f.owner
+              hits: new Set<number>(), vis: f.vis, ghost: f.ghost, owner: f.owner
             }, payload(m)));
             f.kick = 0.12;
           }
         }
-        if (f.kick > 0) f.kick -= dt;
+        if (f.kick! > 0) f.kick! -= dt;
       } else if (f.kind === 'patch') {
         f.tick -= dt;
         if (f.tick <= 0) { f.tick = 0.5; blast(f, f.r); }
@@ -407,7 +438,7 @@ export const Combat = (() => {
   }
 
   /** Lo de los campos que va en el suelo (debajo de los Pokémon). */
-  function drawGroundFields(ctx) {
+  function drawGroundFields(ctx: CanvasRenderingContext2D) {
     const now = performance.now() / 1000;
     for (const f of fields) {
       if (!G.Camera.sees(f.x, f.y, 60)) continue;
@@ -445,7 +476,7 @@ export const Combat = (() => {
   }
 
   /** Lo de los campos que va por encima (meteoros cayendo, torretas). */
-  function drawAirFields(ctx) {
+  function drawAirFields(ctx: CanvasRenderingContext2D) {
     const now = performance.now() / 1000;
     for (const f of fields) {
       if (!G.Camera.sees(f.x, f.y, 200)) continue;
@@ -455,24 +486,24 @@ export const Combat = (() => {
                    { scale: 1.5, angle: Math.atan2(170, -40), frame: Math.floor(now * 12) });
       } else if (f.kind === 'turret') {
         const fade = Math.min(1, (f.life - f.t) * 2, f.t * 5);
-        const bob = Math.sin(now * 4 + f.x) * 2 - (f.kick > 0 ? 2 : 0);
+        const bob = Math.sin(now * 4 + f.x) * 2 - (f.kick! > 0 ? 2 : 0);
         G.VFX.draw(ctx, f.vis.proj, f.vis.pal, f.x, f.y - 16 + bob, { scale: 1.5, alpha: fade, frame: Math.floor(now * 8) });
       }
     }
   }
 
-  function clearFields(owner?: any) { fields = owner ? fields.filter(f => f.owner !== owner) : []; }
+  function clearFields(owner?: Player) { fields = owner ? fields.filter(f => f.owner !== owner) : []; }
 
-  function orbit(pl, m, dt, now, isGhost = false) {
+  function orbit(pl: Player, m: Move, dt: number, now: number, isGhost = false) {
     const col = G.U.TYPE_COLOR[m.type];
     const want = Math.max(1, m.count | 0);
     // Cada movimiento de órbita tiene sus orbes (puede haber dos en un vínculo).
-    const mine = p => p.orb && p.owner === pl && p.mid === m.id;
+    const mine = (p: Projectile) => p.orb && p.owner === pl && p.mid === m.id;
     const orbs = G.Projectiles.all().filter(mine);
     // Si cambia el número de orbes (al mejorar el movimiento), se reparten
     // todos por igual a partir de donde va el primero, sin saltos.
     const relayout = orbs.length !== want;
-    const base = orbs.length ? orbs[0].oa : now * m.speed;
+    const base = orbs.length ? orbs[0].oa! : now * m.speed;
     if (orbs.length > want) for (const p of orbs.slice(want)) G.Projectiles.remove(p);
 
     for (let i = orbs.length; i < want; i++) {
@@ -500,10 +531,10 @@ export const Combat = (() => {
   }
 
   /** Repite el ataque de un compañero sólo para verlo (sin daño). */
-  function ghostCast(pl, id, lvl, aim, evolved) {
+  function ghostCast(pl: Player, id: string, lvl: number, aim: number, evolved?: boolean) {
     const def = G.Moves.BY_ID[id];
     if (!def || def.kind === 'orbit') return;
-    const m = G.Moves.instance(id, lvl);
+    const m = asMove(G.Moves.instance(id, lvl));
     if (evolved) G.Moves.evolve(m);
     pl.aim = aim;
     ghost = true;
@@ -514,17 +545,17 @@ export const Combat = (() => {
   }
 
   /** Orbes de un compañero que tiene activo un movimiento de órbita (sólo visual). */
-  function ghostOrbit(pl, dt, now) {
+  function ghostOrbit(pl: Player, dt: number, now: number) {
     const m = pl.activeMove();
-    if (m && m.kind === 'orbit' && !pl.dead) orbit(pl, m, dt, now, true);
+    if (m && m.kind === 'orbit' && !pl.dead) orbit(pl, asMove(m), dt, now, true);
     else if (G.Projectiles.all().some(p => p.orb && p.owner === pl)) G.Projectiles.clearOrbs(pl);
   }
 
   // Golpe crítico (Mejoras → Golpe Crítico): x1,5 de daño, número naranja y grande.
   const CRIT_MUL = 1.5;
-  const isCrit = pl => !ghost && pl.critChance > 0 && Math.random() < pl.critChance;
+  const isCrit = (pl: Player) => !ghost && pl.critChance > 0 && Math.random() < pl.critChance;
 
-  function hit(pl, e, dmg, col, dx, dy, knock, m) {
+  function hit(pl: Player, e: Enemy, dmg: number, col: string, dx: number, dy: number, knock: number, m: Move) {
     const k = typeK(m.type, e);
     const crit = isCrit(pl);
     dmg *= k * (crit ? CRIT_MUL : 1);
@@ -539,7 +570,7 @@ export const Combat = (() => {
   // ---------------- colisiones ----------------
 
   /** Distancia² del punto (cx, cy) al segmento (ax, ay)-(bx, by). */
-  function segDist2(ax, ay, bx, by, cx, cy) {
+  function segDist2(ax: number, ay: number, bx: number, by: number, cx: number, cy: number) {
     const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
     let t = l2 ? ((cx - ax) * dx + (cy - ay) * dy) / l2 : 0;
     t = t < 0 ? 0 : t > 1 ? 1 : t;
@@ -547,7 +578,7 @@ export const Combat = (() => {
     return qx * qx + qy * qy;
   }
 
-  function resolve(dt, pl, now) {
+  function resolve(dt: number, pl: Player, now: number) {
     const projectiles = G.Projectiles.all();
 
     for (let i = projectiles.length - 1; i >= 0; i--) {
@@ -584,14 +615,14 @@ export const Combat = (() => {
       let consumed = false;
       for (const prop of G.World.propsInCircle(p.x, p.y, p.r)) {
         if (p.orb) {
-          const k = 'p' + prop.id, last = p.hitLog.get(k) || -99;
+          const k = 'p' + prop.id, last = p.hitLog!.get(k) || -99;
           if (now - last < p.rehit) continue;
-          p.hitLog.set(k, now);
+          p.hitLog!.set(k, now);
           G.World.damageProp(prop, p.dmg, p.color);
           continue;
         }
-        if (p.phits.has(prop.id)) continue;
-        p.phits.add(prop.id);
+        if (p.phits!.has(prop.id)) continue;
+        p.phits!.add(prop.id);
         if (!p.ghost) G.World.damageProp(prop, p.dmg, p.color);
         // La hierba no frena; lo sólido sí gasta perforación.
         if (prop.solid) {
@@ -614,14 +645,14 @@ export const Combat = (() => {
       for (const e of G.EnemyMgr.queryCircle((sx + p.x) / 2, (sy + p.y) / 2, half + p.r)) {
         if (segDist2(sx, sy, p.x, p.y, e.x, e.y) > (p.r + e.r) * (p.r + e.r)) continue;
         if (p.orb) {
-          const last = p.hitLog.get(e.id) || -99;
+          const last = p.hitLog!.get(e.id) || -99;
           if (now - last < p.rehit) continue;
-          p.hitLog.set(e.id, now);
+          p.hitLog!.set(e.id, now);
           // Las órbitas duran toda la partida: se olvidan los golpes viejos.
-          if (p.hitLog.size > 300) for (const [k, t] of p.hitLog) if (now - t > p.rehit) p.hitLog.delete(k);
+          if (p.hitLog!.size > 300) for (const [k, t] of p.hitLog!) if (now - t > p.rehit) p.hitLog!.delete(k);
         } else {
-          if (p.hits.has(e.id)) continue;
-          p.hits.add(e.id);
+          if (p.hits!.has(e.id)) continue;
+          p.hits!.add(e.id);
         }
 
         // Disparo fantasma de un compañero: choca y se ve, pero no daña.

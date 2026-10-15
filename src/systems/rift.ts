@@ -1,5 +1,6 @@
 import { G } from '../g';
 import type { PokeType } from '../data/types';
+import type { Player } from '../entities/player';
 /* ============ rift.js — grietas y arena del legendario ============
  *
  * De vez en cuando (pocas veces por partida) se abre una GRIETA cerca de un
@@ -63,7 +64,7 @@ export const Rift = (() => {
   let checkT = CHECK, asked = false, downT = 0, misses = 0;
   let arenaN = 0;                                       // arenas abiertas aquí (para dar un id a cada una)
   const paid = new Set<string>();                       // arenas ganadas cuyo premio ya se ha dado en este ordenador
-  let last: { id: string; won: boolean; dex: number; type: string; shiny: boolean } | null = null;   // la última arena que acabó
+  let last: LastArena | null = null;   // la última arena que acabó
   const authority = () => !G.Coop.active || G.Coop.isHost;
   const TS = () => G.Tiles.T * G.Sprites.PX;
 
@@ -75,7 +76,7 @@ export const Rift = (() => {
 
   // ---------------- grieta en el mapa ----------------
 
-  function update(dt, pl, time) {
+  function update(dt: number, pl: Player, time: number) {
     if (rift) {
       rift.t += dt;
       rift.ttl -= dt;
@@ -116,7 +117,7 @@ export const Rift = (() => {
   }
 
   /** Aparece la grieta (también la que manda el anfitrión). */
-  function show(x, y, ttl) {
+  function show(x: number, y: number, ttl: number) {
     rift = { x, y, ttl, t: 0 };
     asked = false;
     // (El aviso grande lo dibuja hud.js mientras rift.t < 4,5 s.)
@@ -134,13 +135,13 @@ export const Rift = (() => {
   // ---------------- arena ----------------
 
   /** Quien manda: elige legendario y lugar, y avisa a todos. */
-  let nextType: PokeType = null;          // pruebas/vídeos: tipo de la próxima arena
+  let nextType: PokeType | null = null;          // pruebas/vídeos: tipo de la próxima arena
 
   function start(forceType?: PokeType) {
     if (arena) return;
-    forceType = forceType || nextType; nextType = null;
+    const ft = forceType || nextType; nextType = null;
     let pool = G.DEX.filter(p => p.leg && G.SPRITE_META[p.dex]);
-    if (forceType && pool.some(p => p.types.includes(forceType))) pool = pool.filter(p => p.types.includes(forceType));
+    if (ft && pool.some(p => p.types.includes(ft))) pool = pool.filter(p => p.types.includes(ft));
     // Los legendarios que aún no has vencido salen 4 veces más (menos repetidos).
     const beaten = (G.DB.save && G.DB.save.legends) || {};
     const ws = pool.map(p => (beaten[p.dex] ? 1 : 4));
@@ -151,7 +152,7 @@ export const Rift = (() => {
       tx: 5000 + Math.floor(Math.random() * 3000), ty: 5000 + Math.floor(Math.random() * 3000), r: ARENA_R,
       dex: mon.dex, shiny: G.Sprites.hasShiny(mon.dex) && Math.random() < 1 / 512,
       // La arena es la de uno de sus tipos, al azar.
-      type: forceType || G.U.pick(mon.types),
+      type: ft || G.U.pick(mon.types),
       id: ((G.Net && G.Net.uid) || 'solo') + ':' + Date.now().toString(36) + ':' + (++arenaN)
     };
     if (G.Coop.isHost) G.Coop.broadcast(['arena', cfg]);
@@ -160,13 +161,14 @@ export const Rift = (() => {
   }
 
   /** En cada ordenador: viaje a la arena. */
-  function begin(cfg) {
+  function begin(cfg: ArenaCfg) {
     const pl = G.Game.player;
     const ts = TS();
-    arena = Object.assign({}, cfg, {
+    const ar: Arena = Object.assign({}, cfg, {
       x: cfg.tx * ts + ts / 2, y: cfg.ty * ts + ts / 2,
-      back: { x: pl.x, y: pl.y }, biome: G.World.biome, t: 0, phase: 'fight', endT: 0, bossId: 0
+      back: { x: pl.x, y: pl.y }, biome: G.World.biome, t: 0, phase: 'fight' as const, endT: 0, bossId: 0
     });
+    arena = ar;
     rift = null; asked = false; downT = 0;
     if (authority()) G.EnemyMgr.stash(); else G.EnemyMgr.clearRemote();
     G.Projectiles.clear();
@@ -179,7 +181,7 @@ export const Rift = (() => {
     if (th && th.weather) G.Weather.force(th.weather, ARENA_TIME + 15);
     // Todos al sur de la arena, en fila; el legendario aparece al norte.
     const ps = G.Game.everyone();
-    ps.forEach((p, i) => { p.x = arena.x + (i - (ps.length - 1) / 2) * 34; p.y = arena.y + ts * 3; });
+    ps.forEach((p, i) => { p.x = ar.x + (i - (ps.length - 1) / 2) * 34; p.y = ar.y + ts * 3; });
     G.Camera.x = pl.x; G.Camera.y = pl.y;
     G.Game.flash('#c9a6ff', 0.9);
     G.Audio.sfx('rift');
@@ -187,7 +189,8 @@ export const Rift = (() => {
   }
 
   function spawnLegend() {
-    const mon = G.DEX_BY[arena.dex];
+    const ar = arena!;
+    const mon = G.DEX_BY[ar.dex];
     const t = G.Game.st.time;
     const n = G.Game.everyone().length;
     const ts = TS();
@@ -199,14 +202,14 @@ export const Rift = (() => {
       behavior: mon.types.some(x => ['psychic', 'electric', 'ghost', 'fairy', 'fire', 'water', 'ice', 'dragon'].includes(x)) ? 'ranged' : 'charger',
       shotDmg: Math.round(18 + t / 40), shotCd: 0.9, range: 300
     };
-    const e = new G.Enemy(def, arena.x, arena.y - ts * 3.5, { hp: 1, spd: 1, dmg: 1 }, true);
+    const e = new G.Enemy(def, ar.x, ar.y - ts * 3.5, { hp: 1, spd: 1, dmg: 1 }, true);
     e.legend = true;
     // Choca con las paredes y columnas como tú: si volara por encima de las
     // rocas, tus disparos no podrían alcanzarle (bug de Celebi).
     e.flying = false;
-    if (arena.shiny) e.makeShiny();
+    if (ar.shiny) e.makeShiny();
     G.EnemyMgr.add(e);
-    arena.bossId = e.id;
+    ar.bossId = e.id;
     G.Spawner.say('¡' + e.name + (e.shiny ? ' shiny' : '') + ' te esperaba en la grieta!', 3.2);
     G.Camera.kick(1.1);
     G.Audio.sfx('boss');
@@ -214,28 +217,30 @@ export const Rift = (() => {
 
   /** Nadie sale del círculo de la arena (por si algo empuja demasiado). */
   function keepInside() {
-    const ts = TS(), max = (arena.r - 1.4) * ts;
+    const ar = arena!;
+    const ts = TS(), max = (ar.r - 1.4) * ts;
     for (const e of G.EnemyMgr.all()) {
       if (e.remote) continue;
-      const dx = e.x - arena.x, dy = e.y - arena.y, d = Math.hypot(dx, dy);
-      if (d > max) { e.x = arena.x + dx / d * max; e.y = arena.y + dy / d * max; }
+      const dx = e.x - ar.x, dy = e.y - ar.y, d = Math.hypot(dx, dy);
+      if (d > max) { e.x = ar.x + dx / d * max; e.y = ar.y + dy / d * max; }
     }
   }
 
-  function arenaTick(dt, pl) {
-    arena.t += dt;
-    if (arena.phase === 'fight') {
+  function arenaTick(dt: number, pl: Player) {
+    const ar = arena!;
+    ar.t += dt;
+    if (ar.phase === 'fight') {
       if (!authority()) return;
       keepInside();
-      const boss = G.EnemyMgr.get(arena.bossId);
+      const boss = G.EnemyMgr.get(ar.bossId);
       if (!boss || boss.dead) { G.Coop.isHost && G.Coop.broadcast(['aw']); won(); return; }
       const allDown = G.Game.everyone().every(p => p.dead);
       downT = allDown ? downT + dt : 0;
-      if (downT > 1.4 || arena.t > ARENA_TIME) { G.Coop.isHost && G.Coop.broadcast(['al']); lost(); }
+      if (downT > 1.4 || ar.t > ARENA_TIME) { G.Coop.isHost && G.Coop.broadcast(['al']); lost(); }
       return;
     }
-    arena.endT -= dt;
-    if (arena.endT <= 0) finish();
+    ar.endT -= dt;
+    if (ar.endT <= 0) finish();
   }
 
   function won() {
@@ -264,7 +269,7 @@ export const Rift = (() => {
   /** En cada ordenador: vuelta al mapa. */
   function finish() {
     const pl = G.Game.player;
-    const a = arena;
+    const a = arena!;
     arena = null;
     if (a.id) last = { id: a.id, won: a.phase === 'won', dex: a.dex, type: a.type, shiny: !!a.shiny };
     G.World.setBiome(a.biome, true);
@@ -294,7 +299,7 @@ export const Rift = (() => {
   }
 
   /** Premio de la última arena si se ganó y este ordenador no llegó a recibirlo (una sola vez por arena). */
-  function payLast(l) {
+  function payLast(l: LastArena | null | undefined) {
     if (!l || typeof l.id !== 'string' || l.id.length > 60 || paid.has(l.id)) return;
     paid.add(l.id);
     if (!l.won || !G.DEX_BY[l.dex] || typeof l.type !== 'string') return;
@@ -314,26 +319,27 @@ export const Rift = (() => {
     if (!rift) return null;
     return {
       y: rift.y,
-      draw(ctx) {
+      draw(ctx: CanvasRenderingContext2D) {
+        const rf = rift!;
         const P = G.Sprites.PX;
-        const img = G.Tiles.propSprite(0, 'rift', Math.floor(rift.t * 8) % 4);
+        const img = G.Tiles.propSprite(0, 'rift', Math.floor(rf.t * 8) % 4);
         const w = img.width * P, h = img.height * P;
-        const fadeIn = Math.min(1, rift.t * 2), fadeOut = Math.min(1, rift.ttl / 1.5);
+        const fadeIn = Math.min(1, rf.t * 2), fadeOut = Math.min(1, rf.ttl / 1.5);
         ctx.save();
         ctx.globalAlpha = 0.25 * fadeIn * fadeOut;
         ctx.fillStyle = '#7b3cff';
-        ctx.beginPath(); ctx.ellipse(rift.x, rift.y, 34, 12, 0, 0, 6.2832); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(rf.x, rf.y, 34, 12, 0, 0, 6.2832); ctx.fill();
         ctx.globalAlpha = fadeIn * fadeOut;
-        ctx.drawImage(img, Math.round(rift.x - w / 2), Math.round(rift.y - h + 4), w, h);
+        ctx.drawImage(img, Math.round(rf.x - w / 2), Math.round(rf.y - h + 4), w, h);
         ctx.restore();
-        if (Math.random() < 0.3) G.FX.px(rift.x + G.U.rand(-14, 14), rift.y - G.U.rand(10, 80), '#d9c2ff', { vy: -40, life: 0.6 });
+        if (Math.random() < 0.3) G.FX.px(rf.x + G.U.rand(-14, 14), rf.y - G.U.rand(10, 80), '#d9c2ff', { vy: -40, life: 0.6 });
       }
     };
   }
 
   // ---------------- red ----------------
 
-  function onEvent(ev) {
+  function onEvent(ev: RiftEvent) {
     switch (ev[0]) {
       case 'rift': show(ev[1], ev[2], ev[3]); break;
       case 'riftx': rift = null; break;
@@ -366,7 +372,7 @@ export const Rift = (() => {
      * Cooperativo: pone la grieta y la arena como las tiene el anfitrión (el invitado se perdió el
      * aviso). Entra o sale de la arena si hace falta; la recompensa de haber ganado no se repite.
      */
-    restore(s) {
+    restore(s: RiftSnapshot | null | undefined) {
       const a = s && s.arena;
       const ok = a && a.cfg && Number.isFinite(a.cfg.tx) && Number.isFinite(a.cfg.ty) && G.DEX_BY[a.cfg.dex] && G.Tiles.ARENA_THEMES[a.cfg.type];
       if (arena && (!a || (ok && (arena.tx !== a.cfg.tx || arena.ty !== a.cfg.ty)))) finish();
@@ -384,7 +390,7 @@ export const Rift = (() => {
       }
     },
     /** Para pruebas: arena de un tipo ya. */
-    debugArena(type) { start(type); },
+    debugArena(type: PokeType) { start(type); },
     /** Para vídeos: la próxima grieta en la que entres será de este tipo. */
     debugNextType(type: PokeType) { nextType = type; }
   };

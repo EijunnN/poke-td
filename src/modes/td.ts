@@ -9,7 +9,9 @@ import {
   MAPS, mapById, randomMap, costFor, trophyCost, type TdMap
 } from './td-geom';
 import { START_LIVES, LAST_WAVE, MAX_WAVE, WIN_COINS, waveAt, waveHp, waveCount, waveGap, bossHpMul, leakCost, defenseCoins } from './td-waves';
-import type { CoopConfig } from '../net/coop';
+import type { CoopConfig, HostEv, Mate, TdGuestEv, TdHostEv, TeamState } from '../net/coop';
+import type { Pickup, PickupCollector } from '../entities/pickup';
+import type { Player } from '../entities/player';
 /* ============ td.ts — modo Defensa (tower defense) ============
  * Los enemigos entran por un camino fijo y van hacia la base; cada uno que
  * llega te quita vidas. Tú sigues llevando a tu compañero (el héroe).
@@ -95,19 +97,22 @@ export const TD = (() => {
   /** Cuántos Pokémon enseña la tienda a la vez (con más, se filtra por tipo). */
   const SHOP_MAX = 60;
 
+  /** El Pokémon de una torre: un Player con el alcance extra que le dan las auras (tdRange). */
+  type TowerMon = Player & { tdRange?: number };
+
   /**
    * Una torre: su id (el mismo en todos los ordenadores), de quién es, el Pokémon, lo
    * gastado, a quién apunta, su ataque sin auras (`atk`) y las auras que recibe ahora (`buff`).
    */
   interface Tower {
-    id: number; owner: string; p: any; dex: number; shiny: boolean; level: number; base: number; spent: number;
+    id: number; owner: string; p: TowerMon; dex: number; shiny: boolean; level: number; base: number; spent: number;
     mode: TargetMode; atk: number; buff: AuraTotals;
     /** Ataques que le has enseñado con monedas (además del suyo). */
     learned: string[];
   }
 
   let time = 0;
-  let pl = null;                     // el héroe
+  let pl: Player = null!;            // el héroe (null fuera de partida, ver finish)
   let heroLevel = 1;                 // mejoras del ataque del héroe compradas con monedas
   let towers: Tower[] = [];
   let nextTowerId = 1;
@@ -173,6 +178,9 @@ export const TD = (() => {
   }
 
   /** Enemigo del camino: camina hacia su siguiente punto en vez de hacia el jugador. */
+  /** Un enemigo de la Defensa; `tdKind` lo marca como jefe o legendario (ver bigger). */
+  type TdEnemy = Enemy & { tdKind?: string };
+
   class Walker extends Enemy {
     /** Índice en `path` del punto al que va. */
     wp = 1;
@@ -283,7 +291,7 @@ export const TD = (() => {
    * parálisis (2), confusión (4), maldición (8) y frenado (16). Los bits son los de
    * Walker.netBits: así se dibuja igual en las copias del cooperativo.
    */
-  function drawStatus(ctx: CanvasRenderingContext2D, e: any, bits: number) {
+  function drawStatus(ctx: CanvasRenderingContext2D, e: Enemy, bits: number) {
     if (!bits) return;
     const cy = e.y - e.bodyH * 0.5, top = e.y - e.bodyH - 6;
     ctx.save();
@@ -316,7 +324,7 @@ export const TD = (() => {
   function note(k: string) { powers[k] = (powers[k] || 0) + 1; }
 
   /** Torre que se está colocando: una vista previa que sigue al ratón o al héroe. */
-  let placing: { dex: number; preview: any; range: number } | null = null;
+  let placing: { dex: number; preview: TowerMon; range: number } | null = null;
   const ghost = { x: 0, y: 0 };
   /** ¿Se ha movido el ratón desde que empezó la colocación? Si no, la torre fantasma va con el héroe. */
   let ghostByPointer = false;
@@ -458,11 +466,12 @@ export const TD = (() => {
     const m = G.Moves.BY_ID[towerMoveOf(dex)];
     return (m && m.type) || G.DEX_BY[dex].types[0];
   }
-  const typeName = (t: string) => G.U.TYPE_NAME[t] || t;
+  const typeName = (t: string) => (G.U.TYPE_NAME as Record<string, string>)[t] || t;
+  const typeColor = (t: string): string | undefined => (G.U.TYPE_COLOR as Record<string, string>)[t];
   /** Etiqueta de color (tipo o apoyo), con el texto oscuro o blanco según se lea mejor sobre su fondo. */
   const tag = (bg: string, text: string) => `<i class="td-type" style="background:${bg};color:${G.U.inkOn(bg)}">${text}</i>`;
   const auraChip = (k: AuraKind) => tag(AURAS[k].color, 'Apoyo');
-  const typeChip = (t: string) => tag(G.U.TYPE_COLOR[t] || '#888', typeName(t));
+  const typeChip = (t: string) => tag(typeColor(t) || '#888', typeName(t));
 
   /** Pantalla de favoritos antes de empezar: salen primero en la tienda. */
   function openTeam() {
@@ -498,7 +507,7 @@ export const TD = (() => {
     const grid = el.querySelector('.td-grid') as HTMLElement;
     const go = el.querySelector('[data-a=go]') as HTMLButtonElement;
     const paint = () => {
-      grid.querySelectorAll<HTMLElement>('.td-pick').forEach(b => b.classList.toggle('on', chosen.includes(+b.dataset.dex)));
+      grid.querySelectorAll<HTMLElement>('.td-pick').forEach(b => b.classList.toggle('on', chosen.includes(+b.dataset.dex!)));
       go.textContent = 'Empezar · ' + chosen.length + '/' + TEAM_MAX + ' favoritos';
     };
     for (const c of cands) {
@@ -535,12 +544,12 @@ export const TD = (() => {
    * @param opts  team: favoritos · map: id del mapa (td-geom.ts, MAPS) · coop: la partida en
    *              grupo que manda el anfitrión al empezar ({ seed, host, members, map })
    */
-  function start(opts: { team?: number[]; map?: string; coop?: CoopConfig & { map?: string } } | null = null) {
-    const save = G.DB.save;
-    const mon = G.DEX_BY[save.partner];
+  function start(opts: { team?: number[]; map?: string; coop?: CoopConfig } | null = null) {
+    const save = G.DB.save!;
+    const mon = G.DEX_BY[save.partner!];
     const perks = G.Upgrades.perks(G.DB.upgradesOf(mon.dex));
     coop = opts && opts.coop ? opts.coop : null;
-    me = coop ? G.Net.uid : 'me';
+    me = coop ? G.Net.uid! : 'me';
 
     G.UI.hideAll();
     G.UI.chrome(false);
@@ -619,7 +628,7 @@ export const TD = (() => {
     if (watching()) {
       hideUI();
       G.Audio.music(null);
-      pl = null; towers = []; G.EnemyMgr.clear();
+      pl = null!; towers = []; G.EnemyMgr.clear();
       G.Spectate.ended(d.won ? '¡Han defendido la base!' : 'La partida que mirabas ha terminado');
       return;
     }
@@ -656,8 +665,8 @@ export const TD = (() => {
       moves: pl.moves, caught: [],
       breakdown: tampered ? 'Partida tocada desde la consola: sin premio'
         : `oleadas ${d.w * 10} · derrotados ${Math.floor(d.k / 5)}${d.won ? ' · victoria ' + WIN_COINS : ''}`
-    }, () => { pl = null; towers = []; G.EnemyMgr.clear(); G.Flow.afterRun(); });
-    document.getElementById('over-title').textContent =
+    }, () => { pl = null!; towers = []; G.EnemyMgr.clear(); G.Flow.afterRun(); });
+    document.getElementById('over-title')!.textContent =
       d.won ? (d.wave > LAST_WAVE ? '¡Victoria! · y en el sin fin, hasta la oleada ' + d.wave : '¡Victoria! · las ' + LAST_WAVE + ' oleadas')
       : d.dead ? 'La base ha caído · oleada ' + d.wave : 'Defensa terminada · oleada ' + d.wave;
   }
@@ -723,7 +732,7 @@ export const TD = (() => {
   }
 
   /** Un jefe o legendario se ve más grande (también su copia en los invitados). */
-  function bigger(e: any, kind: string) {
+  function bigger(e: TdEnemy, kind: string) {
     const s = kind === 'legend' ? 1.9 : 1.55;
     e.scale = s;
     e.anim = new G.Sprites.Animator(e.dex, s);
@@ -805,7 +814,7 @@ export const TD = (() => {
   // lo aplica y os lo cuenta a todos (ver la cabecera y "cooperativo", más abajo).
 
   /** Un Pokémon como torre (un G.Player que no lee el mando: sólo apunta y ataca). */
-  function makeTower(dex: number, shiny = G.DB.ownsShiny(dex)) {
+  function makeTower(dex: number, shiny = G.DB.ownsShiny(dex)): TowerMon {
     const t = new G.Player(G.DEX_BY[dex], {}, shiny);
     t.frozen = true;
     t.addMove(towerMoveOf(dex));
@@ -936,7 +945,7 @@ export const TD = (() => {
   const evoOf = (t: Tower) => evoWait.get(t.id) || null;
 
   /** Sube un nivel sus ataques (hasta el 5; los aprendidos también) y un poco el ataque. */
-  function levelMove(p) {
+  function levelMove(p: Player) {
     for (const m of p.activeGroup()) if (m.lvl < 5) G.Moves.levelUp(m);
     p.atkMul *= 1.12;
   }
@@ -953,13 +962,13 @@ export const TD = (() => {
   /** Lo que le falta por aprender (de sus tipos); vacío si no puede aprender más. */
   function learnable(t: Tower): string[] {
     if (SUPPORT[t.dex] || t.learned.length >= LEARN_MAX) return [];
-    const known = new Set((t.p.activeGroup() as any[]).map(m => m.id));
+    const known = new Set(t.p.activeGroup().map(m => m.id));
     return towerPool(t.dex).filter(id => !known.has(id));
   }
   /** Mete el ataque `id` en el hueco de la torre, al nivel de la torre. */
-  function teach(p, id: string, level: number) {
+  function teach(p: Player, id: string, level: number) {
     const def = G.Moves.BY_ID[id];
-    if (!def || (p.activeGroup() as any[]).some(m => m.id === id)) return;
+    if (!def || p.activeGroup().some(m => m.id === id)) return;
     const m = G.Moves.instance(id, Math.max(1, Math.min(level, def.maxLvl || 5, 5)));
     p.moves.push(m);
     p.activeGroup().push(m);
@@ -1014,7 +1023,7 @@ export const TD = (() => {
     sendTower(t);
     refreshUI();
   }
-  function evolveFx(p) {
+  function evolveFx(p: Player) {
     G.FX.ring(p.x, p.y, 10, 140, '#ffffff', 0.8, 6);
     G.FX.burst(p.x, p.y - 20, '#ffffff', 30, 200);
     G.Audio.sfx('legend');
@@ -1135,8 +1144,8 @@ export const TD = (() => {
    * Hasta dónde ataca un Pokémon: el de su movimiento activo, con el tope de las
    * torres. Vista Lince sube el tope, pero nunca más allá de lo que llega su ataque.
    */
-  function rangeOf(p) {
-    const ms = p.activeGroup() as any[];
+  function rangeOf(p: TowerMon) {
+    const ms = p.activeGroup();
     return ms.length ? Math.min(RANGE_MAX * (1 + (p.tdRange || 0)), Math.max(...ms.map(m => moveRange(m)))) : 0;
   }
 
@@ -1187,9 +1196,9 @@ export const TD = (() => {
     return ROLES[attackType(dex)] || null;
   }
   /** El blanco de una torre entre los vivos a su alcance, según su modo; o null. */
-  function targetFor(p, mode: TargetMode) {
+  function targetFor(p: TowerMon, mode: TargetMode) {
     const r = rangeOf(p);
-    const inRange: any[] = [], cands: { d2: number; progress: number; hp: number }[] = [];
+    const inRange: Enemy[] = [], cands: { d2: number; progress: number; hp: number }[] = [];
     for (const e of G.EnemyMgr.all()) {
       if (e.dead) continue;
       const d2 = G.U.dist2(e.x, e.y, p.x, p.y), reach = r + (e.r || 0);
@@ -1204,26 +1213,27 @@ export const TD = (() => {
   const reachWord = (r: number) => r <= 130 ? 'corto' : r <= 300 ? 'medio' : 'largo';
 
   const LEADS = new Set(['projectile', 'boomerang', 'cone']);
-  function aimAhead(p) {
+  function aimAhead(p: Player) {
     const m = p.activeMove(), tg = p.target;
-    if (!m || !tg || !LEADS.has(m.kind) || !(m.speed > 0)) return;
+    if (!m || !tg || !LEADS.has(m.kind) || !(m.speed! > 0)) return;
     const v = vel.get(tg);
     if (!v) return;
-    p.aim = leadAngle(p.x, p.y, tg.x, tg.y, v.x, v.y, m.speed);
+    p.aim = leadAngle(p.x, p.y, tg.x, tg.y, v.x, v.y, m.speed!);
   }
 
   // ---------------- recogida ----------------
 
   /** @param who  quien lo ha cogido (en grupo puede ser un compañero) */
-  function onCollect(p, who = pl) {
+  function onCollect(p: Pickup, collector: PickupCollector = pl) {
+    const who = collector as Player;
     const own = who === pl;
     // Invitado: son copias de los objetos del anfitrión; el efecto lo decide él.
     if (guest()) { if (own) G.Audio.sfx(p.kind === 'coin' ? 'coin' : p.kind === 'heal' ? 'heal' : 'xp'); return; }
     if (coop && G.Coop.active) G.Coop.collected(p, who);
-    if (p.kind === 'xp' || p.kind === 'xpBig') { if (own) { G.Audio.sfx('xp'); pl.gainXp(p.value); } return; }
+    if (p.kind === 'xp' || p.kind === 'xpBig') { if (own) { G.Audio.sfx('xp'); pl.gainXp(p.value as number); } return; }
     if (p.kind === 'coin') {
       if (own) G.Audio.sfx('coin');
-      earn(own ? me : who.uid, p.value, who.x, who.y - who.bodyH - 6);
+      earn(own ? me : who.uid, p.value as number, who.x, who.y - who.bodyH - 6);
       return;
     }
     if (p.kind === 'heal') {
@@ -1302,7 +1312,7 @@ export const TD = (() => {
       p.target = tg;
       if (tg) p.aim = Math.atan2(tg.y - p.y, tg.x - p.x);
       aimAhead(p);
-      const group = p.activeGroup() as any[], was = group.map(m => m.castAt);
+      const group = p.activeGroup(), was = group.map(m => m.castAt);
       // Sin nadie a su alcance no ataca (las de área se lanzaban solas). Las órbitas sí: giran siempre.
       if (tg || group.some(m => m.kind === 'orbit')) G.Combat.tick(dt, p, time);
       group.forEach((m, i) => {
@@ -1359,10 +1369,10 @@ export const TD = (() => {
   // Ver la cabecera: qué manda cada uno y los mensajes.
 
   /** Anfitrión: una torre para los invitados (nueva o cambiada). */
-  const towerEv = (t: Tower) => ['tt', t.id, t.owner, t.dex, Math.round(t.p.x), Math.round(t.p.y), t.level, t.mode, t.shiny ? 1 : 0, t.base, t.spent, t.learned.slice()];
+  const towerEv = (t: Tower): TdHostEv => ['tt', t.id, t.owner, t.dex, Math.round(t.p.x), Math.round(t.p.y), t.level, t.mode, t.shiny ? 1 : 0, t.base, t.spent, t.learned.slice()];
   function sendTower(t: Tower) { if (coop && G.Coop.isHost) G.Coop.broadcast(towerEv(t)); }
   /** Anfitrión: vidas, oleada, cuenta atrás, monedas de cada uno... */
-  const stateEv = () => ['tg', lives, wave, phase === 'wave' ? 1 : 0, Math.round(phaseT * 10) / 10,
+  const stateEv = (): TdHostEv => ['tg', lives, wave, phase === 'wave' ? 1 : 0, Math.round(phaseT * 10) / 10,
                          toSpawn + bossLeft + G.EnemyMgr.all().filter(e => !e.dead).length,
                          fast ? 1 : 0, cleared, won ? 1 : 0, { ...purse }, leaked, pl.kills];
   function sendState() {
@@ -1372,7 +1382,7 @@ export const TD = (() => {
   }
 
   /** Anfitrión: lo que pide un invitado. Se comprueba aquí (que sea suya, que le llegue...). */
-  function onGuestEvent(from: string, ev: any[]) {
+  function onGuestEvent(from: string, ev: TdGuestEv) {
     if (Run.state !== 'playing' || !(from in purse)) return;
     const t = typeof ev[1] === 'number' ? towerById(ev[1]) : null;
     const his = !!t && t.owner === from;
@@ -1395,14 +1405,14 @@ export const TD = (() => {
   }
 
   /** Invitado: lo que cuenta el anfitrión. */
-  function onHostEvent(ev: any[]) {
+  function onHostEvent(ev: TdHostEv) {
     switch (ev[0]) {
       case 'tt': upsertTower(ev); break;
       case 'tr': dropTower(ev[1]); break;
       case 'tz': for (const t of towers.slice()) dropTower(t.id); break;
       case 'tc': {
         const t = towerById(ev[1]);
-        if (t) { G.Combat.ghostCast(t.p, ev[2], ev[3], ev[4], ev[5]); shots.set(t.p, (shots.get(t.p) || 0) + 1); }
+        if (t) { G.Combat.ghostCast(t.p, ev[2], ev[3], ev[4], !!ev[5]); shots.set(t.p, (shots.get(t.p) || 0) + 1); }
         break;
       }
       case 'tv': {
@@ -1426,7 +1436,7 @@ export const TD = (() => {
   }
 
   /** Invitado: una torre nueva o que ha cambiado (nivel, evolución, dueño, modo). */
-  function upsertTower(a: any[]) {
+  function upsertTower(a: Extract<TdHostEv, [kind: 'tt', ...unknown[]]>) {
     const [, id, owner, dex, x, y, level, mode, shiny, base, spent] = a;
     const learned: string[] = Array.isArray(a[11]) ? a[11].filter((m: unknown) => typeof m === 'string' && G.Moves.BY_ID[m as string]) : [];
     if (!G.DEX_BY[dex]) return;
@@ -1468,8 +1478,8 @@ export const TD = (() => {
   }
 
   /** Anfitrión: lo que necesita un invitado que vuelve tras un corte (va detrás de los enemigos). */
-  function resyncFor(u: string): any[][] {
-    const evs: any[][] = [['tz'], ...trophies.map(d => ['tq', d])];
+  function resyncFor(u: string): HostEv[] {
+    const evs: HostEv[] = [['tz'], ...trophies.map((d): TdHostEv => ['tq', d])];
     for (const t of towers) evs.push(towerEv(t));
     for (const e of G.EnemyMgr.all()) if (!e.dead && e instanceof Walker && e.chief) evs.push(['tb', e.id, e.kind]);
     for (const t of towers) { const o = evoOf(t); if (o && t.owner === u) evs.push(['tv', t.id, o]); }
@@ -1483,18 +1493,18 @@ export const TD = (() => {
     team: () => ({ time, level: pl.level, xp: 0, xpNext: 1, kills: pl.kills, bosses: 0, coins: 0, t1: 0, t10: 0 }),
     summary: () => summary(false),
     // Invitado: el reloj del anfitrión.
-    syncTeam(t: any) { if (Math.abs(t.time - time) > 0.4) time = t.time; },
+    syncTeam(t: TeamState) { if (Math.abs(t.time - time) > 0.4) time = t.time; },
     // (Sin cartas de nivel, ni objetos, ni shinies en la Defensa.)
     levelStart() {}, waiting() {}, resume() {}, shiny() {}, item() {},
     // Invitado: el anfitrión no responde; mientras, los enemigos están parados (los mueve él).
     away(name: string | null) { hostAway = name; hudKey = ''; },
-    over(d: any) {
+    over(d: Partial<ReturnType<typeof summary>> & { why?: string } | null) {
       if (d && d.why === 'host') G.UI.toast('El anfitrión ha terminado la partida', 3000);
-      finish(d && typeof d.w === 'number' ? d : summary(false));
+      finish(d && typeof d.w === 'number' ? d as ReturnType<typeof summary> : summary(false));
     },
     lost(msg: string) { G.UI.toast(msg, 3000); finish(summary(false)); },
     /** Anfitrión: un compañero se ha ido para siempre; sus torres pasan a ser tuyas (siguen defendiendo). */
-    mateLeft(m: any) {
+    mateLeft(m: Mate) {
       let n = 0;
       for (const t of towers) {
         if (t.owner !== m.uid) continue;
@@ -1506,7 +1516,7 @@ export const TD = (() => {
       if (n) announce('Las torres de ' + m.name + ' pasan al anfitrión', 3);
       refreshUI();
     },
-    onEvent(from: string, ev: any[]) { if (G.Coop.isHost) onGuestEvent(from, ev); else onHostEvent(ev); },
+    onEvent(from: string, ev: TdHostEv | TdGuestEv) { if (G.Coop.isHost) onGuestEvent(from, ev as TdGuestEv); else onHostEvent(ev as TdHostEv); },
     resync: resyncFor,
   };
 
@@ -1822,11 +1832,11 @@ export const TD = (() => {
       const x = X(t.p.x), y = Y(t.p.y), s = 3 * dpr;
       const oc = colorOf(t.owner);
       if (oc) { ctx.fillStyle = oc; ctx.fillRect(x - s - dpr, y - s - dpr, (s + dpr) * 2, (s + dpr) * 2); }
-      ctx.fillStyle = SUPPORT[t.dex] ? '#ffd23f' : G.U.TYPE_COLOR[attackType(t.dex)] || '#ffffff';
+      ctx.fillStyle = SUPPORT[t.dex] ? '#ffd23f' : typeColor(attackType(t.dex)) || '#ffffff';
       ctx.fillRect(x - s, y - s, s * 2, s * 2);
     }
     // Los enemigos (los jefes, más grandes).
-    for (const e of G.EnemyMgr.all() as any[]) {
+    for (const e of G.EnemyMgr.all() as TdEnemy[]) {
       if (e.dead) continue;
       const big = !!e.tdKind || (e instanceof Walker && e.chief);
       ctx.fillStyle = big ? '#ffcb3d' : '#ff3b4e';
@@ -1867,7 +1877,7 @@ export const TD = (() => {
     mEl.textContent = String(money);
     if (gained) { const box = mEl.parentElement!; box.classList.remove('bump'); void box.offsetWidth; box.classList.add('bump'); }
     shop.querySelectorAll<HTMLButtonElement>('.td-slot').forEach(b => {
-      const dex = +b.dataset.dex;
+      const dex = +b.dataset.dex!;
       b.disabled = money < costOf(dex) && !(placing && placing.dex === dex);
       b.classList.toggle('on', !!placing && placing.dex === dex);
     });
@@ -1934,7 +1944,7 @@ export const TD = (() => {
         ${k && t.level < MAX_LEVEL ? `<p>Al mejorarlo: ${auraText(k, t.level + 1)}</p>` : ''}
         ${got.length ? `<p class="role" style="color:var(--gold)">Reforzada: ${got.join(', ')}</p>` : ''}
         ${own && nextEvo ? `<p class="gold">La próxima mejora lo hace evolucionar${evo.length > 1 ? ' (eliges en qué)' : ' a ' + G.DEX_BY[evo[0]].name}</p>` : ''}
-        ${k ? '' : `<p>Ataques: ${(t.p.activeGroup() as any[]).map(x => x.name).join(', ')}</p>`}
+        ${k ? '' : `<p>Ataques: ${t.p.activeGroup().map(x => x.name).join(', ')}</p>`}
         ${own && !k ? learnButtons(t, money) : ''}
         ${own ? `<button class="btn small gold" data-a="up"${c == null || money < c ? ' disabled' : ''}>${c == null ? 'Al máximo' : 'Mejorar · ' + c}</button>
         ${k ? '' : `<button class="btn small" data-a="mode">Ataca a: ${TARGET_NAME[t.mode]}</button>`}
@@ -2175,7 +2185,7 @@ export const TD = (() => {
     debugBoss(dex: number, legend = false) {
       if (!hosting() || !G.DEX_BY[dex]) return null;
       spawnEnemy(true, dex);
-      const e = G.EnemyMgr.all().filter((x: any) => x instanceof Walker && x.chief).pop() as any;
+      const e = G.EnemyMgr.all().filter((x): x is Walker => x instanceof Walker && x.chief).pop();
       if (e && legend && e.kind !== 'legend') { e.kind = 'legend'; bigger(e, 'legend'); }
       return e ? e.id : null;
     },
@@ -2214,7 +2224,7 @@ export const TD = (() => {
         coop: !!coop, host: hosting(), me, map: map.id, purse: { ...purse }, cleared, won, flawless, fast, heroLv: { ...heroLv },
         left: guest() ? leftShown : toSpawn + bossLeft + G.EnemyMgr.all().filter(e => !e.dead).length,
         towers: towers.map(t => ({ id: t.id, owner: t.owner, dex: t.dex, level: t.level, mode: t.mode, x: Math.round(t.p.x), y: Math.round(t.p.y), shots: shots.get(t.p) || 0,
-                                   moves: (t.p.activeGroup() as any[]).map(m => m.id), learned: t.learned.slice(), spent: t.spent })),
+                                   moves: t.p.activeGroup().map(m => m.id), learned: t.learned.slice(), spent: t.spent })),
         evo: pendingEvo ? { id: pendingEvo.tower.id, options: pendingEvo.options.slice() } : null,
       };
     },

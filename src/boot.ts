@@ -11,7 +11,7 @@ import { G } from './g';
     // (En la versión publicada G no está en window: va encerrado, ver tools/build.js.)
     const miss = NEED.filter(k => typeof G !== 'object' || !G[k]);
     if (!miss.length) return false;
-    const el = document.getElementById('boot');
+    const el = document.getElementById('boot')!;
     el.innerHTML = 'No se pudo cargar todo el juego (¿se cortó la conexión?).<br><button class="btn gold" style="margin-top:12px" onclick="location.reload()">Recargar</button>';
     console.warn('[Arranque] faltan:', miss.join(', '));
     return true;
@@ -24,7 +24,7 @@ import { G } from './g';
   function maintenance() {
     if (!MAINTENANCE || /[?&]dev\b/.test(location.search)) return false;
     const en = typeof G === 'object' && G.I18n ? G.I18n.lang === 'en' : !/^es/i.test(navigator.language || '');
-    const el = document.getElementById('boot');
+    const el = document.getElementById('boot')!;
     el.setAttribute('translate', 'no');
     el.innerHTML = '<div class="boot-in"><h1>PokéSurvivor</h1>' + (en
       ? '<p><b>We are under maintenance.</b></p><p>We are moving the game to new servers so it can stay free for everyone. ' +

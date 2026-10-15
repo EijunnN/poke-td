@@ -23,12 +23,14 @@ export const GuideUI = (() => {
   let tab: Tab = 'basics';
   const esc = (s: string) => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
   const en = () => G.I18n.lang === 'en';
+  const TYPE_COLOR: Record<string, string> = G.U.TYPE_COLOR;
+  const TYPE_NAME: Record<string, string> = G.U.TYPE_NAME;
   /** El texto en el idioma del juego. */
   const T = (es: string, eng: string) => en() ? eng : es;
   const pct = (x: number) => Math.round(x * 100) + '%';
   const h = (es: string, eng: string) => `<h3>${T(es, eng)}</h3>`;
   const ul = (items: [string, string][]) => `<ul>${items.map(([a, b]) => `<li>${T(a, b)}</li>`).join('')}</ul>`;
-  const chip = (t: string) => `<i class="guide-type" style="background:${G.U.TYPE_COLOR[t] || '#888'};color:${G.U.inkOn(G.U.TYPE_COLOR[t] || '#888')}">${esc(en() ? t[0].toUpperCase() + t.slice(1) : G.U.TYPE_NAME[t] || t)}</i>`;
+  const chip = (t: string) => `<i class="guide-type" style="background:${TYPE_COLOR[t] || '#888'};color:${G.U.inkOn(TYPE_COLOR[t] || '#888')}">${esc(en() ? t[0].toUpperCase() + t.slice(1) : TYPE_NAME[t] || t)}</i>`;
   const name = (dex: number) => esc((G.DEX_BY[dex] && G.DEX_BY[dex].name) || '#' + dex);
 
   function basics() {
@@ -108,7 +110,7 @@ export const GuideUI = (() => {
   }
 
   function td() {
-    const types = Object.keys(ROLES).sort((a, b) => (G.U.TYPE_NAME[a] || a).localeCompare(G.U.TYPE_NAME[b] || b));
+    const types = Object.keys(ROLES).sort((a, b) => (TYPE_NAME[a] || a).localeCompare(TYPE_NAME[b] || b));
     return h('El objetivo', 'The goal')
       + `<p>${T(`Los enemigos siguen el camino hasta tu base. Aguanta las <b>${WAVES.length} oleadas</b>. Empiezas con <b>${START_LIVES} vidas</b>: cada enemigo que llega quita ${leakCost(false, false)}, un jefe ${leakCost(true, false)} y un legendario ${leakCost(true, true)}.`,
                `Enemies follow the path to your base. Survive all <b>${WAVES.length} waves</b>. You start with <b>${START_LIVES} lives</b>: each enemy that gets through takes ${leakCost(false, false)}, a boss ${leakCost(true, false)} and a legendary ${leakCost(true, true)}.`)}</p>`
@@ -215,7 +217,7 @@ export const GuideUI = (() => {
   function paint() {
     const tabs = $('guide-tabs'), body = $('guide-body');
     tabs.innerHTML = TABS.map(([k, es, eng]) => `<div class="tab${k === tab ? ' on' : ''}" data-tab="${k}" translate="no">${T(es, eng)}</div>`).join('');
-    tabs.querySelectorAll('.tab').forEach((el: HTMLElement) => el.onclick = () => { tab = el.dataset.tab as Tab; paint(); });
+    tabs.querySelectorAll<HTMLElement>('.tab').forEach(el => el.onclick = () => { tab = el.dataset.tab as Tab; paint(); });
     body.innerHTML = { basics, survivor, td, faq }[tab]();
     body.scrollTop = 0;
     $('guide-title').textContent = T('Cómo se juega', 'How to play');

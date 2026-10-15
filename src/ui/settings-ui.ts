@@ -4,15 +4,19 @@ import { G } from '../g';
  * Pestañas: Sonido · Gráficos · Controles · Cuenta · Acerca de.
  * Los ajustes son de este dispositivo (G.Settings / G.Audio en el navegador).
  */
+/** Pantalla completa con el prefijo de Safari. */
+type WebkitDoc = Document & { webkitFullscreenEnabled?: boolean; webkitFullscreenElement?: Element | null; webkitExitFullscreen?: () => Promise<void> };
+type WebkitEl = HTMLElement & { webkitRequestFullscreen?: () => Promise<void> };
+
 export const SettingsUI = (() => {
   const $ = G.UI.$;
-  const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const esc = (s: unknown) => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
   const VERSION = '1.2 · 2026-10-09';
   const REPO = 'https://github.com/EijunnN/poke-td';
   let tab = 'sound';
 
   function init() {
-    document.querySelectorAll<HTMLElement>('#set-tabs .gen-tab').forEach(b => { b.onclick = () => { tab = b.dataset.t; render(); }; });
+    document.querySelectorAll<HTMLElement>('#set-tabs .gen-tab').forEach(b => { b.onclick = () => { tab = b.dataset.t!; render(); }; });
     $('set-close').onclick = close;
     $('btn-settings').innerHTML = G.Icons.html('gear', 20);
     $('btn-settings').onclick = () => open();
@@ -34,34 +38,34 @@ export const SettingsUI = (() => {
   const isOpen = () => !$('scr-settings').classList.contains('hidden');
 
   // ---------------- pantalla completa ----------------
-  function canFull() { return !!(document.fullscreenEnabled || (document as any).webkitFullscreenEnabled); }
-  function isFull() { return !!(document.fullscreenElement || (document as any).webkitFullscreenElement); }
+  function canFull() { return !!(document.fullscreenEnabled || (document as WebkitDoc).webkitFullscreenEnabled); }
+  function isFull() { return !!(document.fullscreenElement || (document as WebkitDoc).webkitFullscreenElement); }
   // iPhone: Safari no deja poner una web a pantalla completa (por eso a veces
   // no salía la opción). Sí se puede abriéndola desde la pantalla de inicio.
   const IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-  const standalone = () => !!(navigator as any).standalone || (window.matchMedia && matchMedia('(display-mode: fullscreen), (display-mode: standalone)').matches);
+  const standalone = () => !!(navigator as Navigator & { standalone?: boolean }).standalone || (typeof window.matchMedia === 'function' && matchMedia('(display-mode: fullscreen), (display-mode: standalone)').matches);
   function iosTip() { return IOS && !canFull() && !standalone(); }
   const IOS_TIP = 'En iPhone, Safari no deja poner las webs a pantalla completa. Pulsa Compartir y luego "Añadir a pantalla de inicio": abriendo el juego desde ese icono se juega a pantalla completa.';
   function toggleFull() {
     if (!canFull()) { if (iosTip()) G.UI.toast(IOS_TIP, 9000); return; }
-    if (isFull()) (document.exitFullscreen || (document as any).webkitExitFullscreen).call(document);
+    if (isFull()) (document.exitFullscreen || (document as WebkitDoc).webkitExitFullscreen)!.call(document);
     else {
       const el = document.documentElement;
-      const p = (el.requestFullscreen || (el as any).webkitRequestFullscreen).call(el);
+      const p = (el.requestFullscreen || (el as WebkitEl).webkitRequestFullscreen)!.call(el);
       // En móvil, además se intenta fijar la pantalla en horizontal.
-      if (p && p.then) p.then(() => { try { (screen.orientation as any).lock('landscape').catch(() => {}); } catch (e) { /* nada */ } }).catch(() => {});
+      if (p && p.then) p.then(() => { try { (screen.orientation as ScreenOrientation & { lock(o: string): Promise<void> }).lock('landscape').catch(() => {}); } catch (e) { /* nada */ } }).catch(() => {});
     }
     setTimeout(() => { if (isOpen()) render(); }, 300);
   }
 
   // ---------------- piezas ----------------
-  function section(title, sub?: string) { return `<h3 class="set-h">${esc(title)}</h3>${sub ? `<p class="sub">${sub}</p>` : ''}`; }
-  function toggle(key, label, desc) {
+  function section(title: string, sub?: string) { return `<h3 class="set-h">${esc(title)}</h3>${sub ? `<p class="sub">${sub}</p>` : ''}`; }
+  function toggle(key: string, label: string, desc: string) {
     const on = !!G.Settings.get(key);
     return `<div class="set-row"><div class="grow"><b>${esc(label)}</b><small>${esc(desc)}</small></div>
       <button class="btn small switch ${on ? 'gold' : ''}" data-k="${key}">${on ? 'Sí' : 'No'}</button></div>`;
   }
-  function choice(key, opts) {
+  function choice(key: string, opts: [string | number, string][]) {
     const cur = G.Settings.get(key);
     return `<div class="chips set-chips">${opts.map(([v, l]) => `<button class="chip ${v === cur ? 'on' : ''}" data-k="${key}" data-v="${v}">${esc(l)}</button>`).join('')}</div>`;
   }
@@ -124,9 +128,9 @@ export const SettingsUI = (() => {
     wire(box);
   }
 
-  function renderAccount(box) {
+  function renderAccount(box: HTMLElement) {
     const st = G.DB.guest ? 'guest' : G.DB.syncState;
-    const SYNC = { ok: 'Guardado en la nube', syncing: 'Guardando…', pending: 'Pendiente de subir (se sube al salir del juego)',
+    const SYNC: Record<string, string> = { ok: 'Guardado en la nube', syncing: 'Guardando…', pending: 'Pendiente de subir (se sube al salir del juego)',
                    offline: 'Sin conexión: se subirá al volver', local: 'Guardado sólo en este navegador', guest: 'Invitado: no se guarda' };
     if (G.DB.guest) {
       box.innerHTML = section('Cuenta', 'Estás jugando como <b>invitado</b>: tu progreso no se guarda al salir.')
@@ -146,27 +150,27 @@ export const SettingsUI = (() => {
          </div><p class="note" id="set-msg"></p>`;
   }
 
-  function wire(box) {
-    box.querySelectorAll('.switch[data-k]').forEach(b => { b.onclick = () => { G.Settings.set(b.dataset.k, !G.Settings.get(b.dataset.k)); render(); }; });
-    box.querySelectorAll('.chip[data-k]').forEach(b => {
-      b.onclick = () => { const v = b.dataset.v; G.Settings.set(b.dataset.k, isNaN(+v) ? v : +v); render(); };
+  function wire(box: HTMLElement) {
+    box.querySelectorAll<HTMLElement>('.switch[data-k]').forEach(b => { b.onclick = () => { G.Settings.set(b.dataset.k!, !G.Settings.get(b.dataset.k!)); render(); }; });
+    box.querySelectorAll<HTMLElement>('.chip[data-k]').forEach(b => {
+      b.onclick = () => { const v = b.dataset.v!; G.Settings.set(b.dataset.k!, isNaN(+v) ? v : +v); render(); };
     });
-    const full = $('set-full'); if (full) full.onclick = toggleFull;
-    box.querySelectorAll('[data-guide]').forEach(b => { b.onclick = () => G.GuideUI.open(); });
-    box.querySelectorAll('[data-lang]').forEach(b => { b.onclick = () => { if (b.dataset.lang !== G.I18n.lang) G.I18n.set(b.dataset.lang); }; });
-    const lo = $('set-login'); if (lo) lo.onclick = () => { close(); leave(); };
-    const out = $('set-logout'); if (out) out.onclick = () => { close(); leave(); };
-    const pw = $('set-pass');
+    const full = $<HTMLButtonElement>('set-full'); if (full) full.onclick = toggleFull;
+    box.querySelectorAll<HTMLElement>('[data-guide]').forEach(b => { b.onclick = () => G.GuideUI.open(); });
+    box.querySelectorAll<HTMLElement>('[data-lang]').forEach(b => { b.onclick = () => { if (b.dataset.lang !== G.I18n.lang) G.I18n.set(b.dataset.lang!); }; });
+    const lo = $<HTMLButtonElement>('set-login'); if (lo) lo.onclick = () => { close(); leave(); };
+    const out = $<HTMLButtonElement>('set-logout'); if (out) out.onclick = () => { close(); leave(); };
+    const pw = $<HTMLButtonElement>('set-pass');
     if (pw) pw.onclick = async () => {
       if (await askNewPassword()) { $('set-msg').textContent = G.T('Contraseña cambiada.'); G.UI.toast('Contraseña cambiada'); }
     };
-    const del = $('set-delete');
+    const del = $<HTMLButtonElement>('set-delete');
     if (del) del.onclick = async () => {
       const ok = await G.UI.confirmDelete();
       if (!ok) return;
       del.disabled = true;
       const r = await G.DB.deleteAccount(ok.pass);
-      if (!r.ok) { $('set-msg').textContent = r.error; del.disabled = false; return; }
+      if (!r.ok) { $('set-msg').textContent = r.error || ''; del.disabled = false; return; }
       close();
       G.UI.toast('Cuenta borrada');
       G.Audio.music(null);
@@ -197,17 +201,17 @@ export const SettingsUI = (() => {
           <button class="btn gold" type="submit">Cambiar contraseña</button>
         </div></form>`;
       document.body.appendChild(el);
-      const form = el.querySelector('form'), err = el.querySelector<HTMLElement>('[data-err]');
+      const form = el.querySelector('form')!, err = el.querySelector<HTMLElement>('[data-err]')!;
       const val = (n: string) => (form.elements.namedItem(n) as HTMLInputElement).value;
-      el.querySelector<HTMLElement>('[data-a=no]').onclick = () => { el.remove(); done(false); };
+      el.querySelector<HTMLElement>('[data-a=no]')!.onclick = () => { el.remove(); done(false); };
       form.onsubmit = async e => {
         e.preventDefault();
         if (val('pass') !== val('pass2')) { err.textContent = G.T('Las dos contraseñas nuevas no coinciden.'); return; }
-        const ok = el.querySelector<HTMLButtonElement>('[type=submit]');
+        const ok = el.querySelector<HTMLButtonElement>('[type=submit]')!;
         ok.disabled = true;
         const r = await G.DB.changePassword(val('old'), val('pass'));
         ok.disabled = false;
-        if (!r.ok) { err.textContent = r.error; return; }
+        if (!r.ok) { err.textContent = r.error || ''; return; }
         el.remove(); done(true);
       };
       (form.elements.namedItem('old') as HTMLInputElement).focus();

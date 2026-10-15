@@ -1,11 +1,16 @@
 import { G } from '../g';
+import type { Player } from '../entities/player';
+import type { MoveInstance } from '../data/moves';
 /* ============ hud.js — interfaz dentro del canvas ============
  * Se dibuja en coordenadas de PANTALLA (sin la transformación de cámara).
  */
-export const HUD = (() => {
-  const F = (w, s) => `${w} ${s}px Pixelify,"Segoe UI",system-ui,sans-serif`;
+/** Lo que el modo le cuenta al HUD: el reloj y qué piezas ocultar (la Defensa lleva las suyas). */
+interface HudState { time: number; noLevel?: boolean; noClock?: boolean }
 
-  function roundRect(ctx, x, y, w, h, r) {
+export const HUD = (() => {
+  const F = (w: number, s: number) => `${w} ${s}px Pixelify,"Segoe UI",system-ui,sans-serif`;
+
+  function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
     ctx.beginPath();
     ctx.moveTo(x + r, y);
     ctx.arcTo(x + w, y, x + w, y + h, r);
@@ -15,7 +20,7 @@ export const HUD = (() => {
     ctx.closePath();
   }
 
-  function bar(ctx, x, y, w, h, frac, col, bg = 'rgba(0,0,0,.55)') {
+  function bar(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, frac: number, col: string, bg = 'rgba(0,0,0,.55)') {
     roundRect(ctx, x, y, w, h, h / 2); ctx.fillStyle = bg; ctx.fill();
     if (frac > 0) {
       ctx.save();
@@ -26,7 +31,7 @@ export const HUD = (() => {
     }
   }
 
-  function draw(ctx, w, h, pl, st) {
+  function draw(ctx: CanvasRenderingContext2D, w: number, h: number, pl: Player, st: HudState) {
     ctx.save();
     ctx.textBaseline = 'alphabetic';
     G.Touch.clearButtons();
@@ -62,12 +67,12 @@ export const HUD = (() => {
     ctx.fillText(Math.ceil(pl.hp) + ' / ' + Math.round(pl.maxHp), px + 48 + 84, py + 26);
 
     // buffs activos
-    const COL = { atk: '#ff6b4d', spd: '#7fe0ff', def: '#b0b8c8', regen: '#5fe08a' };
-    const LBL = { atk: 'ATK', spd: 'VEL', def: 'DEF', regen: 'REG' };
+    const COL: Record<string, string> = { atk: '#ff6b4d', spd: '#7fe0ff', def: '#b0b8c8', regen: '#5fe08a' };
+    const LBL: Record<string, string> = { atk: 'ATK', spd: 'VEL', def: 'DEF', regen: 'REG' };
     let bx = px;
     ctx.textAlign = 'left';
     for (const k in pl.buffs) {
-      const b = pl.buffs[k];
+      const b = pl.buffs[k as keyof typeof pl.buffs];
       if (b.n <= 0) continue;
       ctx.font = F(800, 9);
       const txt = LBL[k] + ' ×' + b.n;
@@ -193,7 +198,7 @@ export const HUD = (() => {
         ctx.fillStyle = '#b48aff';
         ctx.beginPath(); ctx.arc(0, 0, 30 + beat * 8, 0, 6.2832); ctx.fill();
         ctx.globalAlpha = 1;
-        const tri = (k) => {
+        const tri = (k: number) => {
           ctx.beginPath();
           ctx.moveTo(ca * 40 * k, sa * 40 * k);
           ctx.lineTo(Math.cos(a + 2.45) * 20 * k, Math.sin(a + 2.45) * 20 * k);
@@ -260,8 +265,8 @@ export const HUD = (() => {
       ctx.font = F(800, 22);
       ctx.fillStyle = '#ffcb3d';
       ctx.strokeStyle = 'rgba(0,0,0,.7)'; ctx.lineWidth = 4;
-      ctx.strokeText(ban.text, w / 2, h * 0.3);
-      ctx.fillText(ban.text, w / 2, h * 0.3);
+      ctx.strokeText(ban.text!, w / 2, h * 0.3);
+      ctx.fillText(ban.text!, w / 2, h * 0.3);
       ctx.restore();
     }
 
@@ -273,10 +278,10 @@ export const HUD = (() => {
     // Por encima de la barra de inicio del iPhone (allí los toques a veces no llegan).
     const sy = h - S - 18 - (touch ? Math.min(28, G.Touch.safeArea().bottom) : 0);
     const BOND = '#ff8ad8';
-    const cdOf = m => m.kind === 'orbit' ? 0 : G.U.clamp(m.t / (m.cd * pl.cdMul), 0, 1);
+    const cdOf = (m: MoveInstance) => m.kind === 'orbit' ? 0 : G.U.clamp(m.t / (m.cd * pl.cdMul), 0, 1);
 
     for (let i = 0; i < n; i++) {
-      const g = pl.slots[i] || [];
+      const g: MoveInstance[] = pl.slots[i] || [];
       const m = g[0];
       const fused = g.length > 1;
       const on = i === pl.active;
@@ -325,7 +330,7 @@ export const HUD = (() => {
         G.Icons.draw(ctx, 'move:' + m.id, x + (S - 32) / 2, y + (S - 32) / 2 - 2, 32);
 
         // nivel del movimiento (puntitos)
-        const dots = m.def.maxLvl;
+        const dots = m.def.maxLvl!;
         const dw = 4, dgap = 2;
         const tw = dots * dw + (dots - 1) * dgap;
         for (let d = 0; d < dots; d++) {
@@ -411,7 +416,7 @@ export const HUD = (() => {
    *   y a cuántos metros están (roja y parpadeando si está caído).
    * - Si has caído tú: aviso y barra de "te están levantando".
    */
-  function drawCoop(ctx, w, h, pl, px, top) {
+  function drawCoop(ctx: CanvasRenderingContext2D, w: number, h: number, pl: Player, px: number, top: number) {
     const cam = G.Camera;
     const t = performance.now() / 1000;
     let y = top;

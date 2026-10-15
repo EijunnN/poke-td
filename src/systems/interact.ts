@@ -1,4 +1,6 @@
 import { G } from '../g';
+import type { Player } from '../entities/player';
+import type { Prop } from '../world/world';
 /* ============ interact.js — altares, manantiales, cofres con candado y trampas ============
  * Los objetos los coloca world.js (raros, en el suelo libre); aquí está lo que
  * pasa al tocarlos. Todo se mira alrededor de TU Pokémon:
@@ -14,10 +16,17 @@ import { G } from '../g';
  * cofre y las trampas se rompen como cualquier objeto y el anfitrión reparte
  * el botín y el daño a los enemigos (ver world.destroyProp y coop.propBroken).
  */
+/** Poder temporal de un altar. */
+interface PowerDef {
+  id: string; name: string; desc: string; color: string;
+  on(p: Player): void;
+  off(p: Player): void;
+}
+
 export const Interact = (() => {
   const CHEST_TIME = 3.5;
   const POWER_TIME = 25;
-  const POWERS = [
+  const POWERS: PowerDef[] = [
     { id: 'dmg', name: 'Furia', desc: 'daño ×2', color: '#ff5f6d', on: p => { p.atkMul *= 2; }, off: p => { p.atkMul /= 2; } },
     { id: 'spd', name: 'Rayo', desc: '+45% velocidad', color: '#5fd4ff', on: p => { p.spdMul *= 1.45; }, off: p => { p.spdMul /= 1.45; } },
     { id: 'mag', name: 'Imán', desc: 'atraes todo desde lejos', color: '#ff8ad8', on: p => { p.magnet *= 4; }, off: p => { p.magnet /= 4; } },
@@ -27,7 +36,7 @@ export const Interact = (() => {
   const authority = () => !G.Coop.active || G.Coop.isHost;
   let healShown = 0, healAcc = 0;
 
-  function update(dt, pl) {
+  function update(dt: number, pl: Player | null | undefined) {
     if (!pl) return;
     for (const p of G.World.specialsNear(pl.x, pl.y, 720)) {
       const d2 = G.U.dist2(pl.x, pl.y, p.x, p.type === 'spring' || p.type === 'trap' ? p.y - 8 : p.y);
@@ -53,7 +62,7 @@ export const Interact = (() => {
     }
   }
 
-  function spring(dt, pl, p, d2) {
+  function spring(dt: number, pl: Player, p: Prop, d2: number) {
     if (p.charge < 1) p.charge = Math.min(1, p.charge + dt / 45);
     if (pl.dead || d2 > 26 * 26 || p.charge <= 0.02 || pl.hp >= pl.maxHp) return;
     const before = pl.hp;
@@ -71,7 +80,7 @@ export const Interact = (() => {
     if (p.charge <= 0.02) G.Spawner.say('El manantial se ha secado (se recarga solo)', 2.2, true);
   }
 
-  function usePower(pl, p) {
+  function usePower(pl: Player, p: Prop) {
     p.used = true;
     const pw = POWERS[p.kind];
     pl.addPower(pw, POWER_TIME);
@@ -85,7 +94,7 @@ export const Interact = (() => {
    * Una trampa salta (en cada ordenador; ver la cabecera). El daño a enemigos
    * sólo lo hace quien manda; a ti te afecta si estás dentro.
    */
-  function trapEffect(p) {
+  function trapEffect(p: Prop) {
     const x = p.x, y = p.y - 8, k = p.kind;
     const col = ['#c86bdc', '#8bd94a', '#ff7b3d'][k];
     const pal = ['poison', 'grass', 'fire'][k];

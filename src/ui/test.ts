@@ -1,14 +1,15 @@
 import { G } from '../g';
+import type { PersonalityQuestion, TraitName } from '../data/starters';
 /* ============ test.js — test de personalidad y elección de compañero ============ */
 export const TestUI = (() => {
   const $ = G.UI.$;
-  let idx = 0, scores = {}, result = null, picked = null;
+  let idx = 0, scores: Record<string, number> = {}, result: ReturnType<typeof G.personalityResult> | null = null, picked: number | null = null;
 
   function init() {
-    $('res-ok').onclick = () => choose(result.dex);
+    $('res-ok').onclick = () => choose(result!.dex);
     $('res-other').onclick = openStarters;
     $('starter-back').onclick = () => G.UI.show('scr-result');
-    $('starter-ok').onclick = () => { if (picked) choose(picked); };
+    $<HTMLButtonElement>('starter-ok').onclick = () => { if (picked) choose(picked); };
   }
 
   function start() {
@@ -26,7 +27,7 @@ export const TestUI = (() => {
     $('test-q').textContent = q.q;
     const box = $('test-a');
     box.innerHTML = '';
-    q.a.forEach(a => {
+    q.a.forEach((a: PersonalityQuestion['a'][number]) => {
       const b = document.createElement('button');
       b.className = 'answer';
       b.dataset.sfx = 'select';
@@ -36,8 +37,8 @@ export const TestUI = (() => {
     });
   }
 
-  function answer(a) {
-    for (const k in a.p) scores[k] = (scores[k] || 0) + a.p[k];
+  function answer(a: PersonalityQuestion['a'][number]) {
+    for (const k in a.p) scores[k] = (scores[k] || 0) + a.p[k as TraitName]!;
     idx++;
     if (idx < G.PERSONALITY_TEST.length) render();
     else showResult();
@@ -47,7 +48,7 @@ export const TestUI = (() => {
     result = G.personalityResult(scores);
     const mon = G.DEX_BY[result.dex];
     $('res-trait').textContent = result.trait.charAt(0).toUpperCase() + result.trait.slice(1);
-    $('res-text').textContent = G.TRAIT_TEXT[result.trait] || '';
+    $('res-text').textContent = G.TRAIT_TEXT[result.trait as TraitName] || '';
     $('res-name').textContent = mon.name;
     G.UI.sprite($('res-stage'), mon.dex, { lively: true, scale: 4, hero: true });
     $('res-stage').style.setProperty('--stage-c', G.U.TYPE_COLOR[mon.types[0]]);
@@ -57,7 +58,7 @@ export const TestUI = (() => {
   /** Abre la rejilla de starters. `fromMenu` = cambiar compañero inicial más tarde. */
   function openStarters() {
     picked = null;
-    $('starter-ok').disabled = true;
+    $<HTMLButtonElement>('starter-ok').disabled = true;
     $('starter-info').textContent = 'Selecciona un Pokémon';
     const grid = $('starter-grid');
     grid.innerHTML = '';
@@ -68,20 +69,20 @@ export const TestUI = (() => {
       cell.appendChild(G.UI.spriteCanvas(s.dex, 92, 80, { scale: 2 }));
       cell.insertAdjacentHTML('beforeend', `<b>${mon.name}</b>`);
       cell.onclick = () => {
-        grid.querySelectorAll('.cell').forEach(c => c.classList.remove('on'));
+        grid.querySelectorAll('.cell').forEach((c: Element) => c.classList.remove('on'));
         cell.classList.add('on');
         picked = s.dex;
         const mv = G.Moves.BY_ID[s.start];
         $('starter-info').innerHTML = `${G.UI.typeChips(mon.types)} ${G.Icons.html('move:' + s.start, 16)} ${mv.name} · ${s.traits.join(', ')}`;
-        $('starter-ok').disabled = false;
+        $<HTMLButtonElement>('starter-ok').disabled = false;
       };
-      if (result && s.dex === result.dex) { picked = s.dex; $('starter-ok').disabled = false; }
+      if (result && s.dex === result.dex) { picked = s.dex; $<HTMLButtonElement>('starter-ok').disabled = false; }
       grid.appendChild(cell);
     }
     G.UI.show('scr-starters');
   }
 
-  function choose(dex) {
+  function choose(dex: number) {
     const save = G.DB.save;
     save.starter = dex;
     save.partner = dex;

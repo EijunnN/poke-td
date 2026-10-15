@@ -1,13 +1,28 @@
 import { G } from '../g';
+import type { Player } from '../entities/player';
+import type { PokeType } from '../data/types';
 /* ============ levelup.js — las tres cartas de subida de nivel ============
  * Tipos de carta:
  *   new   aprender un movimiento nuevo (sólo si quedan huecos de los 4; un vínculo libera huecos)
  *   up    mejorar un movimiento que ya tienes
  *   stat  mejora permanente de la run
  */
+/** Una carta de subida de nivel (ver candidates). */
+export interface Card {
+  w: number; type: 'new' | 'evo' | 'up' | 'stat'; key: string;
+  icon: string; color: string; tag: string; title: string; desc: string;
+  apply: (p: Player) => void;
+}
+
+/** Mejora permanente de la run; `max` es el tope de veces que puede salir. */
+interface Stat {
+  id: string; icon: string; title: string; desc: string;
+  apply: (pl: Player) => unknown; max?: number;
+}
+
 export const LevelUp = (() => {
 
-  const STATS = [
+  const STATS: Stat[] = [
     { id: 'hp',   icon: 'heart', title: 'Vigor',        desc: '+20 de vida máxima (y la recupera).',
       apply: pl => pl.addMaxHp(20) },
     { id: 'atk',  icon: 'fist', title: 'Potencia',     desc: '+10% de daño con todos los movimientos.',
@@ -29,8 +44,8 @@ export const LevelUp = (() => {
   ];
 
   /** Construye el conjunto de cartas candidatas, con pesos. */
-  function candidates(pl) {
-    const out = [];
+  function candidates(pl: Player): Card[] {
+    const out: Card[] = [];
 
     // --- movimientos nuevos ---
     if (pl.slots.length < pl.maxMoves) {
@@ -52,7 +67,7 @@ export const LevelUp = (() => {
     }
 
     // --- evoluciones: movimiento al máximo + su condición cumplida ---
-    const waiting = {};                   // stat -> movimiento que la espera para evolucionar
+    const waiting: Record<string, Player['moves'][number]> = {};                   // stat -> movimiento que la espera para evolucionar
     for (const m of pl.moves) {
       const ev = G.Moves.evoInfo(m, pl.statsTaken);
       if (!ev) continue;
@@ -77,7 +92,7 @@ export const LevelUp = (() => {
       if (!txt) continue;
       out.push({
         w: 8, type: 'up', key: 'up:' + m.id,
-        icon: 'move:' + m.id, color: G.U.TYPE_COLOR[m.type],
+        icon: 'move:' + m.id, color: G.U.TYPE_COLOR[m.type as PokeType],
         tag: 'Nv.' + m.lvl + ' > ' + (m.lvl + 1),
         title: m.name, desc: txt,
         apply: () => G.Moves.levelUp(m)
@@ -89,7 +104,7 @@ export const LevelUp = (() => {
     // Cada mejora tiene un tope de veces (`max`): en partidas muy largas se
     // acumulaban sin fin (velocidad, recarga y experiencia por las nubes) y el
     // juego acababa colgándose. Las que piden una evolución salen siempre.
-    const room = s => !s.max || (pl.statsTaken[s.id] || 0) < s.max;
+    const room = (s: Stat) => !s.max || (pl.statsTaken[s.id] || 0) < s.max;
     const pickStats = G.U.pickN(STATS.filter(s => !waiting[s.id] && room(s)), 5).concat(STATS.filter(s => waiting[s.id]));
     for (const s of pickStats) {
       const evoFor = waiting[s.id];
@@ -106,7 +121,7 @@ export const LevelUp = (() => {
   }
 
   /** Devuelve 3 cartas distintas, elegidas por peso. */
-  function offer(pl, n = 3) {
+  function offer(pl: Player, n = 3): Card[] {
     const pool = candidates(pl);
     const picked = [];
     const used = new Set();

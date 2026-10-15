@@ -1,4 +1,5 @@
 import { G } from '../g';
+import type { Player } from '../entities/player';
 /* ============ items.js — objetos equipables (uno por run) ============
  * Se encuentran en los cofres (a veces en los normales, a menudo en los de
  * candado) y los sueltan los jefes. Sólo puedes llevar UNO; si encuentras
@@ -14,8 +15,8 @@ export interface ItemDef {
   id: string;
   name: string;
   desc: string;
-  on: (pl: any) => void;
-  off: (pl: any) => void;
+  on: (pl: Player) => void;
+  off: (pl: Player) => void;
 }
 
 export const Items = (() => {

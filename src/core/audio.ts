@@ -10,13 +10,35 @@ import { G } from '../g';
  * el contexto se crea entonces y arranca la música que estuviera pedida.
  * El volumen se guarda en localStorage (es del navegador, no de la cuenta).
  */
+/** Nota o golpe de percusión programado en un paso de la canción. */
+interface Evento { inst: string; drum?: boolean; f?: number; len?: number; v: number }
+
+/** Partitura tal y como la lee el sintetizador (ver data/music.ts). */
+interface Partitura {
+  bpm: number; swing?: number; bars?: number; chords: string[];
+  melody?: { inst: string; bars: string[]; shift?: number; vel?: number }[];
+  parts?: { inst: string; pattern: string; octave: number; useBass?: boolean; vel?: number }[];
+  drums?: Record<string, string>;
+}
+/** Acorde descompuesto: raíz, modo y bajo (0-11). */
+interface Acorde { root: number; minor: boolean; bass: number }
+interface Compilada { steps: number; ev: Evento[][]; bpm: number; swing: number }
+/** Tema que está sonando. */
+interface Reproduccion { name: string; song: Compilada; bus: GainNode; step: number; next: number }
+/** Opciones de un efecto (shot: kind y type · burst, reveal: rarity). */
+interface SfxOpts { kind?: string; type?: string; rarity?: number }
+
+type Melodico = (t: number, f: number, d: number, v: number, bus: AudioNode) => void;
+type Percusion = (t: number, v: number, bus: AudioNode) => void;
+
 export const Audio = (() => {
   const KEY = 'ps.audio';
-  let ctx: AudioContext = null, master: DynamicsCompressorNode, outNode: GainNode, musicBus: GainNode,
+  // ctx y noiseBuf valen null hasta el primer gesto (init); el resto del código lo comprueba antes de usarlos.
+  let ctx: AudioContext = null!, master: DynamicsCompressorNode, outNode: GainNode, musicBus: GainNode,
       sfxBus: GainNode, reverb: ConvolverNode, wet: GainNode;
   let settings: { music: number; sfx: number; muted: boolean } = { music: 0.55, sfx: 0.7, muted: false };
   try { Object.assign(settings, JSON.parse(localStorage.getItem(KEY) || '{}')); } catch (e) { /* nada */ }
-  let noiseBuf: AudioBuffer = null;
+  let noiseBuf: AudioBuffer = null!;
   /**
    * Azar propio del sonido (ruido, eco). Antes usaba Math.random, el del juego: el eco se
    * rellena con un temporizador real (unos 170.000 números) y, según cuándo cayera, cambiaba
@@ -31,7 +53,7 @@ export const Audio = (() => {
 
   function init() {
     if (ctx) return true;
-    const AC = window.AudioContext || (window as any).webkitAudioContext;
+    const AC = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
     if (!AC) return false;
     ctx = new AC();
     master = ctx.createDynamicsCompressor();
@@ -137,7 +159,7 @@ export const Audio = (() => {
   // ---------------- instrumentos ----------------
 
   const INST = {
-    flute(t, f, d, v, bus) {
+    flute(t: number, f: number, d: number, v: number, bus: AudioNode) {
       const lp = filt('lowpass', 3600, 0.5, bus);
       const g = gainEnv(lp, t, 0.045, 0.2 * v, d, 0.14, 0.82);
       send(g, 0.35);
@@ -155,7 +177,7 @@ export const Audio = (() => {
       const ng = ctx.createGain(); ng.gain.setValueAtTime(0.25, t); ng.gain.exponentialRampToValueAtTime(0.001, t + 0.08);
       ng.connect(bp); noise(t, 0.09, ng);
     },
-    bell(t, f, d, v, bus) {
+    bell(t: number, f: number, d: number, v: number, bus: AudioNode) {
       const g = ctx.createGain(); g.connect(bus); send(g, 0.3);
       g.gain.setValueAtTime(0.0001, t);
       g.gain.linearRampToValueAtTime(0.22 * v, t + 0.004);
@@ -165,7 +187,7 @@ export const Audio = (() => {
       g2.gain.setValueAtTime(0.35, t); g2.gain.exponentialRampToValueAtTime(0.001, t + 0.09);
       osc('sine', f * 4, t, t + 0.12, g2);
     },
-    pluck(t, f, d, v, bus) {
+    pluck(t: number, f: number, d: number, v: number, bus: AudioNode) {
       const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = 2;
       lp.frequency.setValueAtTime(3200, t);
       lp.frequency.exponentialRampToValueAtTime(Math.max(300, f * 1.8), t + 0.22);
@@ -176,21 +198,21 @@ export const Audio = (() => {
       lp.connect(g);
       osc('sawtooth', f, t, t + 0.7, lp);
     },
-    bass(t, f, d, v, bus) {
+    bass(t: number, f: number, d: number, v: number, bus: AudioNode) {
       const lp = filt('lowpass', 900, 0.7, bus);
       const g = gainEnv(lp, t, 0.008, 0.34 * v, d * 0.9, 0.08, 0.65);
       osc('triangle', f, t, t + d + 0.2, g);
       const g2 = ctx.createGain(); g2.gain.value = 0.25; g2.connect(g);
       osc('square', f, t, t + d + 0.2, g2);
     },
-    pad(t, f, d, v, bus) {
+    pad(t: number, f: number, d: number, v: number, bus: AudioNode) {
       const lp = filt('lowpass', 1100, 0.6, bus);
       const g = gainEnv(lp, t, 0.35, 0.05 * v, d, 0.7, 0.9);
       send(g, 0.5);
       osc('sawtooth', f * 1.004, t, t + d + 1, g);
       osc('sawtooth', f * 0.996, t, t + d + 1, g);
     },
-    lead(t, f, d, v, bus) {
+    lead(t: number, f: number, d: number, v: number, bus: AudioNode) {
       const lp = filt('lowpass', 2600, 1, bus);
       const g = gainEnv(lp, t, 0.01, 0.075 * v, d, 0.08, 0.75);
       send(g, 0.2);
@@ -202,13 +224,13 @@ export const Audio = (() => {
       lfo.connect(lg); lg.connect(o1.frequency); lg.connect(o2.frequency);
       lfo.start(t); lfo.stop(t + d + 0.25);
     },
-    kick(t, v, bus) {
+    kick(t: number, v: number, bus: AudioNode) {
       const g = ctx.createGain(); g.connect(bus);
       g.gain.setValueAtTime(0.55 * v, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
       const o = osc('sine', 150, t, t + 0.25, g);
       o.frequency.exponentialRampToValueAtTime(42, t + 0.13);
     },
-    snare(t, v, bus) {
+    snare(t: number, v: number, bus: AudioNode) {
       const hp = filt('highpass', 1300, 0.7, bus);
       const g = ctx.createGain(); g.connect(hp); send(g, 0.15);
       g.gain.setValueAtTime(0.22 * v, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.13);
@@ -217,13 +239,13 @@ export const Audio = (() => {
       g2.gain.setValueAtTime(0.12 * v, t); g2.gain.exponentialRampToValueAtTime(0.001, t + 0.08);
       osc('triangle', 190, t, t + 0.1, g2);
     },
-    hat(t, v, bus) {
+    hat(t: number, v: number, bus: AudioNode) {
       const hp = filt('highpass', 7500, 0.7, bus);
       const g = ctx.createGain(); g.connect(hp);
       g.gain.setValueAtTime(0.08 * v, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.045);
       noise(t, 0.05, g);
     },
-    shaker(t, v, bus) {
+    shaker(t: number, v: number, bus: AudioNode) {
       const bp = filt('bandpass', 5200, 1.2, bus);
       const g = ctx.createGain(); g.connect(bp);
       g.gain.setValueAtTime(0.0001, t);
@@ -235,17 +257,19 @@ export const Audio = (() => {
 
   // ---------------- secuenciador ----------------
 
-  const NOTE = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
-  function midiOf(name) {
+  type Instrumento = keyof typeof INST;
+
+  const NOTE: Record<string, number> = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+  function midiOf(name: string) {
     const m = /^([A-G])(#|b)?(-?\d)$/.exec(name);
     if (!m) return null;
     return 12 * (+m[3] + 1) + NOTE[m[1]] + (m[2] === '#' ? 1 : m[2] === 'b' ? -1 : 0);
   }
 
   /** Acorde "F", "Dm", "C/E", "F#m"... -> { root (0-11), minor, bass (0-11) } */
-  function parseChord(c) {
-    const m = /^([A-G])(#|b)?(m?)(?:\/([A-G])(#|b)?)?$/.exec(c);
-    const pc = (l, a) => (NOTE[l] + (a === '#' ? 1 : a === 'b' ? -1 : 0) + 12) % 12;
+  function parseChord(c: string): Acorde {
+    const m = /^([A-G])(#|b)?(m?)(?:\/([A-G])(#|b)?)?$/.exec(c)!;
+    const pc = (l: string, a?: string) => (NOTE[l] + (a === '#' ? 1 : a === 'b' ? -1 : 0) + 12) % 12;
     const root = pc(m[1], m[2]);
     return { root, minor: m[3] === 'm', bass: m[4] ? pc(m[4], m[5]) : root };
   }
@@ -255,10 +279,10 @@ export const Audio = (() => {
    * (semicorchea). Melodías: "A4:4 C5:2 -:2" (nota:duración en semicorcheas).
    * Bajo y arpegios salen de los acordes con patrones de 16 caracteres.
    */
-  function compile(song) {
+  function compile(song: Partitura): Compilada {
     const bars = song.bars || song.chords.length;
     const steps = bars * 16;
-    const ev = Array.from({ length: steps }, () => []);
+    const ev: Evento[][] = Array.from({ length: steps }, () => []);
 
     for (const tr of song.melody || []) {
       tr.bars.forEach((bar, bi) => {
@@ -277,7 +301,7 @@ export const Audio = (() => {
     }
 
     const chords = song.chords.map(parseChord);
-    const chordTone = (ch, i, base) => {
+    const chordTone = (ch: Acorde, i: number, base: number) => {
       const third = ch.minor ? 3 : 4;
       const iv = [0, third, 7, 12, 12 + third, 19][i] || 0;
       return base + ch.root + iv;
@@ -292,7 +316,7 @@ export const Audio = (() => {
           if (!c || c === '.' || c === '-') continue;
           let len = 1;
           while (s + len < 16 && pat[s + len] === '-') len++;
-          let midi;
+          let midi: number;
           if (c === 'R') midi = base + (tr.useBass ? ch.bass : ch.root);
           else if (c === 'F') midi = base + ch.root + 7;
           else if (c === 'O') midi = base + ch.root + 12;
@@ -314,8 +338,8 @@ export const Audio = (() => {
     return { steps, ev, bpm: song.bpm, swing: song.swing || 0 };
   }
 
-  let wanted = null, current = null;
-  const compiled = {};
+  let wanted: string | null = null, current: Reproduccion | null = null;
+  const compiled: Record<string, Compilada> = {};
 
   function startSong(name: string) {
     if (!ctx || !G.MUSIC[name]) return;
@@ -355,8 +379,9 @@ export const Audio = (() => {
       // Swing: retrasa las corcheas a contratiempo.
       const t = c.next + (i % 4 === 2 ? c.song.swing * sd : 0);
       for (const e of c.song.ev[i]) {
-        if (e.drum) INST[e.inst](t, e.v, c.bus);
-        else INST[e.inst](t, e.f, e.len * sd, e.v, c.bus);
+        // Los nombres vienen de data/music.ts: los de percusión van con otra firma.
+        if (e.drum) (INST[e.inst as Instrumento] as Percusion)(t, e.v, c.bus);
+        else (INST[e.inst as Instrumento] as Melodico)(t, e.f!, e.len! * sd, e.v, c.bus);
       }
       c.next += sd;
       c.step++;
@@ -365,10 +390,10 @@ export const Audio = (() => {
 
   // ---------------- efectos de sonido ----------------
 
-  const last = {};
+  const last: Record<string, number> = {};
   let xpCombo = 0, xpT = 0, voices = 0;
 
-  const SHOT_PITCH = {
+  const SHOT_PITCH: Record<string, number> = {
     fire: 520, water: 700, electric: 1100, psychic: 800, grass: 640, ice: 900, poison: 400,
     ghost: 350, dragon: 300, fairy: 1200, normal: 600, fighting: 450, rock: 260, ground: 240,
     steel: 750, bug: 980, dark: 330, flying: 820
@@ -403,8 +428,8 @@ export const Audio = (() => {
     confirm: () => arp('triangle', [784, 988, 1319], 0.05, 0.12, 0.09),
     select:  () => tone('square', 990, 1180, 0.04, 0.045),
     error:   () => arp('square', [330, 262], 0.08, 0.09, 0.05),
-    shot(o) {
-      const f = SHOT_PITCH[o.type] || 600;
+    shot(o: SfxOpts) {
+      const f = SHOT_PITCH[o.type!] || 600;
       if (o.kind === 'melee') hiss(0.12, 0.13, 'bandpass', 600, 2800, 0, 1.4);
       else if (o.kind === 'beam') { tone('sawtooth', f * 0.6, f * 0.35, 0.3, 0.05); hiss(0.25, 0.04, 'bandpass', f * 2, f, 0, 3); }
       else if (o.kind === 'nova') { hiss(0.2, 0.1, 'lowpass', 2400, 300); tone('sine', 140, 60, 0.16, 0.12); }
@@ -434,13 +459,13 @@ export const Audio = (() => {
     grass:   () => hiss(0.06, 0.03, 'highpass', 2600),
     ball:    () => { tone('triangle', 220, 70, 0.12, 0.12); hiss(0.08, 0.06, 'lowpass', 800); },
     shake:   () => tone('square', 420, 380, 0.04, 0.05),
-    burst(o) {
+    burst(o?: SfxOpts) {
       hiss(0.5, 0.14, 'bandpass', 400, 4000, 0, 0.8);
       const r = (o && o.rarity) || 1;
       const chord = [[523, 659, 784], [587, 740, 880], [659, 831, 988], [698, 880, 1047], [784, 988, 1175, 1568]][r - 1];
       chord.forEach(f => tone('triangle', f, f, 0.6 + r * 0.15, 0.04));
     },
-    reveal(o) { INST.bell(ctx.currentTime, [523, 659, 784, 988, 1319][((o && o.rarity) || 1) - 1], 0.3, 0.8, sfxBus); },
+    reveal(o?: SfxOpts) { INST.bell(ctx.currentTime, [523, 659, 784, 988, 1319][((o && o.rarity) || 1) - 1], 0.3, 0.8, sfxBus); },
     rift:    () => { [196, 233, 277, 330].forEach((f, i) => INST.pad(ctx.currentTime + i * 0.08, f, 1.4, 1.2, sfxBus)); hiss(0.9, 0.08, 'bandpass', 900, 300); },
     legend:  () => { arp('square', [523, 659, 784, 1047, 1319, 1568], 0.08, 0.3, 0.05); SFX.shiny(); },
     gameover: () => arp('triangle', [523, 440, 349, 262], 0.2, 0.35, 0.08),
@@ -468,11 +493,11 @@ export const Audio = (() => {
   };
 
   // Separación mínima entre repeticiones del mismo efecto (ms).
-  const MIN_GAP = { hit: 45, faint: 60, xp: 35, coin: 50, grass: 70, shot: 70, hover: 40, break: 60, judge: 80 };
+  const MIN_GAP: Record<string, number> = { hit: 45, faint: 60, xp: 35, coin: 50, grass: 70, shot: 70, hover: 40, break: 60, judge: 80 };
 
-  function sfx(name: string, opts?: any) {
+  function sfx(name: string, opts?: SfxOpts) {
     if (!ctx || settings.muted || settings.sfx <= 0 || ctx.state !== 'running') return;
-    const fn = SFX[name];
+    const fn = (SFX as Record<string, (o?: SfxOpts) => void>)[name];
     if (!fn) return;
     const now = performance.now();
     const key = name === 'shot' && opts ? 'shot' + opts.kind : name;

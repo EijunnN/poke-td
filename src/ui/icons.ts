@@ -1,4 +1,9 @@
 import { G } from '../g';
+import type { PokeType } from '../data/types';
+
+/** Un icono dibujado con un mapa de caracteres: paleta por letra (la `k` es el contorno). */
+interface IconDef { pal: Record<string, string>; rows: string[]; outline?: boolean }
+
 /* ============ icons.js — iconos pixel art (sustituyen a los emojis) ============
  * Todo se dibuja desde mapas de caracteres, igual que los tiles: así la
  * interfaz comparte estilo con los sprites de Mundo Misterioso.
@@ -16,7 +21,7 @@ export const Icons = (() => {
   const MEDAL = ['.kkk....kkk.', '.krk....kqk.', '..krk..kqk..', '...krkkqk...', '....kkkk....', '...kmmmmk...',
                  '..kmwmmmnk..', '.kmwmsmmmnk.', '.kmmsssmmnk.', '.kmmmsmmmnk.', '..kmmmmmnk..', '...kkkkkk...'];
 
-  const UI = {
+  const UI: Record<string, IconDef> = {
     gear: { pal: { g: '#c9d6ff', d: '#7f93c9' }, rows: [
       '....kkkk....', '.kk.kggk.kk.', '.kgkkggkkgk.', '..kggggggk..', 'kkggkkkkggkk', 'kgggk..kgddk',
       'kgggk..kgddk', 'kkggkkkkddkk', '..kggddddk..', '.kgkkddkkdk.', '.kk.kddk.kk.', '....kkkk....'] },
@@ -179,10 +184,10 @@ export const Icons = (() => {
       'kwwwkwwkwwwk', 'kwwwwkkwwwwk', '.kwwwwwwwwk.', '.kwwwwwwwwk.', '..kkwwwwkk..', '....kkkk....'] }
   };
   // Variantes de paleta.
-  (UI as any).starDim = { rows: UI.star.rows, pal: { y: '#3a4870', o: '#2a3458', w: '#4a5a88' } };
+  UI.starDim = { rows: UI.star.rows, pal: { y: '#3a4870', o: '#2a3458', w: '#4a5a88' } };
 
   // ---------------- glifos de tipo (8×8, blancos sobre el emblema) ----------------
-  const TYPE_GLYPH = {
+  const TYPE_GLYPH: Record<PokeType, string[]> = {
     normal:   ['..####..', '.#....#.', '#......#', '#..##..#', '#..##..#', '#......#', '.#....#.', '..####..'],
     fire:     ['...#....', '...##...', '..###.#.', '.#####..', '.######.', '##.####.', '##..###.', '.######.'],
     water:    ['...##...', '...##...', '..####..', '.######.', '.##.###.', '.#.####.', '.######.', '..####..'],
@@ -204,7 +209,7 @@ export const Icons = (() => {
   };
 
   // Insignia de la familia de movimiento (5×5).
-  const KIND_GLYPH = {
+  const KIND_GLYPH: Record<string, string[]> = {
     projectile: ['..#..', '...#.', '#####', '...#.', '..#..'],
     melee:      ['....#', '...#.', '..#..', '.#...', '#....'],
     beam:       ['.....', '#####', '.....', '#####', '.....'],
@@ -224,22 +229,22 @@ export const Icons = (() => {
 
   // ---------------- render ----------------
 
-  const cache = new Map();      // clave -> canvas a 1×
-  const urls = new Map();
+  const cache = new Map<string, HTMLCanvasElement>();      // clave -> canvas a 1×
+  const urls = new Map<string, string>();
 
-  function shade(hex, k) {
+  function shade(hex: string, k: number) {
     const n = parseInt(hex.slice(1), 16);
-    const f = c => Math.max(0, Math.min(255, Math.round(c * k)));
+    const f = (c: number) => Math.max(0, Math.min(255, Math.round(c * k)));
     return '#' + [f(n >> 16 & 255), f(n >> 8 & 255), f(n & 255)].map(v => v.toString(16).padStart(2, '0')).join('');
   }
 
-  function fromRows(def) {
+  function fromRows(def: IconDef) {
     const h = def.rows.length, w = Math.max(...def.rows.map(r => r.length));
     const pad = def.outline ? 1 : 0;
     const cv = document.createElement('canvas');
     cv.width = w + pad * 2; cv.height = h + pad * 2;
-    const c = cv.getContext('2d', { willReadFrequently: true });   // se lee en svgOf()
-    const pal = Object.assign({ k: K }, def.pal);
+    const c = cv.getContext('2d', { willReadFrequently: true })!;   // se lee en svgOf()
+    const pal: Record<string, string> = Object.assign({ k: K }, def.pal);
     if (def.outline) {
       c.fillStyle = K;
       def.rows.forEach((row, y) => [...row].forEach((ch, x) => {
@@ -256,11 +261,11 @@ export const Icons = (() => {
   }
 
   /** Emblema circular de un tipo (16×16), con insignia de familia opcional. */
-  function emblem(type, kind?) {
+  function emblem(type: PokeType, kind?: string | null) {
     const S = 16;
     const cv = document.createElement('canvas');
     cv.width = cv.height = S;
-    const c = cv.getContext('2d', { willReadFrequently: true });   // se lee en svgOf()
+    const c = cv.getContext('2d', { willReadFrequently: true })!;   // se lee en svgOf()
     const col = G.U.TYPE_COLOR[type] || '#b0a99f';
     const dark = shade(col, 0.55), lite = shade(col, 1.3);
     // Disco con contorno, sombra abajo-derecha y brillo arriba-izquierda.
@@ -289,14 +294,14 @@ export const Icons = (() => {
     return cv;
   }
 
-  function canvas(name) {
+  function canvas(name: string) {
     let cv = cache.get(name);
     if (cv) return cv;
     if (name.startsWith('move:')) {
       const m = G.Moves.BY_ID[name.slice(5)];
       cv = emblem(m ? m.type : 'normal', m ? m.kind : null);
     } else if (name.startsWith('type:')) {
-      cv = emblem(name.slice(5));
+      cv = emblem(name.slice(5) as PokeType);
     } else {
       cv = fromRows(UI[name] || UI.star);
     }
@@ -304,7 +309,7 @@ export const Icons = (() => {
     return cv;
   }
 
-  function url(name) {
+  function url(name: string) {
     let u = urls.get(name);
     if (!u) {
       // Los de interfaz, directamente de su dibujo; los emblemas (tipos, movimientos), del canvas.
@@ -320,16 +325,16 @@ export const Icons = (() => {
    * toDataURL() hacía lo mismo en PNG, pero la primera vez el navegador tarda
    * ~175 ms en prepararlo y eso bloqueaba la carga de la página (Lighthouse).
    */
-  function svgDoc(W, H, rects) {
+  function svgDoc(W: number, H: number, rects: string) {
     return 'data:image/svg+xml,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" shape-rendering="crispEdges">${rects}</svg>`);
   }
 
   /** Igual que fromRows() pero sin canvas (ni lectura de píxeles). */
-  function svgOfRows(def) {
+  function svgOfRows(def: IconDef) {
     const h = def.rows.length, w = Math.max(...def.rows.map(r => r.length));
     const pad = def.outline ? 1 : 0;
-    const pal = Object.assign({ k: K }, def.pal);
-    const px = new Map();
+    const pal: Record<string, string> = Object.assign({ k: K }, def.pal);
+    const px = new Map<string, string>();
     if (def.outline) def.rows.forEach((row, y) => [...row].forEach((ch, x) => {
       if (ch === '.' || ch === ' ') return;
       for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) px.set((x + pad + dx) + ',' + (y + pad + dy), K);
@@ -343,9 +348,9 @@ export const Icons = (() => {
     return svgDoc(w + pad * 2, h + pad * 2, out);
   }
 
-  function svgOf(cv) {
+  function svgOf(cv: HTMLCanvasElement) {
     const W = cv.width, H = cv.height;
-    const d = cv.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, W, H).data;
+    const d = cv.getContext('2d', { willReadFrequently: true })!.getImageData(0, 0, W, H).data;
     let out = '';
     for (let y = 0; y < H; y++) {
       for (let x = 0; x < W;) {
@@ -365,18 +370,18 @@ export const Icons = (() => {
    * Ajusta el tamaño a un múltiplo entero de la resolución del icono: un
    * icono de 16 px pintado a 24 duplicaría unos píxeles sí y otros no.
    */
-  function snap(name, size) {
+  function snap(name: string, size: number) {
     const w = canvas(name).width;
     return w * Math.max(1, Math.round(size / w));
   }
 
   /** <img> pixelado para el DOM. */
-  function html(name, size = 20, cls = '') {
+  function html(name: string, size = 20, cls = '') {
     const cv = canvas(name), w = snap(name, size), h = w * cv.height / cv.width;
     return `<img class="pix ${cls}" src="${url(name)}" width="${w}" height="${h}" alt="" draggable="false">`;
   }
 
-  function draw(ctx, name, x, y, size) {
+  function draw(ctx: CanvasRenderingContext2D, name: string, x: number, y: number, size: number) {
     const cv = canvas(name);
     const s2 = snap(name, size);
     x += (size - s2) / 2; y += (size - s2) / 2; size = s2;
@@ -391,10 +396,10 @@ export const Icons = (() => {
    * nace, crece, echa puntas en diagonal y se apaga, como en los juegos.
    * phase 0..1 · px = tamaño de píxel en pantalla.
    */
-  function twinkle(ctx, x, y, phase, px = 2) {
+  function twinkle(ctx: CanvasRenderingContext2D, x: number, y: number, phase: number, px = 2) {
     const st = phase < 0.15 ? 0 : phase < 0.32 ? 1 : phase < 0.62 ? 2 : phase < 0.82 ? 1 : 0;
     const X = Math.round(x / px) * px, Y = Math.round(y / px) * px;
-    const dot = (dx, dy, c) => { ctx.fillStyle = c; ctx.fillRect(X + dx * px, Y + dy * px, px, px); };
+    const dot = (dx: number, dy: number, c: string) => { ctx.fillStyle = c; ctx.fillRect(X + dx * px, Y + dy * px, px, px); };
     const ARM = '#fff3a8', TIP = '#9ae6ff';
     dot(0, 0, '#ffffff');
     if (st >= 1) for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) dot(dx, dy, ARM);
@@ -409,8 +414,8 @@ export const Icons = (() => {
    * Rareza como Poké Ball: Poké (Común), Super (Poco común), Ultra (Rara),
    * Lujo (Épica) y Master (Legendaria).
    */
-  const RARITY_BALL = { 1: 'ball', 2: 'ball2', 3: 'ball3', 4: 'ballLux', 5: 'ball4' };
-  function rarity(n, size = 12) {
+  const RARITY_BALL: Record<number, string> = { 1: 'ball', 2: 'ball2', 3: 'ball3', 4: 'ballLux', 5: 'ball4' };
+  function rarity(n: number, size = 12) {
     return `<span class="rarity-ball" title="${(G.Gacha && G.Gacha.RARITY_NAME[n]) || ''}">${html(RARITY_BALL[n] || 'ball', size)}</span>`;
   }
 

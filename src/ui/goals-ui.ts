@@ -1,4 +1,7 @@
 import { G } from '../g';
+import type { SaveData } from '../core/db';
+import type { AchDef } from '../data/achievements';
+import type { MissionState } from '../data/missions';
 /* ============ goals-ui.js — misiones, logros y perfil ============
  * Una pantalla con tres pestañas:
  *   Misiones  3 diarias + 2 semanales, con barra, premio y botón de recoger
@@ -6,9 +9,15 @@ import { G } from '../g';
  *   Perfil    tus 3 favoritos y tu título; vista previa del perfil público
  * y la ventana del perfil público de cualquier jugador (G.ProfileUI.show).
  */
+  /** Perfil público de un jugador (lo que devuelve G.Social.getProfile). */
+  interface PublicProfile {
+    name?: string | null; title?: string; favs?: { dex: number; shiny?: boolean }[]; medals?: string[];
+    best?: { solo?: number; group?: number; level?: number; bosses?: number; legends?: number; kills?: number; medals?: number };
+  }
+
   const $ = G.UI.$;
-  const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const fmt = t => (t >= 3600 ? Math.floor(t / 3600) + ':' + G.U.mmss(t % 3600).padStart(5, '0') : G.U.mmss(t));
+  const esc = (s: unknown) => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
+  const fmt = (t: number) => (t >= 3600 ? Math.floor(t / 3600) + ':' + G.U.mmss(t % 3600).padStart(5, '0') : G.U.mmss(t));
 
   // ======================= PANTALLA =======================
 
@@ -17,7 +26,7 @@ import { G } from '../g';
 
     function init() {
       document.querySelectorAll<HTMLElement>('#goals-tabs .tab').forEach(t => {
-        t.onclick = () => { tab = t.dataset.tab; render(); };
+        t.onclick = () => { tab = t.dataset.tab!; render(); };
       });
     }
 
@@ -40,20 +49,20 @@ import { G } from '../g';
 
     // ---------------- misiones ----------------
 
-    function untilText(kind) {
+    function untilText(kind: string) {
       const now = new Date();
       // Medianoche (diarias) o lunes (semanales), hora de España aproximada por la del navegador.
       const end = new Date(now);
       end.setHours(24, 0, 0, 0);
       if (kind === 'w') { const add = (8 - (now.getDay() || 7)) % 7; end.setDate(end.getDate() + add); }
-      const mins = Math.max(1, Math.round(((end as any) - (now as any)) / 60000));
+      const mins = Math.max(1, Math.round((end.getTime() - now.getTime()) / 60000));
       return mins >= 1440 ? Math.floor(mins / 1440) + ' d ' + Math.floor(mins % 1440 / 60) + ' h'
                           : Math.floor(mins / 60) + ' h ' + (mins % 60) + ' min';
     }
 
-    function missions(box) {
+    function missions(box: HTMLElement) {
       const M = G.DB.save.missions;
-      const section = (title, list, weekly) => {
+      const section = (title: string, list: MissionState[], weekly: boolean) => {
         box.insertAdjacentHTML('beforeend', `<div class="row between goals-h"><h3>${title}</h3>
           <span class="sub">Se renuevan en ${untilText(weekly ? 'w' : 'd')}</span></div>`);
         list.forEach((m, i) => {
@@ -81,15 +90,15 @@ import { G } from '../g';
           box.appendChild(el);
         });
       };
-      section('Diarias', M.daily, false);
-      section('Semanales', M.weekly, true);
+      section('Diarias', M.daily!, false);
+      section('Semanales', M.weekly!, true);
     }
 
     // ---------------- logros ----------------
 
-    function achievements(box) {
+    function achievements(box: HTMLElement) {
       const s = G.DB.save;
-      const all: any[] = G.AchDefs.LIST;
+      const all = G.AchDefs.LIST;
       const got = all.filter(a => s.ach && s.ach[a.id]).length;
       const chips = document.createElement('div');
       chips.className = 'filters';
@@ -114,24 +123,24 @@ import { G } from '../g';
       // Legendarios: uno a uno, con su sprite (en sombra si aún no le has vencido).
       if (cat === 'legendarios') {
         const legs = all.filter(a => a.dex);
-        const beaten = legs.filter(a => s.legends && s.legends[a.dex]).length;
+        const beaten = legs.filter(a => s.legends && s.legends[a.dex!]).length;
         box.insertAdjacentHTML('beforeend', `<h3 style="margin:14px 0 6px">Legendarios vencidos ${beaten} / ${legs.length}</h3>`);
         const lg = document.createElement('div');
         lg.className = 'leg-grid';
         for (const a of legs) {
-          const ok = !!(s.legends && s.legends[a.dex]);
+          const ok = !!(s.legends && s.legends[a.dex!]);
           const c = document.createElement('div');
           c.className = 'leg-cell' + (ok ? ' ok' : '');
           c.title = a.name + (ok ? ' · ¡vencido!' : '');
-          c.appendChild(G.UI.spriteCanvas(a.dex, 64, 56, { scale: 1, silhouette: !ok, shadow: ok }));
-          c.insertAdjacentHTML('beforeend', `<small>${ok ? esc(G.DEX_BY[a.dex].name) : '???'}</small>`);
+          c.appendChild(G.UI.spriteCanvas(a.dex!, 64, 56, { scale: 1, silhouette: !ok, shadow: ok }));
+          c.insertAdjacentHTML('beforeend', `<small>${ok ? esc(G.DEX_BY[a.dex!].name) : '???'}</small>`);
           lg.appendChild(c);
         }
         box.appendChild(lg);
       }
     }
 
-    function achCard(a, s) {
+    function achCard(a: AchDef, s: SaveData) {
       const ok = !!(s.ach && s.ach[a.id]);
       const v = Math.min(a.goal, a.value(s));
       const el = document.createElement('div');
@@ -146,10 +155,10 @@ import { G } from '../g';
 
     // ---------------- perfil (editar) ----------------
 
-    function profile(box) {
+    function profile(box: HTMLElement) {
       const s = G.DB.save;
       s.profile = s.profile || { favs: [], title: '' };
-      const P: any = s.profile;
+      const P = s.profile;
       box.insertAdjacentHTML('beforeend', `<p class="sub">${G.DB.online ? 'Así te ven los demás jugadores (desde el ranking y la lista de amigos).'
         : 'Tu perfil se publica cuando juegas con una cuenta online.'}</p>
         <h3>Tus 3 Pokémon favoritos</h3>`);
@@ -185,7 +194,7 @@ import { G } from '../g';
       box.appendChild(prev);
     }
 
-    function pickFav(i) {
+    function pickFav(i: number) {
       const s = G.DB.save;
       const box = $('goals-body');
       box.innerHTML = `<div class="row between"><h3>Elige el favorito ${i + 1}</h3>
@@ -193,7 +202,7 @@ import { G } from '../g';
         <input class="field" id="fav-q" placeholder="Buscar por nombre" style="max-width:320px;margin:6px 0 10px">
         <div class="grid" id="fav-grid"></div>`;
       $('fav-back').onclick = () => { tab = 'profile'; render(); };
-      const fill = q => {
+      const fill = (q: string) => {
         const g = $('fav-grid');
         g.innerHTML = '';
         const mons = Object.keys(s.owned).map(Number).filter(d => G.DEX_BY[d] && (!q || G.DEX_BY[d].name.toLowerCase().includes(q)));
@@ -213,7 +222,7 @@ import { G } from '../g';
           }
         }
       };
-      $('fav-q').oninput = () => fill($('fav-q').value.trim().toLowerCase());
+      $<HTMLInputElement>('fav-q').oninput = () => fill($<HTMLInputElement>('fav-q').value.trim().toLowerCase());
       fill('');
     }
 
@@ -232,12 +241,12 @@ import { G } from '../g';
   export const ProfileUI = (() => {
     function init() {
       $('prof-close').onclick = close;
-      $('scr-profile').onclick = e => { if ((e.target as HTMLElement).id === 'scr-profile') close(); };
+      $('scr-profile').onclick = (e: MouseEvent) => { if ((e.target as HTMLElement).id === 'scr-profile') close(); };
     }
     function close() { $('scr-profile').classList.add('hidden'); }
 
     /** Abre el perfil de otro jugador por su uid. */
-    async function show(uid) {
+    async function show(uid: string) {
       if (!uid) return;
       if (uid === G.Social.uid) { showData(G.Social.profileData()); return; }
       $('prof-body').innerHTML = '<p class="sub">Cargando…</p>';
@@ -247,7 +256,7 @@ import { G } from '../g';
       showData(d);
     }
 
-    function showData(d) {
+    function showData(d: PublicProfile) {
       const b = d.best || {};
       const body = $('prof-body');
       body.innerHTML = `

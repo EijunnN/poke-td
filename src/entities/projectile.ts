@@ -1,4 +1,6 @@
 import { G } from '../g';
+import type { Player } from './player';
+import type { PokeType } from '../data/types';
 /* ============ projectile.js — proyectiles y orbes ============
  * Una sola lista para todo lo que vuela: disparos del jugador, disparos
  * enemigos y los orbes que giran alrededor del Pokémon (los orbes son
@@ -9,38 +11,77 @@ import { G } from '../g';
  * elevados G.LIFT unidades con su sombra debajo. Las paredes y los objetos
  * sólidos los paran (ver combat.js).
  */
+/** Aspecto de un proyectil (G.VFX.forMove; el de forType es el mismo sin estela). */
+type ShotVis = ReturnType<typeof G.VFX.forMove>;
+
+/** Proyectil u orbe. Los campos opcionales sólo existen en quien los usa (orbes, bumeranes...). */
+export interface Projectile {
+  id: number;
+  x: number; y: number; vx: number; vy: number;
+  dmg: number; r: number;
+  /** Segundos de vida y segundos vividos. */
+  life: number; t: number;
+  pierce: number;
+  /** Enemigos ya golpeados (se crea al disparar en combat.ts). */
+  hits: Set<number> | null;
+  friendly: boolean;
+  color: string;
+  homing: number; slow: number; burn: number; poison: number; knock: number;
+  orb: boolean;
+  /** Cada cuántos segundos un orbe vuelve a golpear al mismo. */
+  rehit: number;
+  hitLog: Map<number | string, number> | null;
+  /** Objetos del escenario ya golpeados. */
+  phits: Set<number> | null;
+  owner?: Player;
+  ghost?: boolean;
+  vis?: ShotVis;
+  mtype?: PokeType | null;
+  /** Posición del fotograma anterior (colisión barrida). */
+  px?: number; py?: number;
+  trailT?: number;
+  // Orbes: movimiento al que pertenecen, ángulo, radio y velocidad angular.
+  mid?: string; oa?: number; orad?: number; ospeed?: number;
+  // Bumerán: segundos hasta darse la vuelta, si ya vuelve y velocidad de vuelta.
+  boom?: number; back?: boolean; bsp?: number;
+}
+
+/** Lo que se le pide a un enemigo para apuntarle (Enemy lo cumple). */
+interface ProjTarget { x: number; y: number; dead?: boolean; cy(): number }
+
 export const Projectiles = (() => {
-  let list = [];
+  let list: Projectile[] = [];
   let nextId = 1;
 
   function clear() { list = []; }
   function all() { return list; }
 
   /** Proyectil del jugador. */
-  function spawn(o) {
-    const p = Object.assign({
+  function spawn(o: Partial<Projectile>): Projectile {
+    const base: Projectile = {
       id: nextId++, x: 0, y: 0, vx: 0, vy: 0,
       dmg: 10, r: 6, life: 1.4, t: 0,
       pierce: 0, hits: null, friendly: true,
       color: '#fff', homing: 0, slow: 0, burn: 0, poison: 0, knock: 0,
       orb: false, rehit: 0.34, hitLog: null, phits: null
-    }, o);
+    };
+    const p: Projectile = Object.assign(base, o);
     if (p.friendly && !p.orb && !p.phits) p.phits = new Set();
     list.push(p);
     return p;
   }
 
   /** Orbe anclado a un jugador (`owner`): vive mientras el movimiento esté activo. */
-  function spawnOrb(o) {
+  function spawnOrb(o: Partial<Projectile>) {
     return spawn(Object.assign({
       orb: true, life: Infinity, pierce: Infinity, hitLog: new Map()
     }, o));
   }
 
   /** Borra los orbes de un jugador (o todos) al cambiar de movimiento activo. */
-  function clearOrbs(owner) { list = list.filter(p => !p.orb || (owner && p.owner !== owner)); }
+  function clearOrbs(owner?: Player) { list = list.filter(p => !p.orb || (owner && p.owner !== owner)); }
 
-  function update(dt, player, enemies) {
+  function update(dt: number, player: Player, enemies: ProjTarget[]) {
     for (let i = list.length - 1; i >= 0; i--) {
       const p = list[i];
       p.t += dt;
@@ -48,9 +89,9 @@ export const Projectiles = (() => {
       if (p.orb) {
         // Gira alrededor de su jugador.
         const o = p.owner || player;
-        p.oa += p.ospeed * dt;
-        p.x = o.x + Math.cos(p.oa) * p.orad;
-        p.y = o.y + Math.sin(p.oa) * p.orad * 0.7;
+        p.oa! += p.ospeed! * dt;
+        p.x = o.x + Math.cos(p.oa!) * p.orad!;
+        p.y = o.y + Math.sin(p.oa!) * p.orad! * 0.7;
         continue;
       }
 
@@ -63,8 +104,8 @@ export const Projectiles = (() => {
         if (!p.back && p.t >= p.boom) { p.back = true; p.hits = new Set(); }
         if (p.back) {
           const [dx, dy] = G.U.norm(o.x - p.x, o.y - p.y);
-          p.vx = G.U.damp(p.vx, dx * p.bsp, 7, dt);
-          p.vy = G.U.damp(p.vy, dy * p.bsp, 7, dt);
+          p.vx = G.U.damp(p.vx, dx * p.bsp!, 7, dt);
+          p.vy = G.U.damp(p.vy, dy * p.bsp!, 7, dt);
           if (G.U.dist2(p.x, p.y, o.x, o.y) < (o.r + 8) ** 2) { list.splice(i, 1); continue; }
         }
       }
@@ -93,8 +134,8 @@ export const Projectiles = (() => {
     }
   }
 
-  function nearest(enemies, x, y, maxDist) {
-    let best = null, bd = maxDist * maxDist;
+  function nearest<T extends ProjTarget>(enemies: readonly T[], x: number, y: number, maxDist: number): T | null {
+    let best: T | null = null, bd = maxDist * maxDist;
     for (const e of enemies) {
       if (e.dead) continue;
       const d = G.U.dist2(x, y, e.x, e.cy());
@@ -103,12 +144,12 @@ export const Projectiles = (() => {
     return best;
   }
 
-  function remove(p) {
+  function remove(p: Projectile) {
     const i = list.indexOf(p);
     if (i >= 0) list.splice(i, 1);
   }
 
-  function draw(ctx) {
+  function draw(ctx: CanvasRenderingContext2D) {
     const L = G.LIFT;
     // Sombras primero, todas juntas.
     ctx.fillStyle = 'rgba(0,0,0,.25)';
@@ -126,7 +167,7 @@ export const Projectiles = (() => {
       const shape = v.proj;
       const a = p.orb ? 1 : Math.min(1, (p.life - p.t) * 4);
       let angle = 0;
-      if (G.VFX.isDir(shape)) angle = p.orb ? p.oa + Math.PI / 2 : Math.atan2(p.vy, p.vx);
+      if (G.VFX.isDir(shape)) angle = p.orb ? p.oa! + Math.PI / 2 : Math.atan2(p.vy, p.vx);
       else if (G.VFX.spins(shape)) angle = p.t * 9;
       G.VFX.draw(ctx, shape, v.pal, p.x, p.y - L, {
         angle, alpha: a, scale: p.r >= 8 ? 1.5 : 1,

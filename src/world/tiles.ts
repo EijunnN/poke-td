@@ -7,10 +7,51 @@ import { G } from '../g';
  * Autotiling: cada tile mira a sus 8 vecinos al pintarse (bordes de pared,
  * cara frontal, esquinas redondeadas, espuma de la orilla...).
  */
+/** Líquido de los charcos: water frena · swamp frena más · lava quema · poison envenena · spark descarga · ice resbala. */
+type Liquido = 'water' | 'swamp' | 'lava' | 'poison' | 'spark' | 'ice';
+type Terreno = 'floor' | 'wall' | 'liquid';
+type PropTipo = 'tree' | 'crystal' | 'dead';
+
+/** Paleta completa de un bioma (colores hex). */
+export interface Biome {
+  name: string; liquid: Liquido;
+  floor: string[]; dirt: string[]; speck: string; light: string; flowers: string[];
+  wallTop: string[]; wallLight: string; wallEdge: string; wallFace: string[]; wallFaceDark: string;
+  liq: string; liqDeep: string; foam: string; shore: string;
+  prop: PropTipo; leaf: string[]; trunk: string[]; rock: string[]; grass: string[];
+}
+
+/** Los pocos colores y parámetros que definen una arena de la grieta. */
+export interface ArenaTheme {
+  name: string; floor: string; wall: string; liquid: Liquido; liq: string; foam?: string; prop: PropTipo;
+  leaf: string; trunk: string; flowers: string[]; grass: string; rock: string;
+  pools: number; pillars: number;
+  props: { tree?: number; grass?: number; rock?: number };
+  weather: string | null;
+  clear?: number;
+}
+
+/** Paleta ya empaquetada (ABGR) que usan los pintores de chunk. */
+interface Paleta {
+  floor: number[]; dirt: number[]; wallTop: number[]; wallFace: number[]; flowers: number[]; grass: number[];
+  speck: number; light: number; wallLight: number; wallEdge: number; wallFaceDark: number;
+  liq: number; liqDeep: number; foam: number; shore: number; liqLight: number;
+}
+
+/** Lienzo de píxeles: set(x,y,color) y canvas() al final. */
+interface Lienzo {
+  w: number; h: number;
+  set(x: number, y: number, col: number): void;
+  get(x: number, y: number): number;
+  canvas(): HTMLCanvasElement;
+}
+
+type Pintor = (B: Biome, variant: number) => HTMLCanvasElement;
+
 export const Tiles = (() => {
   const T = 16;                       // píxeles de arte por tile
 
-  const BIOMES = [
+  const BIOMES: Biome[] = [
     { name: 'Bosque Umbrío', liquid: 'water',
       floor: ['#3e7a39', '#44813d', '#397134'], dirt: ['#7d6742', '#735e3b', '#86704a'],
       speck: '#2f5f2b', light: '#5f9d50', flowers: ['#f4d65c', '#f39ac0', '#eef2ff'],
@@ -49,7 +90,7 @@ export const Tiles = (() => {
    *   props    densidad de árboles / rocas / hierba
    *   weather  clima que trae (ver systems/weather.js) o null
    */
-  const ARENA_THEMES = {
+  const ARENA_THEMES: Record<string, ArenaTheme> = {
     normal:   { name: 'Pradera Eterna', floor: '#6f8a4f', wall: '#8a7f6a', liquid: 'water', liq: '#4f8fd0', prop: 'tree',
                 leaf: '#5aa04a', trunk: '#6b4a2a', flowers: ['#f4d65c', '#ffffff', '#f39ac0'], grass: '#5a9a40', rock: '#8a8a8a',
                 pools: 0, pillars: 0.035, props: { tree: 0.025, grass: 0.05 }, weather: null },
@@ -113,13 +154,13 @@ export const Tiles = (() => {
   const ARENA_TYPES = Object.keys(ARENA_THEMES);
 
   /** Aclara (k>0) u oscurece (k<0) un color. */
-  function shade(hex, k) {
+  function shade(hex: string, k: number) {
     const c = rgb(hex).map(v => Math.round(k >= 0 ? v + (255 - v) * k : v * (1 + k)));
     return '#' + c.map(v => v.toString(16).padStart(2, '0')).join('');
   }
 
   /** Paleta completa de bioma a partir de los pocos colores de una arena. */
-  function arenaBiome(th) {
+  function arenaBiome(th: ArenaTheme): Biome {
     const f = th.floor, w = th.wall, L = th.liq;
     return {
       name: 'Grieta · ' + th.name, liquid: th.liquid,
@@ -139,38 +180,37 @@ export const Tiles = (() => {
 
   // ---------------- utilidades de color / píxel ----------------
 
-  function rgb(hex) {
+  function rgb(hex: string) {
     const n = parseInt(hex.slice(1), 16);
     return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
   }
   // Empaquetado ABGR (little-endian) para escribir de golpe en un Uint32Array.
-  function pack(hex, a = 255) {
+  function pack(hex: string, a = 255) {
     const [r, g, b] = rgb(hex);
     return ((a << 24) | (b << 16) | (g << 8) | r) >>> 0;
   }
   /** Mezcla dos colores hex y devuelve el empaquetado. */
-  function mixPack(h1, h2, t) {
+  function mixPack(h1: string, h2: string, t: number) {
     const a = rgb(h1), b = rgb(h2);
     const c = a.map((v, i) => Math.round(v + (b[i] - v) * t));
     return ((255 << 24) | (c[2] << 16) | (c[1] << 8) | c[0]) >>> 0;
   }
 
-  /** Lienzo de píxeles: set(x,y,color) y canvas() al final. */
-  function Pix(w, h) {
+  function Pix(w: number, h: number): Lienzo {
     const cv = document.createElement('canvas');
     cv.width = w; cv.height = h;
-    const c = cv.getContext('2d');
+    const c = cv.getContext('2d')!;
     const img = c.createImageData(w, h);
     const buf = new Uint32Array(img.data.buffer);
     return {
       w, h,
-      set(x, y, col) { if (x >= 0 && y >= 0 && x < w && y < h) buf[y * w + x] = col; },
-      get(x, y) { return buf[y * w + x]; },
+      set(x: number, y: number, col: number) { if (x >= 0 && y >= 0 && x < w && y < h) buf[y * w + x] = col; },
+      get(x: number, y: number) { return buf[y * w + x]; },
       canvas() { c.putImageData(img, 0, 0); return cv; }
     };
   }
 
-  const H = (x, y, s) => G.U.hash(x, y, s);
+  const H = (x: number, y: number, s: number): number => G.U.hash(x, y, s);
 
   // ---------------- chunk de suelo ----------------
 
@@ -184,7 +224,7 @@ export const Tiles = (() => {
    * arriba para detectar bordes). El ruido se evalúa cada 4 px y se interpola:
    * ~30 veces menos llamadas que evaluarlo píxel a píxel.
    */
-  function dirtMask(gx0, gy0, W, field, seed) {
+  function dirtMask(gx0: number, gy0: number, W: number, field: (x: number, y: number) => number, seed: number) {
     const S = 4, gw = W / S + 3;
     const grid = new Float32Array(gw * gw);
     for (let j = 0; j < gw; j++) for (let i = 0; i < gw; i++)
@@ -202,18 +242,21 @@ export const Tiles = (() => {
       }
     }
     // dirtAt(x, y) en coordenadas locales del chunk (y puede ser -1).
-    return (x, y) => mask[(y + 1) * W + x] === 1;
+    return (x: number, y: number) => mask[(y + 1) * W + x] === 1;
   }
 
-  function paintChunk(cx, cy, n, at, dirtField, bi, seed = 0) {
+  type DeTerreno = (tx: number, ty: number) => Terreno;
+
+  function paintChunk(cx: number, cy: number, n: number, at: DeTerreno, dirtField: (x: number, y: number) => number, bi: number, seed = 0) {
     const B = BIOMES[bi];
     const P = Pix(n * T, n * T);
-    const C: Record<string, any> = {};
-    for (const k of ['floor', 'dirt', 'wallTop', 'wallFace', 'flowers', 'grass'])
-      C[k] = B[k].map(h => pack(h));
-    for (const k of ['speck', 'light', 'wallLight', 'wallEdge', 'wallFaceDark', 'liq', 'liqDeep', 'foam', 'shore'])
-      C[k] = pack(B[k]);
-    C.liqLight = mixPack(B.liq, B.foam, 0.28);
+    const C: Paleta = {
+      floor: B.floor.map(h => pack(h)), dirt: B.dirt.map(h => pack(h)), wallTop: B.wallTop.map(h => pack(h)),
+      wallFace: B.wallFace.map(h => pack(h)), flowers: B.flowers.map(h => pack(h)), grass: B.grass.map(h => pack(h)),
+      speck: pack(B.speck), light: pack(B.light), wallLight: pack(B.wallLight), wallEdge: pack(B.wallEdge),
+      wallFaceDark: pack(B.wallFaceDark), liq: pack(B.liq), liqDeep: pack(B.liqDeep), foam: pack(B.foam),
+      shore: pack(B.shore), liqLight: mixPack(B.liq, B.foam, 0.28)
+    };
 
     const tx0 = cx * n, ty0 = cy * n;
     const dirtAt = dirtMask(tx0 * T, ty0 * T, n * T, dirtField, seed);
@@ -234,7 +277,7 @@ export const Tiles = (() => {
     return P.canvas();
   }
 
-  function paintFloor(P, C, ox, oy, tx, ty, dirtAt, at) {
+  function paintFloor(P: Lienzo, C: Paleta, ox: number, oy: number, tx: number, ty: number, dirtAt: (x: number, y: number) => boolean, at: DeTerreno) {
     let dirtCount = 0;
     for (let y = 0; y < T; y++) {
       for (let x = 0; x < T; x++) {
@@ -280,8 +323,8 @@ export const Tiles = (() => {
     }
   }
 
-  function paintWall(P, C, ox, oy, tx, ty, at) {
-    const W = (x, y) => at(x, y) === 'wall';
+  function paintWall(P: Lienzo, C: Paleta, ox: number, oy: number, tx: number, ty: number, at: DeTerreno) {
+    const W = (x: number, y: number) => at(x, y) === 'wall';
     const n = W(tx, ty - 1), s = W(tx, ty + 1), w = W(tx - 1, ty), e = W(tx + 1, ty);
     const FACE = s ? 0 : 6;                 // filas de cara frontal visibles
 
@@ -294,7 +337,7 @@ export const Tiles = (() => {
         if (!s && !e && (T - 1 - x) + (T - 1 - y) < 2) continue;
 
         const gx = tx * T + x, gy = ty * T + y;
-        let col;
+        let col: number;
         if (y >= T - FACE) {
           // Cara frontal: vetas verticales y base oscura.
           const fy = y - (T - FACE);
@@ -317,8 +360,8 @@ export const Tiles = (() => {
     }
   }
 
-  function paintLiquid(P, C, ox, oy, tx, ty, at) {
-    const L = (x, y) => at(x, y) === 'liquid';
+  function paintLiquid(P: Lienzo, C: Paleta, ox: number, oy: number, tx: number, ty: number, at: DeTerreno) {
+    const L = (x: number, y: number) => at(x, y) === 'liquid';
     const n = L(tx, ty - 1), s = L(tx, ty + 1), w = L(tx - 1, ty), e = L(tx + 1, ty);
     const nw = L(tx - 1, ty - 1), ne = L(tx + 1, ty - 1), sw = L(tx - 1, ty + 1), se = L(tx + 1, ty + 1);
     const BIG = 99;
@@ -340,7 +383,7 @@ export const Tiles = (() => {
 
         const gx = tx * T + x, gy = ty * T + y;
         const r = H(gx, gy, 31);
-        let col;
+        let col: number;
         if (d < 1) col = C.shore;                       // labio de tierra
         else if (d < 2) col = C.foam;                   // espuma
         else if (d < 4) col = C.liqLight;               // agua somera
@@ -358,16 +401,16 @@ export const Tiles = (() => {
 
   // ---------------- sprites de objetos del escenario ----------------
 
-  const propCache = new Map();          // "bioma/tipo/variante" -> canvas
+  const propCache = new Map<string, HTMLCanvasElement>();   // "bioma/tipo/variante" -> canvas
 
-  function propSprite(bi, type, variant = 0) {
+  function propSprite(bi: number, type: string, variant = 0) {
     const k = bi + '/' + type + '/' + variant;
     let cv = propCache.get(k);
     if (!cv) { cv = PAINT[type](BIOMES[bi], variant); propCache.set(k, cv); }
     return cv;
   }
 
-  function disc(P, cx, cy, r, colFn) {
+  function disc(P: Lienzo, cx: number, cy: number, r: number, colFn: (x: number, y: number, t: number) => number | null) {
     for (let y = Math.floor(cy - r); y <= Math.ceil(cy + r); y++)
       for (let x = Math.floor(cx - r); x <= Math.ceil(cx + r); x++) {
         const d = Math.hypot(x - cx, y - cy);
@@ -375,12 +418,12 @@ export const Tiles = (() => {
       }
   }
 
-  function outline(P, col) {
+  function outline(P: Lienzo, col: number) {
     // Contorno de 1 px alrededor de todo lo opaco.
-    const marks = [];
+    const marks: [number, number][] = [];
     for (let y = 0; y < P.h; y++) for (let x = 0; x < P.w; x++) {
       if (P.get(x, y) >>> 24) continue;
-      const near = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([a, b]) => {
+      const near = ([[1, 0], [-1, 0], [0, 1], [0, -1]] as const).some(([a, b]) => {
         const xx = x + a, yy = y + b;
         return xx >= 0 && yy >= 0 && xx < P.w && yy < P.h && (P.get(xx, yy) >>> 24);
       });
@@ -389,13 +432,13 @@ export const Tiles = (() => {
     for (const [x, y] of marks) P.set(x, y, col);
   }
 
-  const PAINT = {
+  const PAINT: Record<string, Pintor> = {
     tree(B) {
       const P = Pix(30, 40);
       const L = B.leaf.map(h => pack(h)), Tr = B.trunk.map(h => pack(h));
       const edge = pack('#14200f');
-      if (B.prop === 'crystal') return PAINT.crystal(B);
-      if (B.prop === 'dead') return PAINT.deadtree(B);
+      if (B.prop === 'crystal') return PAINT.crystal(B, 0);
+      if (B.prop === 'dead') return PAINT.deadtree(B, 0);
       for (let y = 26; y < 38; y++) for (let x = 13; x < 18; x++) P.set(x, y, Tr[x === 13 || x === 17 ? 0 : 1]);
       P.set(12, 37, Tr[0]); P.set(18, 37, Tr[0]); P.set(11, 38, Tr[0]); P.set(19, 38, Tr[0]);
       const blobs = [[15, 20, 10], [9, 16, 7], [21, 16, 7], [15, 10, 8], [10, 23, 6], [20, 23, 6]];
@@ -433,7 +476,7 @@ export const Tiles = (() => {
       const P = Pix(28, 40);
       const Tr = B.trunk.map(h => pack(h)), L = B.leaf.map(h => pack(h));
       for (let y = 12; y < 38; y++) for (let x = 12; x < 16; x++) P.set(x, y, Tr[x < 14 ? 0 : 1]);
-      const branch = (x0, y0, dx, len) => {
+      const branch = (x0: number, y0: number, dx: number, len: number) => {
         for (let i = 0; i < len; i++) { P.set(x0 + dx * i, y0 - i, L[1]); P.set(x0 + dx * i, y0 - i + 1, L[0]); }
       };
       branch(12, 20, -1, 9); branch(15, 17, 1, 10); branch(13, 13, -1, 7); branch(14, 12, 1, 6);
@@ -629,7 +672,7 @@ export const Tiles = (() => {
 
   return { T, BIOMES, NORMAL, ARENA, ARENA_THEMES, ARENA_TYPES, paintChunk, propSprite, clearProps,
            /** Índice de bioma de la arena de un tipo. */
-           arenaBiome: type => ARENA + Math.max(0, ARENA_TYPES.indexOf(type)) };
+           arenaBiome: (type: string) => ARENA + Math.max(0, ARENA_TYPES.indexOf(type)) };
 })();
 G.Tiles = Tiles;
 

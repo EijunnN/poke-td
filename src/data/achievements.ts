@@ -1,5 +1,6 @@
 import { G } from '../g';
 import type { Reward } from './missions';
+import type { SaveData } from '../core/db';
 /* ============ achievements.js — logros, medallas y títulos ============
  * Cada logro: medalla (bronce 1, plata 2, oro 3), premio al conseguirlo y, a
  * veces, un título para el perfil. Se comprueban en systems/progress.js.
@@ -18,7 +19,7 @@ export interface AchDef {
   tier: 1 | 2 | 3;
   name: string;
   desc: string;
-  value: (s: any) => number;
+  value: (s: SaveData) => number;
   goal: number;
   reward: Reward;
   title?: string;
@@ -26,11 +27,11 @@ export interface AchDef {
 }
 
 export const AchDefs = (() => {
-  const own = s => Object.keys(s.owned || {}).filter(d => G.DEX_BY[d]).length;
-  const shinies = s => Object.keys(s.shiny || {}).length;
-  const legends = s => Object.keys(s.legends || {}).length;
-  const st = k => s => (s.stats && s.stats[k]) || 0;
-  const count = k => s => Object.keys(s[k] || {}).length;
+  const own = (s: SaveData) => Object.keys(s.owned || {}).filter(d => G.DEX_BY[+d]).length;
+  const shinies = (s: SaveData) => Object.keys(s.shiny || {}).length;
+  const legends = (s: SaveData) => Object.keys(s.legends || {}).length;
+  const st = (k: string) => (s: SaveData) => (s.stats && s.stats[k]) || 0;
+  const count = (k: string) => (s: SaveData) => Object.keys(s[k] || {}).length;
 
   const CATS = [['coleccion', 'Colección'], ['supervivencia', 'Supervivencia'], ['defensa', 'Defensa'], ['combate', 'Combate'],
                 ['grietas', 'Grietas'], ['legendarios', 'Legendarios'], ['otros', 'Misiones y más']];

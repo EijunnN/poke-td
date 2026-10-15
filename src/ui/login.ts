@@ -6,21 +6,21 @@ export const LoginUI = (() => {
 
   function init() {
     document.querySelectorAll<HTMLElement>('#scr-login .tab').forEach(t => {
-      t.onclick = () => setMode(t.dataset.tab);
+      t.onclick = () => setMode(t.dataset.tab!);
     });
-    $('login-form').onsubmit = async e => {
+    $('login-form').onsubmit = async (e: Event) => {
       e.preventDefault();
       $('login-err').textContent = '';
-      $('btn-auth').disabled = true;
+      $<HTMLButtonElement>('btn-auth').disabled = true;
       const fn = mode === 'login' ? G.DB.login : G.DB.register;
-      const r = await fn($('f-user').value, $('f-pass').value);
-      $('btn-auth').disabled = false;
-      if (!r.ok) { $('login-err').textContent = r.error; return; }
-      $('f-pass').value = '';
+      const r = await fn($<HTMLInputElement>('f-user').value, $<HTMLInputElement>('f-pass').value);
+      $<HTMLButtonElement>('btn-auth').disabled = false;
+      if (!r.ok) { $('login-err').textContent = r.error || ''; return; }
+      $<HTMLInputElement>('f-pass').value = '';
       G.Flow.afterLogin();
     };
     $('btn-guest').onclick = () => { G.DB.playAsGuest(); G.Flow.afterLogin(); };
-    $('f-forgot').onclick = e => {
+    $('f-forgot').onclick = (e: Event) => {
       e.preventDefault();
       $('login-err').textContent = '';
       $('forgot-note').classList.toggle('hidden');
@@ -38,11 +38,11 @@ export const LoginUI = (() => {
     return why;
   }
 
-  function setMode(m) {
+  function setMode(m: string) {
     mode = m;
     document.querySelectorAll<HTMLElement>('#scr-login .tab').forEach(t => t.classList.toggle('on', t.dataset.tab === m));
-    $('btn-auth').textContent = m === 'login' ? 'Entrar' : 'Crear cuenta';
-    $('f-pass').autocomplete = m === 'login' ? 'current-password' : 'new-password';
+    $<HTMLButtonElement>('btn-auth').textContent = m === 'login' ? 'Entrar' : 'Crear cuenta';
+    $<HTMLInputElement>('f-pass').autocomplete = m === 'login' ? 'current-password' : 'new-password';
     $('login-err').textContent = '';
   }
 
@@ -51,7 +51,7 @@ export const LoginUI = (() => {
     G.UI.show('scr-login');
     if (!G.DB.storageOk) $('login-err').textContent = 'Este navegador no deja guardar datos: juega como invitado.';
     $('login-mode').textContent = modeNote();
-    setTimeout(() => $('f-user').focus(), 50);
+    setTimeout(() => $<HTMLInputElement>('f-user').focus(), 50);
   }
 
   return { init, open };

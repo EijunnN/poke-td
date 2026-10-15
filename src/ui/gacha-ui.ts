@@ -8,16 +8,16 @@ export const GachaUI = (() => {
   let gen = 1;
 
   function init() {
-    $('pull-1').onclick = () => pull(1);
-    $('pull-10').onclick = () => pull(10, 't1');
-    $('pull-10b').onclick = () => pull(10, 't10');
+    $<HTMLButtonElement>('pull-1').onclick = () => pull(1);
+    $<HTMLButtonElement>('pull-10').onclick = () => pull(10, 't1');
+    $<HTMLButtonElement>('pull-10b').onclick = () => pull(10, 't10');
     $('pull-close').onclick = close;
 
     const tabs = $('gacha-gens');
     G.Gacha.BANNERS.forEach(b => {
       const t = document.createElement('button');
       t.className = 'gen-tab';
-      t.dataset.gen = b.gen as any;
+      t.dataset.gen = String(b.gen);
       t.innerHTML = `<b>${b.name}</b><small>Gen ${b.gen}</small>`;
       t.onclick = () => { gen = b.gen; refresh(); };
       tabs.appendChild(t);
@@ -32,7 +32,7 @@ export const GachaUI = (() => {
   function refresh() {
     const s = G.DB.save;
     const banner = G.Gacha.BANNERS[gen - 1];
-    document.querySelectorAll<HTMLElement>('#gacha-gens .gen-tab').forEach(t => t.classList.toggle('on', +t.dataset.gen === gen));
+    document.querySelectorAll<HTMLElement>('#gacha-gens .gen-tab').forEach(t => t.classList.toggle('on', +t.dataset.gen! === gen));
 
     const all = G.DEX.filter(p => p.gen === gen);
     const owned = all.filter(p => s.owned[p.dex]).length;
@@ -71,15 +71,15 @@ export const GachaUI = (() => {
     $('cost-10').innerHTML = `${G.Icons.html('ticket', 18)} 10`;
     $('cost-10b').innerHTML = `${G.Icons.html('ticket10', 18)} 1`;
     $('gacha-tickets').innerHTML = `Tienes ${G.Icons.html('ticket', 18)} <b>${t.t1}</b> tickets y ${G.Icons.html('ticket10', 18)} <b>${t.t10}</b> tickets ×10`;
-    $('pull-1').disabled = !G.Gacha.costOf(s, 1);
-    $('pull-10').disabled = !G.Gacha.costOf(s, 10, 't1');
-    $('pull-10b').disabled = !G.Gacha.costOf(s, 10, 't10');
+    $<HTMLButtonElement>('pull-1').disabled = !G.Gacha.costOf(s, 1);
+    $<HTMLButtonElement>('pull-10').disabled = !G.Gacha.costOf(s, 10, 't1');
+    $<HTMLButtonElement>('pull-10b').disabled = !G.Gacha.costOf(s, 10, 't10');
     G.UI.refreshCoins();
   }
 
-  const wait = ms => new Promise(r => setTimeout(r, ms));
+  const wait = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
-  async function pull(n, use = 't1') {
+  async function pull(n: number, use: 't1' | 't10' = 't1') {
     if (busy) return;
     const res = G.Gacha.pull(G.DB.save, n, gen, use);
     if (!res) { G.Audio.sfx('error'); G.UI.toast('No tienes tickets suficientes: consíguelos jugando'); return; }
@@ -88,7 +88,7 @@ export const GachaUI = (() => {
     busy = true;
 
     const best = Math.max(...res.map(r => r.rarity));
-    const fx = $('pull-fx'), slot = $('slot'), out = $('pull-results');
+    const fx = $('pull-fx'), slot = $<HTMLCanvasElement>('slot'), out = $('pull-results');
     out.innerHTML = '';
     $('pull-close').classList.add('hidden');
     slot.style.display = '';

@@ -134,7 +134,7 @@ G.PERSONALITY_TEST = PERSONALITY_TEST;
 /** Puntuaciones de rasgos -> { trait, dex } con el compañero que mejor encaja. */
 export const personalityResult = (scores: Record<string, number>): { trait: string; dex: number } => {
   const trait = Object.keys(scores).sort((a, b) => scores[b] - scores[a])[0];
-  let best = [], bestScore = -1;
+  let best: Starter[] = [], bestScore = -1;
   for (const s of STARTERS) {
     // El rasgo principal pesa el doble.
     const v = (scores[s.traits[0]] || 0) * 2 + (scores[s.traits[1]] || 0);

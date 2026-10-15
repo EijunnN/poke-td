@@ -1,8 +1,8 @@
 import { G } from '../g';
 /* ============ input.js — teclado y ratón (el táctil está en touch.js) ============ */
 export const Input = (() => {
-  const down = new Set();
-  const pressed = new Set();   // se limpia cada frame
+  const down = new Set<string>();
+  const pressed = new Set<string>();   // se limpia cada frame
   let mx = 0, my = 0, mdown = false;
 
   const MOVE_KEYS = {
@@ -10,7 +10,7 @@ export const Input = (() => {
     left: ['keya', 'arrowleft'], right: ['keyd', 'arrowright']
   };
 
-  function code(e) { return (e.code || e.key).toLowerCase(); }
+  function code(e: KeyboardEvent) { return (e.code || e.key).toLowerCase(); }
 
   /** ¿Se está escribiendo en un campo? Entonces las teclas son del campo, no del juego. */
   function typing(e: KeyboardEvent) {
@@ -45,9 +45,9 @@ export const Input = (() => {
       if (MOVE_KEYS.down.some(k => down.has(k))) y += 1;
       return G.U.norm(x, y);
     },
-    held(c) { return down.has(c); },
+    held(c: string) { return down.has(c); },
     /** true sólo en el frame en que se pulsó. */
-    tap(c) { return pressed.has(c); },
+    tap(c: string) { return pressed.has(c); },
     mouse() { return { x: mx, y: my, down: mdown }; },
     endFrame() { pressed.clear(); }
   };

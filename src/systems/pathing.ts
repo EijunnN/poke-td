@@ -14,25 +14,39 @@ import { G } from '../g';
  * Coste: R=28 casillas de radio → 57×57 = 3.249 casillas por jugador, cada
  * 0,35 s. Los enemigos fuera del campo (muy lejos) van en línea recta.
  */
+/** Campo de distancias de un jugador: esquina de la ventana, pasos hasta él y casillas transitables. */
+interface PathField {
+  ox: number;
+  oy: number;
+  dist: Int16Array;
+  open: Uint8Array;
+}
+
+/** Lo que el campo de un jugador necesita de él. */
+interface PathTarget { x: number; y: number; dead?: boolean }
+
+/** Lo que mira el camino de un enemigo; `losAt` y `los` guardan la última vista despejada. */
+interface PathWalker { x: number; y: number; r: number; losAt?: number; los?: boolean }
+
 export const Path = (() => {
   const R = 28, N = R * 2 + 1, EVERY = 0.35;
   const UNSEEN = 0x7fff;
-  const fields = new Map();          // jugador -> { ox, oy, dist: Int16Array, t }
+  const fields = new Map<PathTarget, PathField>();
   const queue = new Int32Array(N * N);
   const D8 = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
   let timer = 0;
 
-  function build(pl) {
+  function build(pl: PathTarget) {
     const TS = G.World.TS;
     const px = Math.floor(pl.x / TS), py = Math.floor(pl.y / TS);
     const ox = px - R, oy = py - R;
     let f = fields.get(pl);
-    if (!f) { f = { dist: new Int16Array(N * N) }; fields.set(pl, f); }
+    if (!f) { f = { ox: 0, oy: 0, dist: new Int16Array(N * N), open: new Uint8Array(N * N) }; fields.set(pl, f); }
     f.ox = ox; f.oy = oy;
     const dist = f.dist;
     dist.fill(UNSEEN);
     // Casillas transitables del área (se consultan una vez).
-    const open = f.open || (f.open = new Uint8Array(N * N));
+    const open = f.open;
     for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) open[j * N + i] = G.World.walkable(ox + i, oy + j) ? 1 : 0;
 
     const start = R * N + R;
@@ -57,7 +71,7 @@ export const Path = (() => {
   }
 
   /** Recalcula los campos de los jugadores vivos (lo llama el anfitrión / solitario). */
-  function update(dt, players) {
+  function update(dt: number, players: PathTarget[]) {
     timer -= dt;
     if (timer > 0) return;
     timer = EVERY;
@@ -69,7 +83,7 @@ export const Path = (() => {
    * Dirección (normalizada) para que `e` llegue hasta `pl` rodeando
    * obstáculos, o null si no hace falta (cerca, fuera del campo o sin camino).
    */
-  function dirFor(e, pl) {
+  function dirFor(e: PathWalker, pl: PathTarget): [number, number] | null {
     const f = fields.get(pl);
     if (!f) return null;
     const TS = G.World.TS;
@@ -101,7 +115,7 @@ export const Path = (() => {
   }
 
   /** ¿Cabe un cuerpo de radio r en línea recta de (ax,ay) a (bx,by)? */
-  function clearLine(f, ax, ay, bx, by, r) {
+  function clearLine(f: PathField, ax: number, ay: number, bx: number, by: number, r: number) {
     const TS = G.World.TS;
     const len = Math.hypot(bx - ax, by - ay);
     if (len < 1) return true;

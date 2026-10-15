@@ -1,4 +1,8 @@
 import { G } from '../g';
+import type { SaveData } from '../core/db';
+import type { AchDef } from '../data/achievements';
+import type { MissionDef, MissionEventData, MissionState, Reward } from '../data/missions';
+import type { PokeType } from '../data/types';
 /* ============ progress.js — misiones, logros y estadísticas de cuenta ============
  * El juego avisa de lo que pasa con G.Progress.event(tipo, datos):
  *
@@ -24,39 +28,54 @@ import { G } from '../g';
  * la cuenta (en cualquier ordenador salen las mismas). El premio se recoge
  * a mano; los logros se dan solos al conseguirlos.
  */
+/** Eventos de G.Progress.event (ver arriba). */
+type EventKind = MissionDef['ev'] | 'judge' | 'judgeEnd';
+
 /** Datos que acompañan a un evento de G.Progress.event (ver arriba). */
-interface EventData {
-  boss?: boolean; legend?: number; type?: string; move?: string; id?: string;
-  group?: boolean; time?: number; bosses?: number; [k: string]: any;
+interface EventData extends MissionEventData {
+  legend?: number; type?: string; move?: string; id?: string;
+  group?: boolean; bosses?: number; perfect?: boolean; lives?: number;
 }
 
+/** Lo que mira G.Progress.kill de un enemigo caído. */
+interface KilledEnemy {
+  dex: number;
+  boss?: boolean;
+  legend?: boolean | number;
+  types?: readonly string[];
+}
+
+/** Aviso en cola (misión completada o logro). */
+interface Toast { title: string; sub?: string; ach?: AchDef }
+
 export const Progress = (() => {
-  const TYPES = Object.keys(G.U.TYPE_NAME);
-  let achT = 0, toastQ = [], toastT = 0;
+  const TYPES = Object.keys(G.U.TYPE_NAME) as PokeType[];
+  let achT = 0, toastT = 0;
+  const toastQ: Toast[] = [];
 
   // ---------------- misiones ----------------
 
-  function rng(seedStr) {
+  function rng(seedStr: string) {
     let h = 2166136261;
     for (let i = 0; i < seedStr.length; i++) { h ^= seedStr.charCodeAt(i); h = Math.imul(h, 16777619); }
     return () => { h += 0x6D2B79F5; let t = h; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
   }
 
-  function make(def, r) {
+  function make(def: MissionDef, r: () => number): MissionState {
     const goal = def.goals[Math.floor(r() * def.goals.length)];
     const param = def.param === 'type' ? TYPES[Math.floor(r() * TYPES.length)] : null;
     return { id: def.id, goal, param, prog: 0, claimed: false, told: false };
   }
 
-  function pickSet(defs, n, r, avoid = []) {
+  function pickSet(defs: MissionDef[], n: number, r: () => number, avoid: string[] = []) {
     const pool = defs.filter(d => !avoid.includes(d.id));
-    const out = [];
+    const out: MissionState[] = [];
     while (out.length < n && pool.length) out.push(make(pool.splice(Math.floor(r() * pool.length), 1)[0], r));
     return out;
   }
 
   /** Crea las misiones del día / semana si han cambiado. */
-  function ensure(s) {
+  function ensure(s: SaveData | null | undefined) {
     if (!s) return;
     const ids = G.Ranking.periodIds();
     const key = String(s.created || 0);
@@ -72,10 +91,10 @@ export const Progress = (() => {
     }
   }
 
-  function text(m) { return G.MissionDefs.BY[m.id].text(m.goal, m.param); }
-  function done(m) { return m.prog >= m.goal; }
+  function text(m: MissionState) { return G.MissionDefs.BY[m.id].text(m.goal, m.param); }
+  function done(m: MissionState) { return m.prog >= m.goal; }
 
-  function advance(list, kind, d) {
+  function advance(list: MissionState[] | undefined, kind: EventKind, d: EventData) {
     for (const m of list || []) {
       if (m.claimed || done(m)) continue;
       const def = G.MissionDefs.BY[m.id];
@@ -91,7 +110,7 @@ export const Progress = (() => {
   }
 
   /** Recoge el premio de una misión terminada. */
-  function claim(m, weekly = false) {
+  function claim(m: MissionState, weekly = false) {
     const s = G.DB.save;
     if (!s || m.claimed || !done(m)) return false;
     m.claimed = true;
@@ -103,33 +122,33 @@ export const Progress = (() => {
   }
 
   /** Cambia una diaria sin terminar por otra (una vez al día). */
-  function reroll(i) {
+  function reroll(i: number) {
     const s = G.DB.save;
     ensure(s);
     const M = s.missions;
-    const m = M.daily[i];
+    const m = M.daily![i];
     if (!m || M.rerolled || m.claimed) return false;
     const r = rng(M.day + 'cambio' + Date.now());
-    const [n] = pickSet(G.MissionDefs.daily, 1, r, M.daily.map(x => x.id));
+    const [n] = pickSet(G.MissionDefs.daily, 1, r, M.daily!.map(x => x.id));
     if (!n) return false;
-    M.daily[i] = n;
+    M.daily![i] = n;
     M.rerolled = true;
     G.DB.commit();
     return true;
   }
 
-  function grant(r) {
+  function grant(r?: Reward) {
     const s = G.DB.save;
     if (!r) return;
     s.tickets = s.tickets || { t1: 0, t10: 0 };
     if (r.coins) s.coins += r.coins;
     if (r.t1) s.tickets.t1 += r.t1;
     if (r.t10) s.tickets.t10 += r.t10;
-    if (G.UI && G.UI.refreshCoins && !document.getElementById('topbar').classList.contains('hidden')) G.UI.refreshCoins();
+    if (G.UI && G.UI.refreshCoins && !document.getElementById('topbar')!.classList.contains('hidden')) G.UI.refreshCoins();
   }
 
-  function rewardText(r) {
-    const p = [];
+  function rewardText(r: Reward) {
+    const p: string[] = [];
     if (r.t10) p.push(G.Icons.html('ticket10', 12) + ' ' + r.t10 + ' ×10');
     if (r.t1) p.push(G.Icons.html('ticket', 12) + ' ' + r.t1);
     if (r.coins) p.push('<span class="coin"></span> ' + r.coins);
@@ -138,7 +157,7 @@ export const Progress = (() => {
 
   // ---------------- eventos ----------------
 
-  function event(kind, d: EventData = {}) {
+  function event(kind: EventKind, d: EventData = {}) {
     const s = G.DB.save;
     if (!s) return;
     // Quien sólo mira una partida (espectador) no avanza misiones ni logros.
@@ -156,10 +175,10 @@ export const Progress = (() => {
         break;
       case 'evolve':
         S.evolutions = (S.evolutions || 0) + 1;
-        s.evoMoves = s.evoMoves || {}; s.evoMoves[d.move] = s.evoMoves[d.move] || Date.now();
+        s.evoMoves = s.evoMoves || {}; s.evoMoves[d.move!] = s.evoMoves[d.move!] || Date.now();
         break;
       case 'item':
-        s.itemsFound = s.itemsFound || {}; s.itemsFound[d.id] = s.itemsFound[d.id] || Date.now();
+        s.itemsFound = s.itemsFound || {}; s.itemsFound[d.id!] = s.itemsFound[d.id!] || Date.now();
         break;
       case 'runEnd':
         if (d.group) S.groupRuns = (S.groupRuns || 0) + 1;
@@ -190,7 +209,7 @@ export const Progress = (() => {
   }
 
   /** Un enemigo ha caído (anfitrión, solitario o copia en el invitado). */
-  function kill(e) {
+  function kill(e: KilledEnemy) {
     // Los legendarios de la Sentencia de Arceus no cuentan como jefes (ni para
     // misiones ni para logros de jefes): tienen su propio contador.
     if (G.Judgment.active && e.boss) { G.Judgment.bossDown(); event('kill', { types: e.types || [], boss: false, legend: 0 }); return; }
@@ -225,12 +244,12 @@ export const Progress = (() => {
     const s = G.DB.save;
     if (!s) return 0;
     ensure(s);
-    return [...s.missions.daily, ...s.missions.weekly].filter(m => done(m) && !m.claimed).length;
+    return [...s.missions.daily!, ...s.missions.weekly!].filter(m => done(m) && !m.claimed).length;
   }
 
   // ---------------- avisos ----------------
 
-  function notify(title: string, sub?: string, ach?: any) {
+  function notify(title: string, sub?: string, ach?: AchDef) {
     toastQ.push({ title, sub, ach });
     if (toastQ.length === 1) showNext();
   }

@@ -1,4 +1,6 @@
 import { G } from '../g';
+import type { PokeType } from '../data/types';
+import type { Player } from './player';
 /* ============ enemy.js — Pokémon salvajes y su gestor ============
  * (x, y) son los PIES. Animaciones de Mundo Misterioso:
  *   Walk al moverse · Idle parado · Charge apuntando una embestida ·
@@ -41,6 +43,10 @@ interface EnemyTarget {
   _vx?: number; _vy?: number;       // velocidad suavizada (la calcula EnemyMgr.update)
   _px?: number; _py?: number;       // posición del frame anterior
 }
+/** Lo que devuelve World.liquidEffect: según el líquido, frena (slow) o quema (dmg cada `every` s); {} si es inmune. */
+interface LiquidEffect { dmg?: number; every?: number; color?: string; slow?: number }
+/** Los jugadores que EnemyMgr.update sigue (con la velocidad suavizada que calcula él). */
+type Tracked = Player & { _vx?: number; _vy?: number; _px?: number; _py?: number };
 /** Salto: { sx, sy, tx, ty, t, dur } */
 interface EnemyJump { sx: number; sy: number; tx: number; ty: number; t: number; dur: number }
 /** Ataque de jefe en curso. */
@@ -96,8 +102,8 @@ export class Enemy {
   declare dmg: number;
   declare xp: number;
   declare behavior: string;
-  declare types: string[];
-  declare atkType: string;
+  declare types: PokeType[];
+  declare atkType: PokeType;
   declare flying: boolean;
   declare flash: number;
   declare slow: number;
@@ -152,7 +158,7 @@ export class Enemy {
     this.id = nextId++;
     this.def = def;
     this.dex = def.dex;
-    this.name = (G.DEX_BY[def.dex] && G.DEX_BY[def.dex].name) || def.name;
+    this.name = (G.DEX_BY[def.dex] && G.DEX_BY[def.dex].name) || def.name!;
     this.x = x; this.y = y;
     this.boss = boss;
     this.scale = boss ? bossScale(def.dex) : 1;
@@ -384,7 +390,7 @@ export class Enemy {
     if (this.slowT > 0) { this.slowT -= dt; if (this.slowT <= 0) this.slow = 0; }
     if (this.burn > 0) {
       this.burnT -= dt; this.burnTick -= dt;
-      if (this.burnTick <= 0) { this.burnTick = 0.5; this.hurt(1.6 * this.burn * (1 + pl.level * 0.06), '#ff9a4d'); }
+      if (this.burnTick <= 0) { this.burnTick = 0.5; this.hurt(1.6 * this.burn * (1 + pl.level! * 0.06), '#ff9a4d'); }
       if (this.burnT <= 0) this.burn = 0;
     }
     if (this.poison > 0) {
@@ -398,10 +404,10 @@ export class Enemy {
     let terrainMul = 1;
     // (El legendario está en su casa: su arena no le afecta. Los de Arceus, tampoco.)
     if (!this.flying && !this.legend && !this.judge && G.World.isLiquid(this.x, this.y)) {
-      const le = G.World.liquidEffect(this.types);
+      const le: LiquidEffect = G.World.liquidEffect(this.types);
       if (le.dmg) {
         this.lavaTick -= dt;
-        if (this.lavaTick <= 0) { this.lavaTick = le.every; this.hurt(6 + this.maxHp * 0.04, le.color); }
+        if (this.lavaTick <= 0) { this.lavaTick = le.every!; this.hurt(6 + this.maxHp * 0.04, le.color); }
         if (this.dead) return;
       } else if (le.slow) terrainMul = le.slow < 0.5 ? 0.45 : 0.55;
     }
@@ -427,7 +433,7 @@ export class Enemy {
     // Corredor: va a donde VAS a estar (te corta el paso si sólo huyes).
     if (this.behavior === 'runner' && pl._vx != null) {
       const lead = G.U.clamp(dist / Math.max(60, spd), 0, 1.4);
-      [dx, dy] = G.U.norm(pl.x + pl._vx * lead - this.x, pl.y + pl._vy * lead - this.y);
+      [dx, dy] = G.U.norm(pl.x + pl._vx * lead - this.x, pl.y + pl._vy! * lead - this.y);
       if (G.Camera.sees(this.x, this.y, 0) && Math.random() < dt * 10) G.FX.px(this.x - dx * 8 + G.U.rand(-4, 4), this.y, '#e8dcc0', { vy: -12, life: 0.35 });
     }
 
@@ -441,7 +447,7 @@ export class Enemy {
       this.anim.loop('Idle');
       return;
     }
-    if (this.behavior === 'bomber' && dist < this.r + pl.r + 26) { this.startFuse(); return; }
+    if (this.behavior === 'bomber' && dist < this.r + pl.r! + 26) { this.startFuse(); return; }
     if (this.behavior === 'shielder' || this.behavior === 'jumper') {
       this.skillCd -= dt;
       if (this.skillCd <= 0) {
@@ -538,7 +544,7 @@ export class Enemy {
   // enfurece: más rápido, menos espera y a veces encadena dos ataques.
 
   bossInit() {
-    const T = this.types, has = (...xs) => xs.some(x => T.includes(x));
+    const T = this.types, has = (...xs: PokeType[]) => xs.some(x => T.includes(x));
     const melee = ['slam', G.U.hash(this.dex, 3, 7) < 0.5 ? 'dash' : 'leap'];
     const pref = has('fire', 'ground', 'poison', 'rock', 'grass') ? 'rain'
                : has('electric', 'psychic', 'dragon', 'ice', 'steel') ? 'beam'
@@ -552,7 +558,7 @@ export class Enemy {
 
   bossMove(dt: number, pl: EnemyTarget, dist: number, dx: number, dy: number, spd: number): BossMove {
     if (!this.ai) this.bossInit();
-    const ai = this.ai;
+    const ai = this.ai!;
     if (!ai.fury && this.hp < this.maxHp * 0.5) this.enrage();
     const k = ai.fury ? 1.25 : 1;
     if (ai.cast) return this.bossCast(dt, pl);
@@ -584,7 +590,7 @@ export class Enemy {
   }
 
   enrage() {
-    this.ai.fury = true;
+    this.ai!.fury = true;
     this.spd *= 1.15;
     if (!this.judge) G.Spawner.say('¡' + this.name + ' se ha enfurecido!', 2.4);
     G.FX.ring(this.x, this.y, this.r, this.r * 5, '#ff4a4a', 0.6, 5);
@@ -593,7 +599,7 @@ export class Enemy {
   }
 
   bossStart(id: string, pl: EnemyTarget) {
-    const ai = this.ai, f = ai.fury ? 0.8 : 1, type = this.atkType;
+    const ai = this.ai!, f = ai.fury ? 0.8 : 1, type = this.atkType;
     const col = G.U.TYPE_COLOR[type] || '#ff7a9e';
     const ang = Math.atan2(pl.y - this.y, pl.x - this.x);
     const c: BossCast = ai.cast = { id, t: 0, wind: 0.6 * f, after: 0.35, ang };
@@ -644,12 +650,12 @@ export class Enemy {
   }
 
   bossCast(dt: number, pl: EnemyTarget): BossMove {
-    const ai = this.ai, c = ai.cast;
+    const ai = this.ai!, c = ai.cast!;
     c.t += dt;
     if (c.id === 'dash' && c.t >= c.wind) {
       if (!c.go) { c.go = true; this.anim.play('Attack', { speed: 1.6 }); }
-      if (c.t >= c.wind + c.dur) return this.bossEnd();
-      const sp = c.len / c.dur;
+      if (c.t >= c.wind + c.dur!) return this.bossEnd();
+      const sp = c.len! / c.dur!;
       return [Math.cos(c.ang) * sp, Math.sin(c.ang) * sp, 'Walk'];
     }
     if (c.t >= c.wind && !c.fired) {
@@ -664,7 +670,7 @@ export class Enemy {
   }
 
   bossEnd(): BossMove {
-    const ai = this.ai;
+    const ai = this.ai!;
     ai.cast = null;
     ai.cd = G.U.rand(1.3, 2.0);
     if (ai.fury && Math.random() < 0.35) ai.cd = 0.3;    // encadena otro
@@ -787,7 +793,7 @@ export class Enemy {
 
   /** Salto: se agacha, vuela en arco y cae donde estabas. */
   updateJump(dt: number) {
-    const j = this.jump;
+    const j = this.jump!;
     j.t += dt;
     if (j.t < 0) { this.anim.loop('Idle'); return; }
     const k = Math.min(1, j.t / j.dur);
@@ -861,7 +867,7 @@ export class Enemy {
     }
 
     // Apoyos: icono encima, para saber a quién ir primero.
-    const SUP = { healer: 'heart', shielder: 'shield', summoner: 'friends' };
+    const SUP: Record<string, string> = { healer: 'heart', shielder: 'shield', summoner: 'friends' };
     if (SUP[this.behavior]) G.Icons.draw(ctx, SUP[this.behavior], Math.round(this.x - 6), Math.round(this.y - this.bodyH - (this.hp < this.maxHp ? 26 : 18)), 12);
 
     if (this.boss || this.hp < this.maxHp) {
@@ -1010,8 +1016,8 @@ export const EnemyMgr = (() => {
   }
 
   /** El jugador vivo más cercano (los caídos no atraen a nadie). */
-  function nearestPlayer(players: EnemyTarget[], x: number, y: number) {
-    let best: EnemyTarget | null = null, bd = Infinity;
+  function nearestPlayer<T extends EnemyTarget>(players: T[], x: number, y: number) {
+    let best: T | null = null, bd = Infinity;
     for (const p of players) {
       if (p.dead) continue;
       const d = G.U.dist2(x, y, p.x, p.y);
@@ -1029,15 +1035,15 @@ export const EnemyMgr = (() => {
   // Un jefe a más de BOSS_FAR px de todos durante BOSS_LAG_T s se recoloca.
   const BOSS_FAR = 1000, BOSS_LAG_T = 10;
 
-  function update(dt: number, players: EnemyTarget | EnemyTarget[]) {
+  function update(dt: number, players: Tracked | Tracked[]) {
     if (!Array.isArray(players)) players = [players];
     const pl = players[0];
     // Velocidad suavizada de cada jugador (vale también para los compañeros).
     for (const p of players) {
       if (p._px != null && dt > 0) {
         const k = Math.min(1, dt * 5);
-        p._vx += ((p.x - p._px) / dt - p._vx) * k; p._vy += ((p.y - p._py) / dt - p._vy) * k;
-        if (Math.abs(p.x - p._px) > 200 || Math.abs(p.y - p._py) > 200) p._vx = p._vy = 0;    // teletransporte
+        p._vx! += ((p.x - p._px) / dt - p._vx!) * k; p._vy! += ((p.y - p._py!) / dt - p._vy!) * k;
+        if (Math.abs(p.x - p._px) > 200 || Math.abs(p.y - p._py!) > 200) p._vx = p._vy = 0;    // teletransporte
       } else { p._vx = 0; p._vy = 0; }
       p._px = p.x; p._py = p.y;
     }
@@ -1062,7 +1068,7 @@ export const EnemyMgr = (() => {
       }
       const near = nearestPlayer(players, e.x, e.y) || pl;
       // El duende del tesoro se escapa si no lo atrapas a tiempo.
-      if (e.behavior === 'thief' && (e.life -= dt) <= 0) {
+      if (e.behavior === 'thief' && (e.life! -= dt) <= 0) {
         G.FX.burst(e.x, e.y - 10, '#ffd23f', 16, 140);
         G.Spawner.say('¡' + e.name + ' se ha escapado!', 2.4);
         list.splice(i, 1); byId.delete(e.id);
@@ -1088,7 +1094,7 @@ export const EnemyMgr = (() => {
       const R = G.Camera.outerRadius() + 40;
       const unseen = d2 > R * R && !G.Camera.sees(e.x, e.y, 60);
       const sp = Math.hypot(near._vx || 0, near._vy || 0);
-      const behind = sp > 40 && ((e.x - near.x) * near._vx + (e.y - near.y) * near._vy) < -0.2 * Math.sqrt(d2) * sp;
+      const behind = sp > 40 && ((e.x - near.x) * near._vx! + (e.y - near.y) * near._vy!) < -0.2 * Math.sqrt(d2) * sp;
       if (unseen && behind) e.lagT += dt;
       else if (!unseen) e.lagT = 0;
       if ((unseen && e.lagT > LAG_T) || d2 > 1400 * 1400) {

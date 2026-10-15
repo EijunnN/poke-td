@@ -3,12 +3,12 @@ import { G } from '../g';
 export const MenuUI = (() => {
   const $ = G.UI.$;
   const GEN_NAMES = ['Kanto', 'Johto', 'Hoenn', 'Sinnoh', 'Teselia', 'Kalos', 'Alola', 'Galar', 'Paldea'];
-  let dexFilter = 'all', dexGen = 1, dexSel = null;
+  let dexFilter = 'all', dexGen = 1, dexSel: number | null = null;
 
   function init() {
-    const ICON = { play: 'ball', dex: 'book', upgrades: 'up', gacha: 'ball4', goals: 'medal3', friends: 'friends', rank: 'trophy', settings: 'gear', td: 'shield', rooms: 'user' };
+    const ICON: Record<string, string> = { play: 'ball', dex: 'book', upgrades: 'up', gacha: 'ball4', goals: 'medal3', friends: 'friends', rank: 'trophy', settings: 'gear', td: 'shield', rooms: 'user' };
     document.querySelectorAll<HTMLElement>('#scr-menu [data-go]').forEach(b => {
-      b.insertAdjacentHTML('afterbegin', `<span class="mi-ico">${G.Icons.html(ICON[b.dataset.go], 26)}</span>`);
+      b.insertAdjacentHTML('afterbegin', `<span class="mi-ico">${G.Icons.html(ICON[b.dataset.go!], 26)}</span>`);
       b.dataset.sfx = b.dataset.go === 'play' || b.dataset.go === 'td' ? 'confirm' : 'click';
       b.onclick = () => {
         const go = b.dataset.go;
@@ -37,7 +37,7 @@ export const MenuUI = (() => {
 
   function open() {
     const s = G.DB.save;
-    const mon = G.DEX_BY[s.partner];
+    const mon = G.DEX_BY[s.partner!];
     const shiny = !!s.partnerShiny && G.DB.ownsShiny(mon.dex);
     G.UI.chrome(true);
     G.UI.show('scr-menu');
@@ -49,8 +49,8 @@ export const MenuUI = (() => {
     // Normal / shiny a mano, aquí mismo (en el móvil no se encontraba en la ficha).
     const seg = $('menu-shiny');
     seg.classList.toggle('hidden', !G.DB.ownsShiny(mon.dex));
-    seg.lastChild.innerHTML = G.Icons.html('shiny', 12) + ' Shiny';
-    seg.querySelectorAll('button').forEach(b => {
+    (seg.lastChild as HTMLElement).innerHTML = G.Icons.html('shiny', 12) + ' Shiny';
+    seg.querySelectorAll('button').forEach((b: HTMLButtonElement) => {
       b.classList.toggle('on', (b.dataset.v === '1') === shiny);
       b.onclick = () => {
         if ((b.dataset.v === '1') === shiny) return;
@@ -62,7 +62,7 @@ export const MenuUI = (() => {
       };
     });
 
-    const owned = Object.keys(s.owned).filter(d => G.DEX_BY[d]).length;
+    const owned = Object.keys(s.owned).filter(d => G.DEX_BY[+d]).length;
     const shinies = Object.keys(s.shiny || {}).length;
     $('menu-dex-count').textContent = `${owned} / ${G.DEX.length}` + (shinies ? ` · ${shinies} shiny` : '');
 
@@ -108,8 +108,8 @@ export const MenuUI = (() => {
   function openDex() {
     G.UI.show('scr-dex', true);
     const s = G.DB.save;
-    if (dexSel == null) { dexSel = s.partner; dexGen = G.DEX_BY[s.partner].gen; }
-    const owned = Object.keys(s.owned).filter(d => G.DEX_BY[d]).length;
+    if (dexSel == null) { dexSel = s.partner!; dexGen = G.DEX_BY[s.partner!].gen; }
+    const owned = Object.keys(s.owned).filter(d => G.DEX_BY[+d]).length;
     $('dex-total').textContent = `${owned} / ${G.DEX.length}`;
 
     // Pestañas de generación, con cuántos tienes de cada una.
@@ -164,7 +164,7 @@ export const MenuUI = (() => {
       cell.insertAdjacentHTML('beforeend', `<b>${own ? p.name : '???'}</b>${G.UI.stars(p.rarity, 9)}`);
       cell.onclick = () => {
         dexSel = p.dex;
-        grid.querySelectorAll('.cell').forEach(c => c.classList.remove('on'));
+        grid.querySelectorAll('.cell').forEach((c: Element) => c.classList.remove('on'));
         cell.classList.add('on');
         showDetail(p.dex);
       };
@@ -175,19 +175,20 @@ export const MenuUI = (() => {
 
   // Variante que se está viendo en la ficha (normal o shiny).
   let viewShiny = false;
+  let lastDetail: number | undefined;
 
-  function showDetail(dex) {
+  function showDetail(dex: number) {
     const s = G.DB.save;
     const p = G.DEX_BY[dex];
     const own = !!s.owned[dex];
     const hasSh = G.DB.ownsShiny(dex);
     const isPartner = dex === s.partner;
     if (!hasSh) viewShiny = false;
-    else if (isPartner && dex !== (showDetail as any).last) viewShiny = !!s.partnerShiny;
-    (showDetail as any).last = dex;
+    else if (isPartner && dex !== lastDetail) viewShiny = !!s.partnerShiny;
+    lastDetail = dex;
 
     const max = { hp: 183, atk: 1.55, spd: 137 };
-    const bar = (label, v, m, txt) =>
+    const bar = (label: string, v: number, m: number, txt: string | number) =>
       `<div class="stat"><span>${label}</span><div class="bar"><i style="width:${Math.min(100, v / m * 100)}%"></i></div><span>${txt}</span></div>`;
     const usingThis = isPartner && (!hasSh || !!s.partnerShiny === viewShiny);
 
@@ -219,7 +220,7 @@ export const MenuUI = (() => {
     $('dex-big').style.setProperty('--stage-c', !own ? '#5b83d6' : viewShiny ? '#9ae6ff' : G.U.TYPE_COLOR[p.types[0]]);
     $('dex-big').classList.toggle('shiny', own && viewShiny);
     G.UI.sprite($('dex-big'), dex, { lively: own, spin: own, silhouette: !own, scale: 3, hero: true, shiny: own && viewShiny });
-    box.querySelectorAll('.seg button').forEach(b => {
+    box.querySelectorAll<HTMLElement>('.seg button').forEach(b => {
       b.onclick = () => { viewShiny = b.dataset.v === '1'; showDetail(dex); };
     });
     const pick = $('dex-pick');
@@ -235,19 +236,19 @@ export const MenuUI = (() => {
 
   // ---------------- mejoras ----------------
 
-  let upgDex = null;
+  let upgDex!: number;    // el Pokémon elegido en la pantalla de mejoras
 
   function openUpgrades() {
     G.UI.show('scr-upgrades', true);
     const s = G.DB.save;
-    if (!upgDex || !s.owned[upgDex]) upgDex = s.partner;
+    if (!upgDex || !s.owned[upgDex]) upgDex = s.partner!;
     // Selector con tus Pokémon: el compañero primero, luego los que ya tienen mejoras.
-    const sel = $('upg-mon');
-    const lv = d => (Object.values(s.pupg[d] || {}) as number[]).reduce((a, b) => a + b, 0);
+    const sel = $<HTMLSelectElement>('upg-mon');
+    const lv = (d: number) => (Object.values(s.pupg[d] || {}) as number[]).reduce((a, b) => a + b, 0);
     const mons = Object.keys(s.owned).map(Number).filter(d => G.DEX_BY[d])
-      .sort((a, b) => ((b === s.partner) as any) - ((a === s.partner) as any) || lv(b) - lv(a) || a - b);
+      .sort((a, b) => Number(b === s.partner) - Number(a === s.partner) || lv(b) - lv(a) || a - b);
     sel.innerHTML = mons.map(d => `<option value="${d}">${G.DEX_BY[d].name}${d === s.partner ? ' (compañero)' : ''}${lv(d) ? ' · ' + lv(d) + ' niveles' : ''}</option>`).join('');
-    sel.value = upgDex;
+    sel.value = String(upgDex);
     sel.onchange = () => { upgDex = +sel.value; G.Audio.sfx('select'); renderUpgrades(); };
     renderUpgrades();
   }
@@ -277,8 +278,8 @@ export const MenuUI = (() => {
           ${u.id === 'ban' && lvl > 0 ? `<button class="btn small" data-ban>Elegir (${banList().length}/${lvl})</button>` : ''}
           <button class="btn small ${maxed ? '' : 'gold'}" data-buy data-sfx="none" ${maxed || s.coins < cost ? 'disabled' : ''}>
           ${maxed ? 'Máx.' : `<span class="coin"></span> ${cost}`}</button></div>`;
-      if (u.id === 'ban' && lvl > 0) el.querySelector<HTMLElement>('[data-ban]').onclick = () => { banOpen = !banOpen; renderUpgrades(); };
-      el.querySelector<HTMLElement>('[data-buy]').onclick = () => {
+      if (u.id === 'ban' && lvl > 0) el.querySelector<HTMLElement>('[data-ban]')!.onclick = () => { banOpen = !banOpen; renderUpgrades(); };
+      el.querySelector<HTMLElement>('[data-buy]')!.onclick = () => {
         // Se vuelve a leer todo al pulsar (la partida puede haber cambiado desde que se dibujó).
         const sv = G.DB.save, lv = G.DB.upgradesOf(upgDex), now = lv[u.id] || 0;
         if (now >= u.max) { renderUpgrades(); return; }
@@ -316,13 +317,13 @@ export const MenuUI = (() => {
           `<option value="${id}" ${list[i] === id ? 'selected' : ''}>${G.Moves.BY_ID[id].name}</option>`).join('')}</select></label>`).join('')}</div>`;
     el.querySelectorAll<HTMLSelectElement>('select[data-slot]').forEach(sel => {
       sel.onchange = () => {
-        const l = (s.pbind[upgDex] || [null, null, null, null]).slice(0, 4);
+        const l = (s.pbind![upgDex] || [null, null, null, null]).slice(0, 4);
         while (l.length < 4) l.push(null);
-        const i = +sel.dataset.slot, id = sel.value || null;
+        const i = +sel.dataset.slot!, id = sel.value || null;
         // Un movimiento sólo puede estar en un hueco.
         for (let j = 0; j < 4; j++) if (id && l[j] === id) l[j] = null;
         l[i] = id;
-        s.pbind[upgDex] = l;
+        s.pbind![upgDex] = l;
         G.DB.commit();
         G.Audio.sfx('select');
         renderUpgrades();
@@ -339,7 +340,7 @@ export const MenuUI = (() => {
     s.pban = s.pban || {};
     return s.pban[upgDex] || (s.pban[upgDex] = []);
   }
-  function banPicker(max) {
+  function banPicker(max: number) {
     const mon = G.DEX_BY[upgDex];
     const start = G.startMoveOf(upgDex);
     const ids = G.Moves.poolFor(mon).filter(id => id !== start)
@@ -352,7 +353,7 @@ export const MenuUI = (() => {
         return `<button class="chip ${on ? 'on ban' : ''}" data-id="${id}">${G.Icons.html('move:' + id, 16)} ${d.name}${on ? ' ' + G.Icons.html('ban', 14) : ''}</button>`; }).join('')}</div>`;
     el.querySelectorAll<HTMLElement>('[data-id]').forEach(b => {
       b.onclick = () => {
-        const l = banList(), id = b.dataset.id, i = l.indexOf(id);
+        const l = banList(), id = b.dataset.id!, i = l.indexOf(id);
         if (i >= 0) l.splice(i, 1);
         else if (l.length >= max) { G.UI.toast('Ya tienes ' + max + ' vetados: quita uno primero'); return; }
         else l.push(id);

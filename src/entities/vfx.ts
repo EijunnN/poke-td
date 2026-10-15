@@ -9,11 +9,35 @@ import { G } from '../g';
  *   G.VFX.forMove(m)  -> cómo se ve ese movimiento (proyectil, rayo, golpe...)
  *   G.VFX.forType(t)  -> forma por defecto de un tipo (disparos enemigos)
  */
+/** Letra de un píxel: o contorno · d oscuro · m medio · l claro · w brillo · L claro semitransparente. */
+type Letra = 'o' | 'd' | 'm' | 'l' | 'w' | 'L';
+
+interface Grid {
+  w: number; h: number; g: (Letra | null)[][];
+  set(x: number, y: number, c: Letra): void;
+  get(x: number, y: number): Letra | null;
+  fill(fn: (x: number, y: number) => Letra | null): void;
+  outline(): void;
+  line(x0: number, y0: number, x1: number, y1: number, c: Letra, thick?: number, side?: Letra | null): void;
+  arc(cx: number, cy: number, r: number, a0: number, a1: number, c: Letra): void;
+}
+
+interface Forma {
+  w: number; h: number; frames?: number; dir?: boolean; spin?: boolean;
+  gen(P: Grid, f: number): void;
+}
+
+/** Cómo se ve un movimiento (ver MOVE). */
+interface MoveVfx {
+  proj?: string; beam?: string; melee?: string; aura?: string; buff?: string;
+  pal?: string; trail?: string; inward?: boolean; rise?: boolean;
+}
+
 export const VFX = (() => {
   const PX = G.Sprites.PX;
 
   // Paletas por tipo: contorno, oscuro, medio, claro, brillo.
-  const PAL = {
+  const PAL: Record<string, string[]> = {
     fire:     ['#6b1200', '#b8300a', '#ff6a1f', '#ffb22e', '#fff2a0'],
     water:    ['#0f2f78', '#1f56c4', '#3d8bff', '#8ccaff', '#eaf7ff'],
     grass:    ['#14400f', '#24721e', '#45b23c', '#97e36c', '#eaffd0'],
@@ -34,30 +58,30 @@ export const VFX = (() => {
     normal:   ['#3e3834', '#7a7068', '#c4bcb0', '#ece6dc', '#ffffff'],
     aura:     ['#0c2460', '#1c4cb0', '#3a7cff', '#90d2ff', '#ffffff']
   };
-  const IDX = { o: 0, d: 1, m: 2, l: 3, w: 4 };
-  const H = (a, b, c) => G.U.hash(a, b, c);
+  const IDX: Record<Exclude<Letra, 'L'>, number> = { o: 0, d: 1, m: 2, l: 3, w: 4 };
+  const H = (a: number, b: number, c: number): number => G.U.hash(a, b, c);
 
   // ---------------- lienzo de píxeles ----------------
   // Las formas escriben letras (o d m l w, o L = claro semitransparente);
   // luego se colorean con la paleta.
 
-  function grid(w, h) {
-    const g = Array.from({ length: h }, () => Array(w).fill(null));
+  function grid(w: number, h: number): Grid {
+    const g: (Letra | null)[][] = Array.from({ length: h }, () => Array<Letra | null>(w).fill(null));
     return {
       w, h, g,
-      set(x, y, c) { x = Math.round(x); y = Math.round(y); if (x >= 0 && y >= 0 && x < w && y < h) g[y][x] = c; },
-      get(x, y) { return x >= 0 && y >= 0 && x < w && y < h ? g[y][x] : null; },
-      fill(fn) { for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const c = fn(x, y); if (c) g[y][x] = c; } },
+      set(x: number, y: number, c: Letra) { x = Math.round(x); y = Math.round(y); if (x >= 0 && y >= 0 && x < w && y < h) g[y][x] = c; },
+      get(x: number, y: number) { return x >= 0 && y >= 0 && x < w && y < h ? g[y][x] : null; },
+      fill(fn: (x: number, y: number) => Letra | null) { for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const c = fn(x, y); if (c) g[y][x] = c; } },
       // Contorno de 1 px alrededor de lo opaco, como en los sprites de PMD.
       outline() {
-        const marks = [];
+        const marks: [number, number][] = [];
         for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
           if (g[y][x]) continue;
           if ([[1, 0], [-1, 0], [0, 1], [0, -1]].some(([a, b]) => { const c = this.get(x + a, y + b); return c && c !== 'o'; })) marks.push([x, y]);
         }
         for (const [x, y] of marks) g[y][x] = 'o';
       },
-      line(x0, y0, x1, y1, c, thick = 0, side = null) {
+      line(x0: number, y0: number, x1: number, y1: number, c: Letra, thick = 0, side: Letra | null = null) {
         const n = Math.ceil(Math.hypot(x1 - x0, y1 - y0) * 2) + 1;
         for (let i = 0; i <= n; i++) {
           const x = x0 + (x1 - x0) * i / n, y = y0 + (y1 - y0) * i / n;
@@ -65,7 +89,7 @@ export const VFX = (() => {
           this.set(x, y, c);
         }
       },
-      arc(cx, cy, r, a0, a1, c) {
+      arc(cx: number, cy: number, r: number, a0: number, a1: number, c: Letra) {
         const n = Math.ceil(r * Math.abs(a1 - a0) * 2) + 2;
         for (let i = 0; i <= n; i++) { const a = a0 + (a1 - a0) * i / n; this.set(cx + Math.cos(a) * r, cy + Math.sin(a) * r, c); }
       }
@@ -75,7 +99,7 @@ export const VFX = (() => {
   // ---------------- formas ----------------
   // Todas miran hacia la DERECHA (se rotan al dibujar si son direccionales).
 
-  const SHAPES = {
+  const SHAPES: Record<string, Forma> = {
     fire: { w: 15, h: 11, frames: 3, dir: true, gen(P, f) {
       const cx = 10.5, cy = 5;
       for (let x = 1; x <= 9; x++) {                               // cola que parpadea
@@ -258,14 +282,14 @@ export const VFX = (() => {
 
   // ---------------- caché y dibujo ----------------
 
-  const cache = new Map();
+  const cache = new Map<string, HTMLCanvasElement>();
 
-  function rgba(hex, a) {
+  function rgba(hex: string, a: number) {
     const n = parseInt(hex.slice(1), 16);
     return `rgba(${n >> 16 & 255},${n >> 8 & 255},${n & 255},${a})`;
   }
 
-  function sprite(shape, pal, frame = 0) {
+  function sprite(shape: string, pal: string, frame = 0) {
     const S = SHAPES[shape] || SHAPES.ball;
     const f = (frame | 0) % (S.frames || 1);
     const k = shape + '|' + pal + '|' + f;
@@ -275,7 +299,7 @@ export const VFX = (() => {
     S.gen(P, f);
     cv = document.createElement('canvas');
     cv.width = S.w; cv.height = S.h;
-    const c = cv.getContext('2d');
+    const c = cv.getContext('2d')!;
     const colors = PAL[pal] || PAL.normal;
     for (let y = 0; y < S.h; y++) for (let x = 0; x < S.w; x++) {
       const ch = P.g[y][x];
@@ -288,7 +312,7 @@ export const VFX = (() => {
   }
 
   /** Dibuja centrado en (x, y). opts: angle, scale (1 = píxel de juego), frame, alpha. */
-  function draw(ctx, shape, pal, x, y, o: { angle?: number; scale?: number; frame?: number; alpha?: number } = {}) {
+  function draw(ctx: CanvasRenderingContext2D, shape: string, pal: string, x: number, y: number, o: { angle?: number; scale?: number; frame?: number; alpha?: number } = {}) {
     const S = SHAPES[shape] || SHAPES.ball;
     const cv = sprite(shape, pal, o.frame || 0);
     const k = PX * (o.scale || 1);
@@ -305,9 +329,9 @@ export const VFX = (() => {
     ctx.restore();
   }
 
-  function isDir(shape) { return !!(SHAPES[shape] && SHAPES[shape].dir); }
-  function spins(shape) { return !!(SHAPES[shape] && SHAPES[shape].spin); }
-  function frames(shape) { return (SHAPES[shape] && SHAPES[shape].frames) || 1; }
+  function isDir(shape: string) { return !!(SHAPES[shape] && SHAPES[shape].dir); }
+  function spins(shape: string) { return !!(SHAPES[shape] && SHAPES[shape].spin); }
+  function frames(shape: string) { return (SHAPES[shape] && SHAPES[shape].frames) || 1; }
 
   // ---------------- cómo se ve cada movimiento ----------------
   //   proj: forma del proyectil (también novas y orbes)
@@ -316,7 +340,7 @@ export const VFX = (() => {
   //   aura / buff: partícula que acompaña
   //   pal: paleta si no es la del tipo · trail: partículas de estela
 
-  const MOVE = {
+  const MOVE: Record<string, MoveVfx> = {
     'quick-attack':  { proj: 'streak' },
     'ember':         { proj: 'fire', trail: 'ember' },
     'heat-wave':     { proj: 'fire', trail: 'ember' },
@@ -383,17 +407,17 @@ export const VFX = (() => {
     'hex':           { beam: 'shadow', proj: 'shadow' }
   };
 
-  const TYPE_SHAPE = {
+  const TYPE_SHAPE: Record<string, string> = {
     fire: 'fire', water: 'drop', grass: 'leaf', electric: 'bolt', psychic: 'ring', ice: 'shard',
     fighting: 'ball', poison: 'blob', ground: 'blob', flying: 'wind', bug: 'needle', rock: 'rock',
     ghost: 'shadow', dragon: 'fire', dark: 'crescent', steel: 'shard', fairy: 'star', normal: 'star'
   };
 
-  function forMove(m) {
+  function forMove(m: { id: string; type: string }) {
     const v = MOVE[m.id] || {};
     return Object.assign({ pal: m.type, proj: TYPE_SHAPE[m.type] || 'ball' }, v, { pal: v.pal || m.type });
   }
-  function forType(type) { return { proj: TYPE_SHAPE[type] || 'ball', pal: PAL[type] ? type : 'normal' }; }
+  function forType(type: string) { return { proj: TYPE_SHAPE[type] || 'ball', pal: PAL[type] ? type : 'normal' }; }
 
   return { PAL, SHAPES, draw, sprite, forMove, forType, isDir, spins, frames };
 })();

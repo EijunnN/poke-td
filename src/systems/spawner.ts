@@ -1,4 +1,7 @@
 import { G } from '../g';
+import type { Player } from '../entities/player';
+import type { Enemy } from '../entities/enemy';
+import type { EnemyDef } from '../data/enemies';
 /* ============ spawner.js — oleadas, jefes y shinies ============
  * Los enemigos aparecen en un anillo justo fuera de la vista, así que nunca
  * se materializan en pantalla. Cada ~45 s hay una "marea": una avalancha
@@ -11,6 +14,9 @@ import { G } from '../g';
  * al azar, fuera de la vista de TODOS, y hay más y más fuertes según cuántos
  * jugáis (ver G.Coop.scaleRate / scaleHp).
  */
+/** Jugador con la velocidad suavizada que le calcula EnemyMgr.update. */
+type Anchor = Player & { _vx?: number; _vy?: number };
+
 export const Spawner = (() => {
   // Tope de enemigos a la vez (antes 420: con tantos se ralentizaba). Cuando
   // se llega al tope, los que siguen saliendo son "élite" (más vida, daño y
@@ -21,9 +27,9 @@ export const Spawner = (() => {
   const DENSITY = 0.24, DMG_K = 2.4, XP_K = 5.6;
   // La resistencia extra crece con la run: al principio ×3,3 y hasta ×5
   // hacia el minuto 6, cuando ya tienes ataques para tumbarlos.
-  const hpK = t => 3.3 + Math.min(1.7, t / 210);
+  const hpK = (t: number) => 3.3 + Math.min(1.7, t / 210);
   const SHINY_RATE = 1 / 4096;
-  let acc = 0, bossIdx = 0, surgeT = 32, announce = null, announceT = 0, preloadT = 0;
+  let acc = 0, bossIdx = 0, surgeT = 32, announce: string | null = null, announceT = 0, preloadT = 0;
   let forceShiny = 0;           // para pruebas: los N próximos salen shiny
 
   function reset() {
@@ -33,25 +39,25 @@ export const Spawner = (() => {
   }
 
   /** Enemigos por segundo según el minuto de la run. */
-  function rate(t) {
+  function rate(t: number) {
     return (1.6 + t * 0.028 + Math.pow(t / 60, 1.6) * 0.5) * DENSITY;
   }
 
-  function ringPoint(pl, angle) {
+  function ringPoint(pl: Anchor, angle: number): [number, number] {
     const d = G.Camera.outerRadius() + G.U.rand(10, 70);
     return [pl.x + Math.cos(angle) * d, pl.y + Math.sin(angle) * d * 0.9];
   }
 
-  let players = [];
+  let players: Anchor[] = [];
 
   /** ¿Lo vería algún jugador? (para no aparecer delante de nadie) */
-  function seenByAnyone(x, y) {
+  function seenByAnyone(x: number, y: number) {
     const r = G.Camera.outerRadius() - 30;
     return players.some(o => G.U.dist2(o.x, o.y, x, y) < r * r);
   }
 
   /** Punto del anillo donde quepa: no dentro de paredes ni en el agua. */
-  function freePoint(pl, angle, flying) {
+  function freePoint(pl: Anchor, angle: number, flying: boolean): [number, number] | null {
     for (let i = 0; i < 8; i++) {
       const a = angle + (i === 0 ? 0 : G.U.rand(-0.9, 0.9));
       const [x, y] = ringPoint(pl, a);
@@ -67,17 +73,17 @@ export const Spawner = (() => {
     return alive.length ? G.U.pick(alive) : players[0];
   }
 
-  function scaled(sc, k) { return k === 1 ? sc : Object.assign({}, sc, { hp: sc.hp * k }); }
+  function scaled<T extends { hp: number }>(sc: T, k: number) { return k === 1 ? sc : Object.assign({}, sc, { hp: sc.hp * k }); }
 
-  function isFlyer(def) { return G.Sprites.hovers(def.dex); }
+  function isFlyer(def: EnemyDef) { return G.Sprites.hovers(def.dex); }
 
-  function rollShiny(dex) {
+  function rollShiny(dex: number) {
     if (!G.Sprites.hasShiny(dex)) return false;
     if (forceShiny > 0) { forceShiny--; return true; }
     return Math.random() < SHINY_RATE;
   }
 
-  function spawnOne(pl, t, angle?: number) {
+  function spawnOne(pl: Anchor, t: number, angle?: number) {
     const def = G.U.pick(G.Enemies.bagAt(t));
     const pt = freePoint(pl, angle == null ? Math.random() * 6.2832 : angle, isFlyer(def));
     if (!pt) return null;
@@ -95,7 +101,7 @@ export const Spawner = (() => {
     return e;
   }
 
-  function spawnBoss(pl, t, b) {
+  function spawnBoss(pl: Anchor, t: number, b: EnemyDef & { at: number }) {
     const [x, y] = ringPoint(pl, Math.random() * 6.2832);
     const e = new G.Enemy(b, x, y, scaled(G.Enemies.bossScale(t), G.Coop.scaleHp(players.length) * (players.length > 1 ? 1.4 : 1)), true);
     if (rollShiny(b.dex)) e.makeShiny();
@@ -107,7 +113,7 @@ export const Spawner = (() => {
   }
 
   /** @param who  el jugador o la lista de jugadores (cooperativo) */
-  function update(dt, who, t) {
+  function update(dt: number, who: Anchor | Anchor[], t: number) {
     players = Array.isArray(who) ? who : [who];
     if (announceT > 0) announceT -= dt;
     // En la arena de la grieta no sale nada más (y el reloj de jefes espera).
@@ -148,7 +154,7 @@ export const Spawner = (() => {
   }
 
   /** Unos cuantos de golpe desde un lado (al empezar una horda). */
-  function burst(n) {
+  function burst(n: number) {
     const base = Math.random() * 6.2832, target = anchor() || G.Game.player, t = G.Game.st.time;
     for (let i = 0; i < n && G.EnemyMgr.count < CAP + 10; i++) spawnOne(target, t, base + G.U.rand(-0.6, 0.6));
   }
@@ -157,10 +163,10 @@ export const Spawner = (() => {
    * Un rezagado vuelve a salir por delante del jugador (hacia donde corre),
    * fuera de la vista. Devuelve false si no hay sitio (entonces se quita).
    */
-  function ahead(e, pl) {
+  function ahead(e: Enemy, pl: Anchor) {
     if (!players.length) players = [pl];
     const sp = Math.hypot(pl._vx || 0, pl._vy || 0);
-    const a0 = sp > 20 ? Math.atan2(pl._vy, pl._vx) : Math.random() * 6.2832;
+    const a0 = sp > 20 ? Math.atan2(pl._vy!, pl._vx!) : Math.random() * 6.2832;
     const pt = freePoint(pl, a0 + G.U.rand(-0.9, 0.9), e.flying);
     if (!pt) return false;
     e.x = pt[0]; e.y = pt[1]; e.kx = e.ky = 0;
@@ -170,7 +176,7 @@ export const Spawner = (() => {
 
   /** Aviso grande en pantalla (también lo usan el bioma y los shinies). */
   /** @param local  sólo en este ordenador (no se manda a los compañeros) */
-  function say(text, secs = 2.6, local = false) {
+  function say(text: string, secs = 2.6, local = false) {
     announce = text; announceT = secs;
     if (G.Coop.isHost && !local) G.Coop.say(text, secs);
   }
@@ -178,7 +184,7 @@ export const Spawner = (() => {
   function banner() { return announceT > 0 ? { text: announce, t: announceT } : null; }
 
   /** Invitado en cooperativo: sólo corre el reloj del aviso. */
-  function tickBanner(dt) { if (announceT > 0) announceT -= dt; }
+  function tickBanner(dt: number) { if (announceT > 0) announceT -= dt; }
 
   return { reset, update, ahead, burst, tickBanner, banner, say, rate, SHINY_RATE, CAP,
            debugForceShiny(n = 1) { forceShiny = n; } };

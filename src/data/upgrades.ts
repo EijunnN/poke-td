@@ -36,15 +36,15 @@ export const Upgrades = (() => {
   const BY: Record<string, UpgradeDef> = {};
   for (const u of LIST) BY[u.id] = u;
 
-  function cost(id, lvl) {
+  function cost(id: string, lvl: number): number {
     const u = BY[id];
     return Math.round(u.base * Math.pow(u.grow, lvl) / 10) * 10;
   }
 
   /** Niveles comprados -> modificadores para G.Player. */
-  function perks(levels = {}) {
+  function perks(levels: Record<string, number> = {}) {
     // Nunca por encima del máximo (una partida editada a mano no da más poder).
-    const L = id => Math.max(0, Math.min(BY[id].max, Math.floor(+levels[id] || 0)));
+    const L = (id: string) => Math.max(0, Math.min(BY[id].max, Math.floor(+levels[id] || 0)));
     return {
       hp: L('hp') * 8,
       atkMul: 1 + L('atk') * 0.04,

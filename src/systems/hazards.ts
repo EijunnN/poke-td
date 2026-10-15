@@ -1,4 +1,5 @@
 import { G } from '../g';
+import type { PokeType } from '../data/types';
 /* ============ hazards.js — ataques con aviso de los enemigos ============
  * Un peligro se dibuja primero en el suelo como AVISO (se va llenando) y, al
  * cumplirse el tiempo, golpea a quien esté dentro:
@@ -12,12 +13,31 @@ import { G } from '../g';
  * Los de Arceus (systems/judgment.js) quitan un % de la vida (pct) sin mirar
  * tipos ni defensa (pure), y la Sentencia cae como un pilar de luz (vis).
  */
+/** Peligro con aviso. Las zonas llevan `r`; los rayos, `angle`, `len` y `w`. */
+export interface Hazard {
+  kind: 'zone' | 'beam';
+  x: number; y: number;
+  r: number; angle: number; len: number; w: number;
+  delay: number;
+  dmg: number;
+  type?: PokeType | null;
+  color: string;
+  pct?: number;
+  pure?: boolean;
+  vis?: string;
+  t: number;
+  hit: boolean;
+  end: number;
+}
+/** Lo que recibe add(): según `kind` faltan campos (zona sin ángulo, rayo sin radio). */
+export type HazardInit = Partial<Hazard> & Pick<Hazard, 'kind' | 'x' | 'y' | 'delay' | 'dmg' | 'color'>;
+
 export const Hazards = (() => {
-  let list = [];
+  let list: Hazard[] = [];
 
   /** h: { kind, x, y, r | angle, len, w, delay, dmg, type, color, pct?, pure?, vis? } */
-  function add(h, fromNet = false) {
-    const o = Object.assign({ t: 0, hit: false, end: 0.3 }, h);
+  function add(h: HazardInit, fromNet = false): Hazard {
+    const o = Object.assign({ t: 0, hit: false, end: 0.3 }, h) as Hazard;
     list.push(o);
     if (!fromNet && G.Coop.isHost) {
       G.Coop.broadcast(['hz', { kind: o.kind, x: Math.round(o.x), y: Math.round(o.y), r: o.r, angle: o.angle, len: o.len, w: o.w,
@@ -28,7 +48,7 @@ export const Hazards = (() => {
 
   function clear() { list = []; }
 
-  function inside(h, x, y, r) {
+  function inside(h: Hazard, x: number, y: number, r: number): boolean {
     if (h.kind === 'zone') return G.U.dist2(x, y, h.x, h.y) < (h.r + r * 0.6) ** 2;
     const ca = Math.cos(h.angle), sa = Math.sin(h.angle);
     const px = x - h.x, py = y - h.y;
@@ -37,7 +57,7 @@ export const Hazards = (() => {
     return Math.abs(-px * sa + py * ca) <= h.w / 2 + r * 0.6;
   }
 
-  function update(dt) {
+  function update(dt: number) {
     const pl = G.Game.player;
     for (let i = list.length - 1; i >= 0; i--) {
       const h = list[i];
@@ -54,7 +74,7 @@ export const Hazards = (() => {
     }
   }
 
-  function detonate(h) {
+  function detonate(h: Hazard) {
     const near = G.Camera.sees(h.x, h.y, 120);
     if (h.vis === 'pillar') {
       // Pilar de luz que cae del cielo.
@@ -68,12 +88,12 @@ export const Hazards = (() => {
       if (near) { G.Audio.sfx('break'); if (h.r > 60) G.Camera.kick(0.35); }
     } else {
       G.FX.beam(h.x, h.y - G.LIFT, h.angle, h.len, h.w, h.color, G.VFX.forType(h.type || (h.pure ? 'electric' : 'normal')));
-      if (near) G.Audio.sfx('shot', { kind: 'beam', type: h.type });
+      if (near) G.Audio.sfx('shot', { kind: 'beam', type: h.type ?? undefined });
     }
   }
 
   /** Avisos en el suelo (debajo de los Pokémon). */
-  function draw(ctx) {
+  function draw(ctx: CanvasRenderingContext2D) {
     const blink = Math.sin(performance.now() / 60) > 0;
     for (const h of list) {
       if (h.hit) continue;

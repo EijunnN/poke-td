@@ -27,7 +27,7 @@ export const Settings = (() => {
   const DEF: SettingsData = { quality: 'auto', dmgNumbers: true, calm: false, fps: false, stick: 1, res: 'high' };
   let s: SettingsData = Object.assign({}, DEF);
   try { Object.assign(s, JSON.parse(localStorage.getItem(KEY) || '{}')); } catch (e) { /* nada */ }
-  const fns = new Set<(k: string, v: any) => void>();
+  const fns = new Set<(k: string, v: unknown) => void>();
 
   // Calidad automática: empieza alta (media en móvil) y baja si va a tirones.
   const touchy = matchMedia('(pointer: coarse)').matches;
@@ -36,11 +36,11 @@ export const Settings = (() => {
 
   function save() { try { localStorage.setItem(KEY, JSON.stringify(s)); } catch (e) { /* nada */ } }
   function get<K extends keyof SettingsData>(k: K): SettingsData[K];
-  function get(k: string): any;
-  function get(k: string) { return s[k]; }
+  function get(k: string): unknown;
+  function get(k: string) { return s[k as keyof SettingsData]; }
   function set<K extends keyof SettingsData>(k: K, v: SettingsData[K]): void;
-  function set(k: string, v: any): void;
-  function set(k: string, v: any) { s[k] = v; save(); fns.forEach(fn => { try { fn(k, v); } catch (e) { /* nada */ } }); }
+  function set(k: string, v: unknown): void;
+  function set(k: string, v: unknown) { (s as unknown as Record<string, unknown>)[k] = v; save(); fns.forEach(fn => { try { fn(k, v); } catch (e) { /* nada */ } }); }
 
   /** Lo llama el bucle del juego en cada fotograma (sólo durante la partida). */
   function sample(dt: number) {
@@ -57,7 +57,7 @@ export const Settings = (() => {
 
   return {
     get, set, sample, DEF,
-    on(fn: (k: string, v: any) => void) { fns.add(fn); },
+    on(fn: (k: string, v: unknown) => void) { fns.add(fn); },
     get all() { return Object.assign({}, s); },
     get fx() { return s.quality === 'auto' ? autoLevel : s.quality === 'high' ? 2 : s.quality === 'mid' ? 1 : 0; },
     get autoLevel() { return autoLevel; },

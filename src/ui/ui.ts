@@ -1,4 +1,5 @@
 import { G } from '../g';
+import type { PokeType } from '../data/types';
 /* ============ ui.js — utilidades comunes de la interfaz ============
  * - Mostrar / ocultar pantallas.
  * - Sprites animados de PMD dentro de <canvas> del DOM (menú, colección,
@@ -6,22 +7,33 @@ import { G } from '../g';
  * - Sonidos de interfaz (por delegación: cualquier botón suena solo).
  * - Panel de sonido, avisos (toast), monedas, chips de tipo, estrellas.
  */
+interface SpriteOpts {
+  anim?: string; dir?: number; shiny?: boolean; silhouette?: boolean; lively?: boolean;
+  spin?: boolean; shadow?: boolean; scale?: number; hero?: boolean;
+}
+interface Twinkle { x: number; y: number; t: number; life: number }
+interface LiveSprite {
+  cv: HTMLCanvasElement; ctx: CanvasRenderingContext2D; a: InstanceType<typeof G.Sprites.Animator>;
+  dex: number; opts: SpriteOpts; t: number; spinT: number; sparkT: number; tw?: Twinkle[];
+}
+
 export const UI = (() => {
-  const $ = (id: string): any => document.getElementById(id);
+  // Los elementos de index.html existen siempre; `$<HTMLInputElement>(id)` para el tipo concreto.
+  const $ = <T extends HTMLElement = HTMLElement>(id: string): T => document.getElementById(id) as T;
   const SCREENS = ['scr-login', 'scr-test', 'scr-result', 'scr-starters', 'scr-menu',
                    'scr-dex', 'scr-upgrades', 'scr-gacha', 'scr-levelup', 'scr-pause', 'scr-over',
                    'scr-nick', 'scr-friends', 'scr-rooms', 'scr-lobby', 'scr-rank', 'scr-item', 'scr-goals', 'scr-bond', 'scr-mod'];
 
-  function show(id, keepMenu = false) {
+  function show(id: string, keepMenu = false) {
     for (const s of SCREENS) if (s !== id && !(keepMenu && s === 'scr-menu')) $(s).classList.add('hidden');
     $(id).classList.remove('hidden');
   }
-  function hide(id) { $(id).classList.add('hidden'); }
+  function hide(id: string) { $(id).classList.add('hidden'); }
   function hideAll() { for (const s of SCREENS) $(s).classList.add('hidden'); }
-  function isOpen(id) { return !$(id).classList.contains('hidden'); }
+  function isOpen(id: string) { return !$(id).classList.contains('hidden'); }
 
   /** Barra superior (monedas, usuario, sonido) sólo fuera de las runs. */
-  function chrome(on) {
+  function chrome(on: boolean) {
     $('topbar').classList.toggle('hidden', !on);
     $('credits-line').classList.toggle('hidden', !on);
     if (!on) $('sound-panel').classList.add('hidden');
@@ -36,33 +48,34 @@ export const UI = (() => {
     // Punto de sincronización: verde = guardado en la nube, amarillo = guardando,
     // rojo = sin conexión (se guarda en local y se sube al volver).
     const st = G.DB.guest ? 'guest' : G.DB.syncState;
-    const TIP = { ok: 'Guardado en la nube', syncing: 'Guardando…', pending: 'Guardando…',
+    const TIP: Record<string, string> = { ok: 'Guardado en la nube', syncing: 'Guardando…', pending: 'Guardando…',
                   offline: 'Sin conexión: se subirá al volver', local: 'Guardado sólo en este navegador', guest: 'Invitado: no se guarda' };
     $('user-pill').innerHTML = G.Icons.html(G.DB.guest ? 'user' : 'crown', 18) + ' <span translate="no">' + (G.DB.guest ? G.T('Invitado') : (G.DB.user || '')) + '</span>' +
       `<i class="sync ${st}" title="${TIP[st] || ''}"></i>`;
     $('user-pill').title = TIP[st] || '';
   }
 
-  let toastEl = null, toastT = 0;
-  function toast(msg, ms = 2200) {
+  let toastEl: HTMLDivElement | null = null, toastT = 0;
+  function toast(msg: string | undefined, ms = 2200) {
     if (!toastEl) { toastEl = document.createElement('div'); toastEl.className = 'toast'; document.body.appendChild(toastEl); }
-    toastEl.textContent = msg;
-    toastEl.style.display = 'block';
+    const el = toastEl;
+    el.textContent = msg || '';
+    el.style.display = 'block';
     clearTimeout(toastT);
-    toastT = setTimeout(() => { toastEl.style.display = 'none'; }, ms);
+    toastT = setTimeout(() => { el.style.display = 'none'; }, ms);
   }
 
-  function typeChips(types) {
-    return types.map(t => `<span class="type" style="background:${G.U.TYPE_COLOR[t]}">${G.U.TYPE_NAME[t]}</span>`).join('');
+  function typeChips(types: PokeType[]) {
+    return types.map((t: PokeType) => `<span class="type" style="background:${G.U.TYPE_COLOR[t]}">${G.U.TYPE_NAME[t]}</span>`).join('');
   }
 
   /** Rareza: la Poké Ball que le corresponde (ver G.Icons.rarity). */
-  function stars(n, size = 12) { return G.Icons.rarity(n, size > 16 ? 24 : 12); }
+  function stars(n: number, size = 12) { return G.Icons.rarity(n, size > 16 ? 24 : 12); }
 
   // ---------------- sonido de la interfaz ----------------
 
   const CLICKABLE = '.btn, .menu-item, .tab, .chip, .card, .cell:not(.locked), .answer, .gen-tab';
-  let lastHover = null;
+  let lastHover: HTMLElement | null = null;
 
   function wireSounds() {
     document.addEventListener('pointerover', e => {
@@ -81,7 +94,7 @@ export const UI = (() => {
   }
 
   /** Controles de volumen (se usan en la barra superior y en la pausa). */
-  function soundControls(box) {
+  function soundControls(box: HTMLElement) {
     const st = G.Audio.settings;
     box.innerHTML = `
       <div class="snd-row">${G.Icons.html('sound', 18)}<span>Música</span>
@@ -89,11 +102,11 @@ export const UI = (() => {
       <div class="snd-row">${G.Icons.html('sound', 18)}<span>Efectos</span>
         <input type="range" min="0" max="100" value="${Math.round(st.sfx * 100)}" data-k="sfx"></div>
       <button class="btn small ${st.muted ? 'gold' : ''}" data-mute>${st.muted ? 'Activar sonido' : 'Silenciar todo'}</button>`;
-    box.querySelectorAll('input[type=range]').forEach(r => {
-      r.oninput = () => G.Audio.setVolume(r.dataset.k, r.value / 100);
+    box.querySelectorAll<HTMLInputElement>('input[type=range]').forEach(r => {
+      r.oninput = () => G.Audio.setVolume(r.dataset.k as 'music' | 'sfx', +r.value / 100);
       r.onchange = () => G.Audio.sfx('click');
     });
-    box.querySelector('[data-mute]').onclick = () => { G.Audio.toggleMute(); soundControls(box); refreshSoundIcon(); };
+    box.querySelector<HTMLElement>('[data-mute]')!.onclick = () => { G.Audio.toggleMute(); soundControls(box); refreshSoundIcon(); };
   }
 
   function refreshSoundIcon() {
@@ -108,13 +121,13 @@ export const UI = (() => {
 
   function openLegal() {
     legalBack = SCREENS.find(s => isOpen(s)) || null;
-    $('legal-mail').textContent = REPO.replace('https://', '') + '/issues';
-    $('legal-mail').href = REPO + '/issues';
-    $('legal-mail').target = '_blank';
-    $('legal-repo').textContent = REPO.replace('https://', '');
-    $('legal-repo').href = REPO;
+    $<HTMLAnchorElement>('legal-mail').textContent = REPO.replace('https://', '') + '/issues';
+    $<HTMLAnchorElement>('legal-mail').href = REPO + '/issues';
+    $<HTMLAnchorElement>('legal-mail').target = '_blank';
+    $<HTMLAnchorElement>('legal-repo').textContent = REPO.replace('https://', '');
+    $<HTMLAnchorElement>('legal-repo').href = REPO;
     const canDelete = G.DB.loggedIn && !G.DB.guest;
-    $('legal-delete').disabled = !canDelete;
+    $<HTMLButtonElement>('legal-delete').disabled = !canDelete;
     $('legal-del-msg').textContent = canDelete ? '' : 'Inicia sesión para poder borrar tu cuenta.';
     $('scr-legal').classList.remove('hidden');
   }
@@ -129,7 +142,7 @@ export const UI = (() => {
     return new Promise<{ pass: string } | null>(done => {
       const el = document.createElement('section');
       el.className = 'scr dim';
-      el.style.zIndex = 70 as any;
+      el.style.zIndex = '70';
       el.innerHTML = `<div class="box center" style="max-width:380px">
         <h3>Borrar cuenta</h3>
         <p class="sub">Se borrarán tu cuenta y toda tu partida, para siempre. Para confirmarlo, escribe tu contraseña.</p>
@@ -139,10 +152,10 @@ export const UI = (() => {
           <button class="btn danger" data-a="yes">Borrar para siempre</button>
         </div></div>`;
       document.body.appendChild(el);
-      const inp = el.querySelector('input');
-      const end = v => { el.remove(); done(v); };
-      el.querySelector<HTMLElement>('[data-a=no]').onclick = () => end(null);
-      el.querySelector<HTMLElement>('[data-a=yes]').onclick = () => { if (inp.value) end({ pass: inp.value }); else inp.focus(); };
+      const inp = el.querySelector('input')!;
+      const end = (v: { pass: string } | null) => { el.remove(); done(v); };
+      el.querySelector<HTMLElement>('[data-a=no]')!.onclick = () => end(null);
+      el.querySelector<HTMLElement>('[data-a=yes]')!.onclick = () => { if (inp.value) end({ pass: inp.value }); else inp.focus(); };
       inp.onkeydown = e => { if (e.key === 'Enter' && inp.value) end({ pass: inp.value }); if (e.key === 'Escape') end(null); };
       setTimeout(() => inp.focus(), 50);
     });
@@ -155,12 +168,12 @@ export const UI = (() => {
       if ((e.target as Element).closest('[data-legal]')) { e.preventDefault(); openLegal(); }
     });
     $('legal-close').onclick = closeLegal;
-    $('legal-delete').onclick = async () => {
+    $<HTMLButtonElement>('legal-delete').onclick = async () => {
       const ok = await confirmDelete();
       if (!ok) return;
-      $('legal-delete').disabled = true;
+      $<HTMLButtonElement>('legal-delete').disabled = true;
       const r = await G.DB.deleteAccount(ok.pass);
-      if (!r.ok) { $('legal-del-msg').textContent = r.error; $('legal-delete').disabled = false; return; }
+      if (!r.ok) { $('legal-del-msg').textContent = r.error || ''; $<HTMLButtonElement>('legal-delete').disabled = false; return; }
       closeLegal();
       toast('Cuenta borrada');
       G.Audio.music(null);
@@ -183,7 +196,7 @@ export const UI = (() => {
 
   // ---------------- sprites en canvas del DOM ----------------
 
-  const live = new Set<any>();
+  const live = new Set<LiveSprite>();
   /**
    * Azar propio de estos dibujos (cuándo atacan, centelleos de shiny): sólo se animan cuando el
    * navegador avisa de que se ven, y eso llega cuando quiere; con el azar del juego, la partida
@@ -208,18 +221,18 @@ export const UI = (() => {
    *         hero      vista de un solo Pokémon: puede reducir la escala para
    *                   que quepa, porque ahí no se compara con nada }
    */
-  function sprite(cv, dex, opts: Record<string, any> = {}) {
+  function sprite(cv: HTMLCanvasElement, dex: number, opts: SpriteOpts = {}) {
     for (const s of live) if (s.cv === cv) live.delete(s);
     const a = new G.Sprites.Animator(dex, 1, !!opts.shiny);
     a.dir = opts.dir || 0;
     a.loop(opts.anim || 'Idle');
-    const s = { cv, ctx: cv.getContext('2d'), a, dex, opts, t: urand() * 3, spinT: 0, sparkT: 0 };
+    const s: LiveSprite = { cv, ctx: cv.getContext('2d')!, a, dex, opts, t: urand() * 3, spinT: 0, sparkT: 0 };
     live.add(s);
     if (io) io.observe(cv);
     return s;
   }
 
-  function tick(dt) {
+  function tick(dt: number) {
     for (const s of live) {
       if (!s.cv.isConnected) { live.delete(s); if (io) io.unobserve(s.cv); continue; }
       if (s.cv.offsetParent === null) continue;            // pantalla oculta
@@ -284,7 +297,7 @@ export const UI = (() => {
   }
 
   /** Crea un <canvas> con un sprite animado (para rejillas). */
-  function spriteCanvas(dex, w, h, opts) {
+  function spriteCanvas(dex: number, w: number, h: number, opts?: SpriteOpts) {
     const cv = document.createElement('canvas');
     cv.width = w; cv.height = h;
     sprite(cv, dex, opts);

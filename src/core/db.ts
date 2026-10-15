@@ -1,4 +1,5 @@
 import { G } from '../g';
+import type { MissionBook } from '../data/missions';
 /* ============ db.ts — base de datos: servidor propio o local ============
  * TODO el acceso a datos persistentes pasa por aquí. El resto del juego sólo
  * usa G.DB.*.
@@ -30,6 +31,7 @@ export interface SaveStats {
   coinsEarned: number; shinies: number; bossesTotal: number; riftWins: number; evolutions: number;
   missionsDone: number; groupRuns: number; bestGroupTime: number;
   judged?: number; judgeTime?: number; judgeBosses?: number;   // Sentencia de Arceus (se crean al usarlas)
+  [k: string]: number | undefined;       // para leerlas por nombre (logros, fusión...)
   // Defensa (modes/td.ts; se crean al usarlas): partidas, mejor oleada superada, victorias,
   // victorias en grupo y victorias sin perder ninguna vida.
   tdRuns?: number; tdBestWave?: number; tdWins?: number; tdGroupWins?: number; tdPerfect?: number;
@@ -47,7 +49,7 @@ export interface SaveData {
   partner: number | null;                // dex del Pokémon con el que juegas
   partnerShiny: boolean;
   starter: number | null;
-  personality: { trait: string; scores: any } | null;
+  personality: { trait: string; scores: Record<string, number> } | null;
   upgrades: Record<string, number>;      // (antiguo) mejoras de la cuenta
   pupg: Record<string, Record<string, number>>;   // dex -> { id -> nivel }
   tickets: { t1: number; t10: number };
@@ -57,7 +59,7 @@ export interface SaveData {
   itemsFound: Record<string, number>;
   evoMoves: Record<string, number>;
   ach: Record<string, number>;
-  missions: Record<string, any>;         // misiones del día / semana (systems/progress)
+  missions: MissionBook;                 // misiones del día / semana (systems/progress)
   profile: { favs: { dex: number; shiny: boolean }[]; title: string };
   stats: SaveStats;
   pupgDone?: boolean;                    // migración v2 -> v3 hecha
@@ -85,6 +87,7 @@ export const DB = (() => {
 
   // ---------------- almacenamiento local seguro ----------------
 
+  // (any: lo que haya guardado en el navegador, de cualquier forma)
   function read(k: string): any {
     try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : null; }
     catch (e) { storageOk = false; return null; }
@@ -165,12 +168,12 @@ export const DB = (() => {
    * servidor (firestore.rules, saves).
    */
   function sanitize(s: SaveData) {
-    const n = (v: any) => (Number.isFinite(+v) && +v > 0 ? Math.floor(+v) : 0);
+    const n = (v: any) => (Number.isFinite(+v) && +v > 0 ? Math.floor(+v) : 0);   // (any: puede venir cualquier cosa)
     s.coins = n(s.coins);
     s.tickets.t1 = n(s.tickets.t1);
     s.tickets.t10 = n(s.tickets.t10);
     if (G.DEX_BY) for (const coll of ['owned', 'shiny']) {
-      for (const d of Object.keys(s[coll] || {})) if (!G.DEX_BY[d]) delete s[coll][d];
+      for (const d of Object.keys(s[coll] || {})) if (!G.DEX_BY[+d]) delete s[coll][d];
     }
     // Atajos: 4 huecos con un movimiento que exista (o null), sin repetir.
     if (s.pbind && typeof s.pbind === 'object') {
@@ -209,12 +212,14 @@ export const DB = (() => {
    *   - monedas, compañero, pity...: los de la versión más reciente
    * Es idempotente: fusionar dos veces da lo mismo.
    */
-  function merge(a: SaveData | null, b?: SaveData | null): SaveData {
-    if (!a) return b;
+  function merge(a: SaveData, b?: SaveData | null): SaveData;
+  function merge(a: SaveData | null | undefined, b?: SaveData | null): SaveData | null;
+  function merge(a: SaveData | null | undefined, b?: SaveData | null): SaveData | null {
+    if (!a) return b || null;
     if (!b) return a;
     const newer = (a.updated || 0) >= (b.updated || 0) ? a : b;
     const older = newer === a ? b : a;
-    const r = JSON.parse(JSON.stringify(newer));
+    const r: SaveData = JSON.parse(JSON.stringify(newer));
     for (const coll of ['owned', 'shiny']) {
       r[coll] = r[coll] || {};
       for (const k in older[coll] || {}) {
@@ -234,11 +239,11 @@ export const DB = (() => {
       for (const k in older[coll] || {}) if (!r[coll][k]) r[coll][k] = older[coll][k];
     }
     // Misiones del mismo día/semana: el mayor progreso y lo ya recogido.
-    const mo = older.missions || {}, mr = r.missions = r.missions || {};
-    for (const [per, list] of [['day', 'daily'], ['week', 'weekly']]) {
+    const mo = older.missions || {}, mr: MissionBook = r.missions = r.missions || {};
+    for (const [per, list] of [['day', 'daily'], ['week', 'weekly']] as const) {
       if (mr[per] !== mo[per] || !mr[list] || !mo[list]) continue;
-      mr[list].forEach((m, i) => {
-        const o = mo[list][i];
+      mr[list]!.forEach((m, i) => {
+        const o = mo[list]![i];
         if (!o || o.id !== m.id) return;
         m.prog = Math.max(m.prog || 0, o.prog || 0);
         m.claimed = m.claimed || o.claimed;
@@ -259,6 +264,7 @@ export const DB = (() => {
   // Pokémon...): las pantallas abiertas guardan referencias a ellos. Antes se
   // sustituían y una compra hecha justo después de subir la partida se
   // apuntaba en la copia vieja: se cobraban las monedas y la mejora se perdía.
+  // (any: copia profunda entre partidas, cuyas claves son de cualquier módulo)
   const isObj = (v: any) => v && typeof v === 'object' && !Array.isArray(v);
   function assignDeep(dst: any, src: any) {
     for (const k of Object.keys(dst)) if (!(k in src)) delete dst[k];
@@ -326,7 +332,7 @@ export const DB = (() => {
       return { ok: false, error: 'Usuario o contraseña incorrectos.' };
     }
     beginLocal(name.toLowerCase(), acc.name);
-    return { ok: true, isNew: !save.partner };
+    return { ok: true, isNew: !save!.partner };
   }
 
   function restoreLocal() {
@@ -347,7 +353,7 @@ export const DB = (() => {
   let sid: string | null = null;          // id de la cuenta en el servidor (texto)
   let uid: string | null = null;          // nombre en minúsculas: clave de la copia local (K_CLOUD + uid)
   let ver = 0;                            // versión de la partida en el servidor que conoce esta copia
-  let pushT = 0, retryT = 0, pending = false, pushing = null, lastPush = 0;
+  let pushT = 0, retryT = 0, pending = false, pushing: Promise<void> | null = null, lastPush = 0;
   // Cada cuánto se sube la partida: lo que vale algo (tiradas, compras, Pokémon,
   // premios) a los pocos segundos; al acabar una partida, al medio minuto; lo
   // demás, cada 5 min. La copia del navegador se guarda siempre al momento y al
@@ -359,7 +365,7 @@ export const DB = (() => {
   function setSync(s: string) { syncState = s; listeners.forEach(fn => { try { fn(s); } catch (e) { /* nada */ } }); }
 
   /** Llamada a la API. Nunca lanza por un error HTTP (mira `status`); sí si no hay red. */
-  async function api(method: string, path: string, body?: unknown): Promise<{ status: number; j: any }> {
+  async function api(method: string, path: string, body?: unknown): Promise<{ status: number; j: any }> {   // (j: el JSON de cada ruta de server/api.ts)
     const text = body === undefined ? undefined : JSON.stringify(body);
     const res = await fetch('/api' + path, {
       method,
@@ -388,7 +394,7 @@ export const DB = (() => {
     return true;
   }
 
-  const plain = (s: any) => JSON.parse(JSON.stringify(s));
+  const plain = <T>(s: T): T => JSON.parse(JSON.stringify(s));
 
   /**
    * Abre la partida de una sesión recién iniciada: la del servidor FUSIONADA con
@@ -405,7 +411,7 @@ export const DB = (() => {
       if (!r.j.ok) throw new Error(r.j.error);
       remote = r.j.save; ver = r.j.ver;
     } catch (e) {
-      if (e.code === 'auth' || !cached) throw e;   // sesión caducada, o sin conexión y sin copia
+      if ((e as NetFail).code === 'auth' || !cached) throw e;   // sesión caducada, o sin conexión y sin copia
       online = false;
     }
     let s = merge(cached && migrate(cached), remote && migrate(remote));
@@ -428,7 +434,7 @@ export const DB = (() => {
    * responde 409 con la suya: se FUSIONA con la de aquí (no se pierde nada de
    * ninguna) y se vuelve a mandar.
    */
-  function pushNow() {
+  function pushNow(): Promise<void> {
     if (mode !== 'cloud' || guest || !save || !token) return Promise.resolve();
     // Si ya hay una subida en marcha, se hace otra justo después (para lo que haya cambiado mientras).
     if (pushing) { pending = true; return pushing.then(() => (pending ? pushNow() : undefined)); }
@@ -490,31 +496,36 @@ export const DB = (() => {
     retryT = setTimeout(() => { if (pending) pushNow(); }, ms);
   }
 
+  /** Error de red o de la API, con el motivo que se le añade al lanzarlo. */
+  type NetFail = Error & { code?: string; wait?: number };
+
   /** Texto para el jugador cuando falla la red. */
-  function netError(e: any) {
-    return e && (e.name === 'TimeoutError' || e instanceof TypeError) ? 'Sin conexión con el servidor.'
-      : (e && e.message) || 'Error desconocido.';
+  function netError(e: unknown) {
+    const er = e as { name?: string; message?: string } | null;
+    return er && (er.name === 'TimeoutError' || e instanceof TypeError) ? 'Sin conexión con el servidor.'
+      : (er && er.message) || 'Error desconocido.';
   }
 
   // =====================================================================
   //                           API PÚBLICA
   // =====================================================================
 
-  let readyP = null;
+  let readyP: Promise<boolean> | null = null;
 
   /** Arranca la base de datos y recupera la sesión anterior. → true si hay sesión. */
   function ready() {
     if (readyP) return readyP;
     readyP = (async () => {
       try { if (await initCloud()) mode = 'cloud'; }
-      catch (e) { console.warn('[DB] sin servidor:', e.message); localReason = 'error'; mode = 'local'; }
+      catch (e) { console.warn('[DB] sin servidor:', (e as Error).message); localReason = 'error'; mode = 'local'; }
       if (mode === 'local') { setSync('local'); return restoreLocal(); }
       const ses = read(K_TOKEN);
       if (!ses || !ses.token || !ses.uid) return false;
       try { await openCloud(ses.token, ses.uid, ses.name); return true; }
       catch (e) {
-        console.warn('[DB] no se pudo abrir la partida:', e.code || e.message);
-        if (e.code === 'auth') remove(K_TOKEN);
+        const er = e as NetFail;
+        console.warn('[DB] no se pudo abrir la partida:', er.code || er.message);
+        if (er.code === 'auth') remove(K_TOKEN);
         token = null; uid = null; sid = null;
         return false;
       }
@@ -532,7 +543,7 @@ export const DB = (() => {
       const r = await api('POST', '/register', { name, pass });
       if (!r.j.ok) return { ok: false, error: r.j.error };
       await openCloud(r.j.token, r.j.uid, r.j.name);
-      return { ok: true, isNew: !save.partner };
+      return { ok: true, isNew: !save!.partner };
     } catch (e) { return { ok: false, error: netError(e) }; }
   }
 
@@ -543,7 +554,7 @@ export const DB = (() => {
       const r = await api('POST', '/login', { name, pass: pass || '' });
       if (!r.j.ok) return { ok: false, error: r.j.error };
       await openCloud(r.j.token, r.j.uid, r.j.name);
-      return { ok: true, isNew: !save.partner };
+      return { ok: true, isNew: !save!.partner };
     } catch (e) { return { ok: false, error: netError(e) }; }
   }
 
@@ -599,7 +610,7 @@ export const DB = (() => {
   }
 
   /** Funciones que se ejecutan al cerrar sesión o borrar la cuenta (amigos, salas...). */
-  const leaveHooks: ((why: 'logout' | 'delete') => any)[] = [];
+  const leaveHooks: ((why: 'logout' | 'delete') => unknown)[] = [];
 
   async function logout() {
     for (const fn of leaveHooks) { try { await fn('logout'); } catch (e) { /* nada */ } }
@@ -650,7 +661,7 @@ export const DB = (() => {
   function owns(dex: number) { return !!(save && save.owned[dex]); }
 
   function grant(dex: number, from: string) {
-    if (!save.owned[dex]) save.owned[dex] = { at: Date.now(), from };
+    if (!save!.owned[dex]) save!.owned[dex] = { at: Date.now(), from };
   }
 
   function ownsShiny(dex: number) { return !!(save && save.shiny && save.shiny[dex]); }
@@ -665,8 +676,8 @@ export const DB = (() => {
   /** Da la versión shiny (y la normal, si no la tenía). Devuelve true si es nueva. */
   function grantShiny(dex: number, from: string) {
     grant(dex, from);
-    if (save.shiny[dex]) return false;
-    save.shiny[dex] = { at: Date.now(), from };
+    if (save!.shiny[dex]) return false;
+    save!.shiny[dex] = { at: Date.now(), from };
     return true;
   }
 
@@ -674,9 +685,9 @@ export const DB = (() => {
     ready, register, login, changePassword, playAsGuest, logout, commit, deleteAccount, flush: pushNow,
     owns, grant, ownsShiny, grantShiny, merge, setName, upgradesOf,
     onSync(fn: (s: string) => void) { listeners.add(fn); },
-    onLeave(fn: (why: 'logout' | 'delete') => any) { leaveHooks.push(fn); },
+    onLeave(fn: (why: 'logout' | 'delete') => unknown) { leaveHooks.push(fn); },
     /** (Firebase, ya retirado) Los módulos de red lo miran: sin él no arrancan. */
-    get fb(): any { return null; },
+    get fb(): null { return null; },
     /** ¿Está disponible lo online (amigos, ranking, multijugador)? Sí, con una sesión en el servidor. */
     get online() { return !!this.session; },
     /** Sesión con el servidor propio, para los módulos de red (src/net/). null sin cuenta en el servidor. */
@@ -690,7 +701,8 @@ export const DB = (() => {
     get syncState() { return syncState; },
     get user() { return user; },
     get guest() { return guest; },
-    get save() { return save; },
+    /** La partida abierta. Es null sólo sin sesión (antes de entrar o tras salir); el juego sólo la usa con sesión. */
+    get save(): SaveData { return save!; },
     get loggedIn() { return !!save; },
     get storageOk() { return storageOk; },
     START_COINS

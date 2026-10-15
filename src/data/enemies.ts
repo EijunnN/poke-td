@@ -25,6 +25,7 @@ import type { PokeType } from './types';
  *   zoner    zonas de daño bajo tus pies que estallan al poco
  *   fan      dispara en abanico
  *   jumper   salta y cae sobre ti (la caída se ve antes en el suelo)
+ *   thief    duende del tesoro: huye y se escapa (lo crea systems/events.ts)
  *   runner   corredor: muy rápido y frágil, va a donde vas a estar (corta el
  *            paso al que sólo huye). Uno por tramo: el más rápido del elenco.
  * Los ataques con aviso están en systems/hazards.js.
@@ -35,7 +36,7 @@ import type { PokeType } from './types';
  */
 /** Comportamiento de un enemigo (ver la lista de arriba). */
 export type Behavior = 'chase' | 'charger' | 'ranged' | 'tank' | 'healer' | 'shielder' | 'summoner'
-  | 'bomber' | 'beamer' | 'zoner' | 'fan' | 'jumper' | 'runner';
+  | 'bomber' | 'beamer' | 'zoner' | 'fan' | 'jumper' | 'runner' | 'thief';
 
 /** Definición de un enemigo para una run (ver defFor). Los campos de disparo sólo en quien dispara. */
 export interface EnemyDef {
@@ -52,10 +53,44 @@ export interface EnemyDef {
   minion?: number;
   fanN?: number;
   zones?: number;
+  /** Sólo el duende del tesoro (systems/events.ts): lo que suelta. */
+  loot?: 'ticket10' | 'coins';
+}
+
+/** Un tramo de la run: desde qué segundo, rango de BST y plantilla de stats. */
+export interface Tier {
+  from: number;
+  bst: [number, number];
+  hp: number;
+  spd: number;
+  dmg: number;
+  xp: number;
+  /** Cuántos Pokémon trae su elenco. */
+  cast: number;
+}
+
+/** Franja de jefe (ver BOSS_SLOTS). */
+export interface BossSlot {
+  at: number;
+  hp: number;
+  dmg: number;
+  xp: number;
+  bst: [number, number];
+}
+
+/** Un jefe de la run: su definición y el segundo en que sale. */
+export interface BossDef extends EnemyDef {
+  at: number;
+}
+
+/** El elenco de un tramo en la run. */
+export interface CastTier {
+  from: number;
+  list: EnemyDef[];
 }
 
 export const Enemies = (() => {
-  const TIERS = [
+  const TIERS: Tier[] = [
     { from: 0,   bst: [180, 330], hp: 17,  spd: 56, dmg: 6,  xp: 3.5, cast: 7 },
     { from: 70,  bst: [300, 405], hp: 32,  spd: 62, dmg: 8.5, xp: 5,  cast: 7 },
     { from: 160, bst: [385, 465], hp: 52,  spd: 60, dmg: 11, xp: 8,  cast: 7 },
@@ -65,7 +100,7 @@ export const Enemies = (() => {
   ];
 
   // Franjas de jefe: minuto en que salen, PV base y franja de BST.
-  const BOSS_SLOTS = [
+  const BOSS_SLOTS: BossSlot[] = [
     { at: 180, hp: 1400,  dmg: 34, xp: 220,  bst: [490, 545] },
     { at: 360, hp: 3200,  dmg: 42, xp: 420,  bst: [520, 580] },
     { at: 540, hp: 5600,  dmg: 48, xp: 680,  bst: [540, 600] },
@@ -74,23 +109,23 @@ export const Enemies = (() => {
   ];
 
   // Stats base aproximados a partir de los de juego (inverso de fetch_pokedex).
-  const baseHp = p => (p.hp - 70) / 0.45;
-  const baseSpd = p => (p.spd - 78) / 0.42;
+  const baseHp = (p: Pokemon) => (p.hp - 70) / 0.45;
+  const baseSpd = (p: Pokemon) => (p.spd - 78) / 0.42;
 
-  const H = (d, s) => G.U.hash(d, 7, s);
+  const H = (d: number, s: number) => G.U.hash(d, 7, s);
 
   // Personalidades fijas de algunos Pokémon.
   const HEAL = new Set([35, 36, 113, 173, 183, 184, 242, 301, 440, 531, 594, 700, 764, 858]);
   const SHIELD = new Set([95, 122, 208, 213, 227, 306, 375, 410, 411, 436, 437, 439, 476, 703]);
   const BOMB = new Set([74, 75, 76, 100, 101, 102, 109, 110, 337, 338, 343, 344]);
   // Invocador -> Pokémon de su manada.
-  const SUMMON = { 15: 13, 18: 16, 24: 23, 28: 27, 31: 29, 34: 32, 42: 41, 51: 50, 53: 52, 57: 56, 59: 58,
+  const SUMMON: Record<number, number> = { 15: 13, 18: 16, 24: 23, 28: 27, 31: 29, 34: 32, 42: 41, 51: 50, 53: 52, 57: 56, 59: 58,
                    62: 60, 68: 66, 73: 72, 78: 77, 82: 81, 85: 84, 91: 90, 117: 116, 130: 129, 168: 167, 169: 41,
                    199: 79, 230: 116, 262: 261, 334: 333, 405: 403, 416: 415, 462: 81, 466: 239, 553: 551, 637: 636 };
 
   function behaviorOf(p: Pokemon): Behavior {
     const t = p.types, h = H(p.dex, 11);
-    const has = (...xs) => xs.some(x => t.includes(x));
+    const has = (...xs: PokeType[]) => xs.some(x => t.includes(x));
     if (HEAL.has(p.dex)) return 'healer';
     if (SHIELD.has(p.dex)) return 'shielder';
     if (BOMB.has(p.dex)) return 'bomber';
@@ -109,7 +144,7 @@ export const Enemies = (() => {
   }
 
   /** Construye la definición de enemigo de un Pokémon para un tramo. */
-  function defFor(p: Pokemon, tier, ti: number): EnemyDef {
+  function defFor(p: Pokemon, tier: Tier, ti: number): EnemyDef {
     const hpK = G.U.clamp(baseHp(p) / 65, 0.7, 1.6);
     const spdK = G.U.clamp(0.75 + baseSpd(p) / 260, 0.75, 1.3);
     const behavior = behaviorOf(p);
@@ -121,11 +156,11 @@ export const Enemies = (() => {
       xp: Math.max(3, Math.round(tier.xp * (behavior === 'tank' ? 1.3 : 1)))
     };
     // Los que pelean de lejos: daño del disparo, recarga y distancia.
-    const CD = { ranged: 2.2 - ti * 0.15, fan: 3.2 - ti * 0.15, beamer: 4.4 - ti * 0.2, zoner: 4.6 - ti * 0.2,
+    const CD: Partial<Record<Behavior, number>> = { ranged: 2.2 - ti * 0.15, fan: 3.2 - ti * 0.15, beamer: 4.4 - ti * 0.2, zoner: 4.6 - ti * 0.2,
                  healer: 3.5, summoner: 7 };
     if (CD[behavior]) {
       d.shotDmg = Math.round(tier.dmg * (behavior === 'fan' ? 0.7 : 0.8));
-      d.shotCd = +CD[behavior].toFixed(2);
+      d.shotCd = +CD[behavior]!.toFixed(2);
       d.range = (behavior === 'beamer' ? 260 : behavior === 'healer' || behavior === 'summoner' ? 230 : 190) + ti * 6;
     }
     if (behavior === 'summoner') d.minion = SUMMON[p.dex];
@@ -136,23 +171,23 @@ export const Enemies = (() => {
   }
 
   /** Todos los candidatos de un tramo (sin legendarios ni míticos). */
-  function candidates(tier) {
+  function candidates(tier: Tier): Pokemon[] {
     return G.DEX.filter(p => p.rarity < 5 && p.bst >= tier.bst[0] && p.bst <= tier.bst[1] && G.SPRITE_META[p.dex]);
   }
 
   // ---------------- elenco de la run ----------------
 
-  const PLAIN = ['chase', 'charger', 'ranged', 'tank'];
-  const SUPPORT = ['healer', 'shielder', 'summoner'];
+  const PLAIN: Behavior[] = ['chase', 'charger', 'ranged', 'tank'];
+  const SUPPORT: Behavior[] = ['healer', 'shielder', 'summoner'];
 
   /**
    * Elenco de un tramo: siempre un "apoyo" (curandero, escudo o invocador)
    * y, desde el segundo tramo, también uno de los que atacan con aviso.
    * En el primero no hay más personalidades (para ir aprendiendo).
    */
-  function castFor(tier) {
+  function castFor(tier: Tier): Pokemon[] {
     const all = candidates(tier);
-    const kind = p => behaviorOf(p);
+    const kind = (p: Pokemon) => behaviorOf(p);
     // Primero el tipo de apoyo (a partes iguales) y luego el Pokémon.
     const kinds = SUPPORT.filter(k => all.some(p => kind(p) === k));
     const sk = kinds.length ? kinds[Math.floor(Math.random() * kinds.length)] : null;
@@ -162,12 +197,12 @@ export const Enemies = (() => {
     return pick.concat(G.U.pickN(all.filter(p => !pick.includes(p)), tier.cast - pick.length));
   }
 
-  let cast = null;      // [{ from, list: [def] }]
-  let bosses = null;    // [def de jefe]
+  let cast: CastTier[] | null = null;
+  let bosses: BossDef[] | null = null;
 
   /** Sortea el elenco de una run nueva. */
-  function rollRun() {
-    cast = TIERS.map((tier, ti) => ({
+  function rollRun(): { cast: CastTier[]; bosses: BossDef[] } {
+    cast = TIERS.map((tier, ti): CastTier => ({
       from: tier.from,
       list: castFor(tier).map(p => defFor(p, tier, ti))
     }));
@@ -176,9 +211,9 @@ export const Enemies = (() => {
       const r = plain.sort((a, b) => b.spd - a.spd)[0];
       if (r) { r.behavior = 'runner'; r.spd = Math.round(r.spd * 1.6); r.hp = Math.round(r.hp * 0.7); }
     }
-    const used = new Set();
-    bosses = BOSS_SLOTS.map(slot => {
-      const ok = p => !p.leg && G.SPRITE_META[p.dex] && !used.has(p.dex);
+    const used = new Set<number>();
+    bosses = BOSS_SLOTS.map((slot): BossDef => {
+      const ok = (p: Pokemon) => !p.leg && G.SPRITE_META[p.dex] && !used.has(p.dex);
       let pool = G.DEX.filter(p => ok(p) && p.bst >= slot.bst[0] && p.bst <= slot.bst[1]);
       if (!pool.length) pool = G.DEX.filter(p => ok(p) && p.bst >= 580);
       const p = G.U.pick(pool);
@@ -197,7 +232,7 @@ export const Enemies = (() => {
 
   // (El "tiempo extra" del minuto 60 se quitó al llegar la Sentencia de Arceus,
   //  que acaba todas las partidas en el minuto 30: ver systems/judgment.js.)
-  function scale(t) {
+  function scale(t: number) {
     return { hp: 1 + t / 95, dmg: 1 + t / 420, spd: 1 + Math.min(0.35, t / 1400) };
   }
 
@@ -205,52 +240,52 @@ export const Enemies = (() => {
    * Los jefes ya traen su vida base creciente (1.400 ... 16.000), así que
    * escalan mucho más suave: con la curva normal el último llegaba a 168.000 PV.
    */
-  function bossScale(t) { return { hp: 1 + t / 600, dmg: 1 + t / 600, spd: 1 }; }
+  function bossScale(t: number) { return { hp: 1 + t / 600, dmg: 1 + t / 600, spd: 1 }; }
 
   /** Tramo que toca en el segundo `t`. */
-  function tierAt(t) { let ti = 0; TIERS.forEach((tr, i) => { if (t >= tr.from) ti = i; }); return ti; }
+  function tierAt(t: number) { let ti = 0; TIERS.forEach((tr, i) => { if (t >= tr.from) ti = i; }); return ti; }
 
   const NO_HORDE = new Set(['bomber', 'healer', 'shielder', 'summoner']);
   /** Tipos con bastantes Pokémon en el tramo actual para una horda (events.js). */
-  function hordeTypes(t) {
+  function hordeTypes(t: number): PokeType[] {
     const all = candidates(TIERS[tierAt(t)]).filter(p => !NO_HORDE.has(behaviorOf(p)));
     return (Object.keys(G.U.TYPE_COLOR) as PokeType[]).filter(ty => all.filter(p => p.types.includes(ty)).length >= 3);
   }
   /** Hasta 4 Pokémon de un tipo, con los stats del tramo actual. */
-  function hordeDefs(type, t) {
+  function hordeDefs(type: PokeType, t: number): EnemyDef[] {
     const ti = tierAt(t);
     const pool = candidates(TIERS[ti]).filter(p => p.types.includes(type) && !NO_HORDE.has(behaviorOf(p)));
     return G.U.pickN(pool, 4).map(p => defFor(p, TIERS[ti], ti));
   }
 
   /** Bolsa de enemigos disponibles en el segundo `t`. */
-  function bagAt(t): EnemyDef[] {
+  function bagAt(t: number): EnemyDef[] {
     // Durante una horda de un tipo sólo salen los de ese tipo (systems/events.js).
     const horde = G.Events && (G.Events.bag() as EnemyDef[] | null);
     if (horde) return horde;
     if (!cast) rollRun();
-    const bag = [];
-    for (const tier of cast) {
+    const bag: EnemyDef[] = [];
+    for (const tier of cast!) {
       if (t < tier.from) continue;
       const w = t - tier.from > 260 ? 3 : 10;       // los tramos viejos pierden peso
       for (const e of tier.list) for (let i = 0; i < w; i++) bag.push(e);
     }
-    return bag.length ? bag : cast[0].list;
+    return bag.length ? bag : cast![0].list;
   }
 
   /** dex del elenco que aparecerán pronto (para precargar sprites). */
-  function upcomingDex(t, ahead = 60) {
+  function upcomingDex(t: number, ahead = 60): number[] {
     if (!cast) rollRun();
-    const out = [];
-    for (const tier of cast) if (tier.from <= t + ahead) for (const e of tier.list) out.push(e.dex);
-    for (const b of bosses) if (b.at <= t + ahead) out.push(b.dex);
+    const out: number[] = [];
+    for (const tier of cast!) if (tier.from <= t + ahead) for (const e of tier.list) out.push(e.dex);
+    for (const b of bosses!) if (b.at <= t + ahead) out.push(b.dex);
     return out;
   }
 
   return {
     TIERS, BOSS_SLOTS, rollRun, scale, bossScale, bagAt, upcomingDex, candidates, hordeTypes, hordeDefs,
-    get BOSSES() { if (!bosses) rollRun(); return bosses; },
-    get cast() { if (!cast) rollRun(); return cast; }
+    get BOSSES(): BossDef[] { if (!bosses) rollRun(); return bosses!; },
+    get cast(): CastTier[] { if (!cast) rollRun(); return cast!; }
   };
 })();
 G.Enemies = Enemies;

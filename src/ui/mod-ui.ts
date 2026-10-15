@@ -12,23 +12,25 @@ import { G } from '../g';
  */
 export const ModUI = (() => {
   const $ = G.UI.$;
-  const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const esc = (s: unknown) => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
+  /** El motivo de un fallo del ranking (el servidor manda `code`). */
+  const why = (e: unknown) => { const x = e as { code?: string; message?: string }; return x.code || x.message; };
   let tab = 'rep';
 
   function init() {
     $('mod-back').onclick = () => G.RankingUI.open();
-    $('mod-purge').onclick = async () => {
+    $<HTMLButtonElement>('mod-purge').onclick = async () => {
       if (!confirm('¿Quitar del ranking TODAS las marcas de más de 1 hora (todas las tablas)? No se puede deshacer.')) return;
-      const b = $('mod-purge');
+      const b = $<HTMLButtonElement>('mod-purge');
       b.disabled = true;
       try {
         const r = await G.Ranking.purgeAbove(3600, (i, n) => { b.textContent = 'Revisando ' + i + ' / ' + n + '…'; });
         G.UI.toast('Quitadas ' + r.rows + ' marcas de más de 1 hora (' + r.boards + ' tablas)', 5000);
-      } catch (e) { G.UI.toast('No se pudo: ' + (e.code || e.message), 5000); }
+      } catch (e) { G.UI.toast('No se pudo: ' + why(e), 5000); }
       b.disabled = false; b.textContent = 'Quitar marcas de más de 1 hora';
       render();
     };
-    document.querySelectorAll<HTMLElement>('#mod-tabs .tab').forEach(t => { t.onclick = () => { tab = t.dataset.tab; render(); }; });
+    document.querySelectorAll<HTMLElement>('#mod-tabs .tab').forEach(t => { t.onclick = () => { tab = t.dataset.tab!; render(); }; });
   }
 
   function open() {
@@ -37,8 +39,8 @@ export const ModUI = (() => {
     render();
   }
 
-  const fmt = t => G.U.mmss(t || 0);
-  const btn = (label, cls, fn) => { const b = document.createElement('button'); b.className = 'btn small ' + cls; b.textContent = label; b.onclick = fn; return b; };
+  const fmt = (t: number) => G.U.mmss(t || 0);
+  const btn = (label: string, cls: string, fn: () => unknown) => { const b = document.createElement('button'); b.className = 'btn small ' + cls; b.textContent = label; b.onclick = fn; return b; };
 
   async function render() {
     document.querySelectorAll<HTMLElement>('#mod-tabs .tab').forEach(t => t.classList.toggle('on', t.dataset.tab === tab));
@@ -48,22 +50,22 @@ export const ModUI = (() => {
       if (tab === 'rep') await renderReports(list);
       else await renderMarked(list);
     } catch (e) {
-      list.innerHTML = '<p class="sub">No se pudo cargar (' + esc(e.code || e.message) + ').</p>';
+      list.innerHTML = '<p class="sub">No se pudo cargar (' + esc(why(e)) + ').</p>';
     }
   }
 
   /** "s_w2026-42" -> "Solo · Semana" */
-  function boardName(b) {
+  function boardName(b: string) {
     const [m, p] = b.split('_');
     const mode = m === 'g' ? 'Grupo' : m === 'd' ? 'Defensa' : m === 'e' ? 'Defensa en grupo' : 'Solo';
     const per = p.startsWith('d') ? 'Hoy' : p.startsWith('w') ? 'Semana' : p.startsWith('m') ? 'Mes' : 'Histórico';
     const dex = (b.match(/_p(\d+)$/) || [])[1];
-    return mode + ' · ' + per + (dex && G.DEX_BY[dex] ? ' · sólo ' + G.DEX_BY[dex].name : '');
+    return mode + ' · ' + per + (dex && G.DEX_BY[+dex] ? ' · sólo ' + G.DEX_BY[+dex].name : '');
   }
   // Con la Sentencia de Arceus (minuto 30) casi nadie pasa de ~32-33 min.
   const SUSPECT_T = 33 * 60;
 
-  async function renderReports(list) {
+  async function renderReports(list: HTMLElement) {
     const groups = await G.Ranking.reports();
     list.innerHTML = groups.length ? '' : '<p class="sub">No hay reportes.</p>';
     for (const g of groups) {
@@ -87,10 +89,10 @@ export const ModUI = (() => {
         <span class="time${sus ? ' mod-warn' : ''}">${defense ? 'Oleada ' + Math.floor(t / 100) + ' · ' + t % 100 + ' vidas' : fmt(t)}</span>`);
       const acts = document.createElement('span');
       acts.className = 'mod-acts';
-      const busy = async (fn, msg) => {
+      const busy = async (fn: () => Promise<unknown>, msg: string) => {
         acts.querySelectorAll('button').forEach(b => { b.disabled = true; });
         try { await fn(); G.UI.toast(msg); row.remove(); }
-        catch (e) { G.UI.toast('No se pudo: ' + (e.code || e.message)); acts.querySelectorAll('button').forEach(b => { b.disabled = false; }); }
+        catch (e) { G.UI.toast('No se pudo: ' + why(e)); acts.querySelectorAll('button').forEach(b => { b.disabled = false; }); }
       };
       acts.append(
         btn('Borrar marca', 'ghost', () => busy(async () => {
@@ -113,7 +115,7 @@ export const ModUI = (() => {
     }
   }
 
-  async function renderMarked(list) {
+  async function renderMarked(list: HTMLElement) {
     const accs = await G.Ranking.markedAccounts();
     list.innerHTML = accs.length ? '' : '<p class="sub">No hay cuentas marcadas.</p>';
     for (const a of accs) {
@@ -125,7 +127,7 @@ export const ModUI = (() => {
       acts.className = 'mod-acts';
       acts.append(btn('Desmarcar', 'ghost', async () => {
         try { await G.Ranking.setMarked(a.uid, false); G.UI.toast('Desmarcada'); row.remove(); }
-        catch (e) { G.UI.toast('No se pudo: ' + (e.code || e.message)); }
+        catch (e) { G.UI.toast('No se pudo: ' + why(e)); }
       }));
       row.appendChild(acts);
       list.appendChild(row);

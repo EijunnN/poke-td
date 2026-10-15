@@ -16,7 +16,7 @@ export interface TouchStick { id: number; ox: number; oy: number; x: number; y: 
 export interface SafeArea { top: number; right: number; bottom: number; left: number }
 
 export const Touch = (() => {
-  let cv: HTMLCanvasElement = null, stick: TouchStick = null;
+  let cv: HTMLCanvasElement | null = null, stick: TouchStick | null = null;
   let active = G.Settings.touch;      // ¿se está usando táctil?
   let buttons: TouchButton[] = [];
 
@@ -74,7 +74,7 @@ export const Touch = (() => {
     if (!touchy || stick || !G.Game || G.Game.state !== 'playing') return;
     e.preventDefault();
     stick = { id: e.pointerId, ox: e.clientX, oy: e.clientY, x: e.clientX, y: e.clientY };
-    try { cv.setPointerCapture(e.pointerId); } catch (err) { /* nada */ }
+    try { cv!.setPointerCapture(e.pointerId); } catch (err) { /* nada */ }
   }
 
   function move(e: PointerEvent) {
@@ -96,7 +96,7 @@ export const Touch = (() => {
   }
 
   /** Márgenes del iPhone (barra de inicio abajo, muesca a los lados), en px. */
-  let safe: SafeArea = null;
+  let safe: SafeArea | null = null;
   function safeArea(): SafeArea {
     if (safe) return safe;
     const d = document.createElement('div');

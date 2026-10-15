@@ -1,4 +1,6 @@
 import { G } from './g';
+import type { CameraT } from './core/camera';
+import type { Player } from './entities/player';
 /* ============ run.ts — la partida en curso y el contrato de los modos de juego ============
  * game.ts lleva el bucle, el lienzo y los menús; lo que pasa DENTRO de una
  * partida lo pone un modo (modes/survivor.ts, y el tower defense cuando llegue).
@@ -18,17 +20,18 @@ export interface View {
   frameDt: number;
   fps: number;
   /** Dibuja el mundo (suelo, objetos, enemigos) con `extra` ordenado por Y entre ellos. */
-  drawScene(cam: any, extra: any[]): void;
+  drawScene(cam: CameraT, extra: { y: number; draw(ctx: CanvasRenderingContext2D): void }[]): void;
 }
 
 export interface GameMode {
   readonly id: string;
-  /** Tu Pokémon en la partida, o null si no hay partida. */
-  readonly player: any;
+  /** Tu Pokémon en la partida. (Vale null sin partida; sólo se usa con ella, como en los modos.) */
+  readonly player: Player;
   /** Reloj de la partida, en segundos. */
   readonly time: number;
   /** Empieza una partida y deja Run.state en 'playing'. */
-  start(opts?: any): void;
+  /** (Cada modo tiene sus opciones: ver su `start`.) */
+  start(opts?: unknown): void;
   /** Un paso de simulación (sólo con Run.state === 'playing'). */
   update(dt: number): void;
   /** Partida en pantalla pero parada (cartas, pausa, resumen): sólo lo decorativo. */
@@ -45,7 +48,7 @@ export interface GameMode {
   /** Abandona la partida (se guarda lo conseguido). */
   quit(): void;
   /** Todos los jugadores de la partida (tú primero). */
-  everyone(): any[];
+  everyone(): Player[];
 }
 
 export const Run = {

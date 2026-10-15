@@ -1,5 +1,9 @@
 import { G } from '../g';
+import type { Pokemon } from '../data/pokedex';
+import type { MoveInstance, MoveKind } from '../data/moves';
 import type { PokeType } from '../data/types';
+import type { Enemy } from './enemy';
+import type { Prop } from '../world/world';
 /* ============ player.js — el Pokémon que controlas ============
  * (x, y) son los PIES. Sólo UN movimiento está activo a la vez: se dispara
  * solo y se cambia con 1-4 / Q / E. Cada disparo reproduce la animación de
@@ -8,8 +12,30 @@ import type { PokeType } from '../data/types';
 interface Buff { n: number; t: number; amount: number }
 type BuffStat = 'atk' | 'spd' | 'def' | 'regen';
 
+/** Mejoras permanentes ya resueltas (G.Upgrades.perks); las que falten valen lo de por defecto. */
+type Perks = Partial<ReturnType<typeof G.Upgrades.perks>>;
+
+/** Poder de un altar: color del aro y lo que hace mientras dura (systems/interact.ts). */
+export interface PlayerPower {
+  id: string;
+  name: string;
+  desc: string;
+  color: string;
+  on(p: Player): void;
+  off(p: Player): void;
+}
+
+/** Blanco de apuntado: un enemigo o, sin enemigos, una roca o cofre (que no tienen dead ni hurt). */
+export type AimTarget = Enemy | (Prop & { dead?: undefined; hurt?: undefined });
+
+/** Estado que manda el dueño de un compañero (coop.ts, readState). */
+export interface NetState {
+  x: number; y: number; ang: number; walk: number; hp: number; maxHp: number; dead: number;
+  mv: string; ml: number; mag: number; aim: number; rev: number; xpMul?: number;
+}
+
 export class Player {
-  declare mon: any;                      // entrada de G.DEX
+  declare mon: Pokemon;                  // entrada de G.DEX
   declare dex: number;
   declare shiny: boolean;
   declare anim: InstanceType<typeof G.Sprites.Animator>;
@@ -33,8 +59,8 @@ export class Player {
   declare baseSpd: number;
   declare baseAtk: number;
 
-  declare moves: any[];                  // instancias de G.Moves
-  declare slots: any[][];
+  declare moves: MoveInstance[];         // instancias de G.Moves
+  declare slots: MoveInstance[][];
   declare active: number;
   declare maxMoves: number;
   declare bonds: number;
@@ -66,7 +92,7 @@ export class Player {
   declare lavaTick: number;
   declare attackFace: number;
   declare dead: boolean;
-  declare power: { def: any; t: number; dur: number } | null;
+  declare power: { def: PlayerPower; t: number; dur: number } | null;
   declare slowT: number;
   declare item: string | null;
   declare sashT: number;
@@ -81,17 +107,21 @@ export class Player {
   declare tag: string;
   declare tagColor: string;
   declare revLabel: string;
-  declare net: any;                      // estado que manda el dueño del compañero (ver netUpdate)
-  declare target: any;
+  declare net: NetState | undefined;     // estado que manda el dueño del compañero (ver netUpdate)
+  declare target: AimTarget | null | undefined;
   declare svx: number;
   declare svy: number;
   declare reviveT: number;
+  // Los deja el combate (systems/combat.ts): último charco por movimiento y cuenta atrás del halo de orbes.
+  declare lastPatch?: Record<string, { x: number; y: number; t: number }>;
+  declare orbCastT?: number;
+  declare _itemRegen: number | undefined;   // la deja el objeto Restos (data/items.ts)
 
   /**
    * @param mon   entrada de G.DEX
    * @param perks mejoras permanentes ya resueltas (ver data/upgrades.js)
    */
-  constructor(mon, perks: any = {}, shiny = false) {
+  constructor(mon: Pokemon, perks: Perks = {}, shiny = false) {
     this.mon = mon;
     this.dex = mon.dex;
     this.shiny = shiny && G.Sprites.hasShiny(mon.dex);
@@ -166,7 +196,7 @@ export class Player {
   static get REVIVE_TIME() { return 3; }
 
   // (×2 y luego ×4 el 2026-10-10: se subía de nivel demasiado rápido.)
-  static xpFor(level) {
+  static xpFor(level: number) {
     return Math.floor((8 + level * 6 + Math.pow(level, 1.75) * 1.6) * 4);
   }
 
@@ -184,7 +214,7 @@ export class Player {
   get regen() { return this.regenFlat + this.buffs.regen.n * this.buffs.regen.amount; }
 
   // ---------------- movimientos ----------------
-  addMove(id) {
+  addMove(id: string) {
     if (this.slots.length >= this.maxMoves || this.hasMove(id)) return false;
     const m = G.Moves.instance(id, 1);
     this.moves.push(m);
@@ -205,9 +235,9 @@ export class Player {
   arrange() {
     const n = this.slots.length;
     if (n < 2 || !this.bind) return;
-    const want = g => { let k = Infinity; for (const m of g) if (this.bind[m.id] != null) k = Math.min(k, this.bind[m.id]); return k; };
+    const want = (g: MoveInstance[]) => { let k = Infinity; for (const m of g) if (this.bind[m.id] != null) k = Math.min(k, this.bind[m.id]); return k; };
     const cur = this.slots[this.active];
-    const out = new Array(n).fill(null);
+    const out: (MoveInstance[] | null)[] = new Array(n).fill(null);
     const bound = this.slots.filter(g => want(g) < Infinity).sort((a, b) => want(a) - want(b));
     for (const g of bound) {
       let p = Math.min(want(g), n - 1);
@@ -216,13 +246,13 @@ export class Player {
       out[p] = g;
     }
     for (const g of this.slots) if (!out.includes(g)) out[out.indexOf(null)] = g;
-    this.slots = out;
+    this.slots = out as MoveInstance[][];
     if (cur) this.active = out.indexOf(cur);
   }
 
-  hasMove(id) { return this.moves.some(m => m.id === id); }
+  hasMove(id: string) { return this.moves.some(m => m.id === id); }
 
-  setActive(i) {
+  setActive(i: number) {
     if (i < 0 || i >= this.slots.length || i === this.active) return;
     // Cinta Elección: no se puede cambiar de movimiento.
     if (this.hasItem('choiceband') && this.slots[this.active]) {
@@ -237,7 +267,7 @@ export class Player {
     G.FX.ring(this.x, this.y - G.LIFT * 0.5, 6, this.visR * 3.4, G.U.TYPE_COLOR[m.type], 0.3, 3);
   }
 
-  cycle(dir) {
+  cycle(dir: number) {
     if (!this.slots.length) return;
     this.setActive((this.active + dir + this.slots.length) % this.slots.length);
   }
@@ -249,7 +279,7 @@ export class Player {
   static get BOND_MAX() { return 4; }
 
   /** Lo que se puede hacer ahora con un vínculo: añadir a un grupo o unir dos sueltos. */
-  bondOptions() {
+  bondOptions(): { mode: 'add' | 'pair'; group: MoveInstance[] | null; loose: MoveInstance[] } | null {
     const loose = this.slots.filter(s => s.length === 1).map(s => s[0]);
     const grow = this.slots.find(s => s.length > 1 && s.length < Player.BOND_MAX);
     if (grow) return loose.length ? { mode: 'add', group: grow, loose } : null;
@@ -257,8 +287,8 @@ export class Player {
   }
 
   /** Junta `moves` (sueltos) en el grupo `group` (o en uno nuevo) y gasta un vínculo. */
-  fuse(moves, group = null) {
-    const target = group || this.slots.find(s => s[0] === moves[0]);
+  fuse(moves: MoveInstance[], group: MoveInstance[] | null = null) {
+    const target = group || this.slots.find(s => s[0] === moves[0])!;
     const cur = this.slots[this.active];
     for (const m of moves) {
       if (target.includes(m)) continue;
@@ -285,16 +315,17 @@ export class Player {
    * Lo llama combat.js al lanzar un movimiento. Elige la animación de PMD y la
    * acelera si la recarga es más corta que la animación, para que encadene.
    */
-  cast(m) {
+  cast(m: Pick<MoveInstance, 'kind' | 'cd'> & { type?: PokeType }) {
     // Vidasfera: cada ataque cuesta un poco de vida (nunca te deja KO).
     if (this.hasItem('lifeorb') && m.kind !== 'orbit' && m.kind !== 'trail' && !this.remote) {
       this.hp = Math.max(1, this.hp - Math.max(1, this.maxHp * 0.01));
     }
-    const anim = { melee: 'Attack', beam: 'Shoot', projectile: 'Shoot', nova: 'Attack',
+    const ANIM: Record<MoveKind, string> = { melee: 'Attack', beam: 'Shoot', projectile: 'Shoot', nova: 'Attack',
                    aura: 'Charge', buff: 'Charge', orbit: 'Charge', boomerang: 'Shoot', chain: 'Shoot',
-                   mine: 'Charge', meteor: 'Charge', turret: 'Charge', dash: 'Attack', trail: 'Walk', cone: 'Shoot' }[m.kind] || 'Attack';
+                   mine: 'Charge', meteor: 'Charge', turret: 'Charge', dash: 'Attack', trail: 'Walk', cone: 'Shoot' };
+    const anim = ANIM[m.kind] || 'Attack';
     // Las familias nuevas suenan como la parecida de las de siempre.
-    const SND = { boomerang: 'projectile', chain: 'beam', mine: 'nova', meteor: 'nova', turret: 'buff', dash: 'melee', trail: 'aura', cone: 'projectile' };
+    const SND: Partial<Record<MoveKind, string>> = { boomerang: 'projectile', chain: 'beam', mine: 'nova', meteor: 'nova', turret: 'buff', dash: 'melee', trail: 'aura', cone: 'projectile' };
     // El rastro no suena a cada charco (sería un zumbido constante).
     if (m.kind !== 'trail') G.Audio.sfx('shot', { kind: SND[m.kind] || m.kind, type: m.type });
     if (m.kind === 'trail') return;
@@ -346,17 +377,17 @@ export class Player {
     }
   }
 
-  heal(amount) {
+  heal(amount: number) {
     const before = this.hp;
     this.hp = Math.min(this.maxHp, this.hp + amount);
     const got = Math.round(this.hp - before);
     if (got >= 1) G.FX.dmgText(this.x, this.y - this.bodyH - 6, '+' + got, '#5fe08a');
   }
 
-  addMaxHp(amount) { this.maxHp += amount; this.hp += amount; }
+  addMaxHp(amount: number) { this.maxHp += amount; this.hp += amount; }
 
   /** Devuelve cuántos niveles ha subido (pueden ser varios de golpe). */
-  gainXp(amount) {
+  gainXp(amount: number) {
     this.xp += amount * this.xpMul;
     let leveled = 0;
     while (this.xp >= this.xpNext) {
@@ -369,28 +400,28 @@ export class Player {
   }
 
   // ---------------- objeto equipado ----------------
-  hasItem(id) { return this.item === id; }
+  hasItem(id: string) { return this.item === id; }
 
   /** Se pone un objeto (y se quita el que llevara). */
-  equip(id) {
+  equip(id: string | null) {
     if (this.item) G.Items.BY[this.item].off(this);
     this.item = id;
     if (id) G.Items.BY[id].on(this);
   }
 
   /** Cascabel Concha: un poco de vida por el daño que haces (tope 4/s). */
-  onDealt(dmg) {
+  onDealt(dmg: number) {
     if (this.item === 'shellbell') this.bellHeal = Math.min(4, this.bellHeal + dmg * 0.04);
   }
 
   /** Poder de un altar (ver systems/interact.js): se aplica y se quita solo. */
-  addPower(def, dur) {
+  addPower(def: PlayerPower, dur: number) {
     if (this.power) this.power.def.off(this);
     def.on(this);
     this.power = { def, t: dur, dur };
   }
 
-  addBuff(stat, amount, dur, maxStacks) {
+  addBuff(stat: BuffStat, amount: number, dur: number, maxStacks: number) {
     const b = this.buffs[stat];
     if (!b) return;
     b.amount = amount;
@@ -399,7 +430,7 @@ export class Player {
   }
 
   // ---------------- ciclo ----------------
-  update(dt) {
+  update(dt: number) {
     this.anim.update(dt);
     if (this.dead) return;
     if (this.invuln > 0) this.invuln -= dt;
@@ -408,7 +439,7 @@ export class Player {
     if (this.attackFace > 0) this.attackFace -= dt;
 
     for (const k in this.buffs) {
-      const b = this.buffs[k];
+      const b = this.buffs[k as BuffStat];
       if (b.n > 0) { b.t -= dt; if (b.t <= 0) b.n = 0; }
     }
     if (this.slowT > 0) this.slowT -= dt;
@@ -437,9 +468,9 @@ export class Player {
       if (le.dmg) {
         this.lavaTick -= dt;
         if (this.lavaTick <= 0) {
-          this.lavaTick = le.every; this.invuln = 0;
-          this.hurt(Math.max(le.flat, this.maxHp * le.dmg * 0.5));
-          G.FX.burst(this.x, this.y - 4, le.color, 5, 70);
+          this.lavaTick = le.every!; this.invuln = 0;
+          this.hurt(Math.max(le.flat!, this.maxHp * le.dmg * 0.5));
+          G.FX.burst(this.x, this.y - 4, le.color!, 5, 70);
         }
       } else if (this.walking && Math.random() < dt * 8) {
         G.FX.burst(this.x, this.y, le.slide ? '#ffffff' : '#b3defa', 2, 40);
@@ -491,7 +522,7 @@ export class Player {
    * movimiento activo...) y aquí se sigue con suavidad.
    * n = { x, y, ang, walk, hp, maxHp, dead, mv, ml, mag, aim, rev }
    */
-  netUpdate(dt) {
+  netUpdate(dt: number) {
     this.anim.update(dt);
     const n = this.net;
     if (!n) return;
@@ -521,7 +552,7 @@ export class Player {
     this.anim.loop(this.walking ? 'Walk' : 'Idle', this.walking ? this.baseSpd / 110 : 1);
   }
 
-  draw(ctx) {
+  draw(ctx: CanvasRenderingContext2D) {
     // Halo del tipo del movimiento activo, en el suelo.
     const m = this.activeMove();
     if (m && !this.dead) {
@@ -547,14 +578,14 @@ export class Player {
     this.anim.draw(ctx, this.x, this.y, { flash: this.flash > 0, softFlash: true, alpha, color: '#ffcb3d' });
 
     // Arcos de buff alrededor de los pies.
-    const COL = { atk: '#ff6b4d', spd: '#7fe0ff', def: '#b0b8c8', regen: '#5fe08a' };
+    const COL: Record<BuffStat, string> = { atk: '#ff6b4d', spd: '#7fe0ff', def: '#b0b8c8', regen: '#5fe08a' };
     let i = 0;
     for (const k in this.buffs) {
-      const b = this.buffs[k];
+      const b = this.buffs[k as BuffStat];
       if (b.n <= 0) continue;
       ctx.save();
       ctx.globalAlpha = 0.6;
-      ctx.strokeStyle = COL[k];
+      ctx.strokeStyle = COL[k as BuffStat];
       ctx.lineWidth = 2;
       ctx.beginPath();
       ctx.ellipse(this.x, this.y, this.visR * 1.8 + i * 5, (this.visR * 1.8 + i * 5) * 0.42, 0, 0, 6.2832 * (b.n / 5));

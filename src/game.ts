@@ -1,5 +1,8 @@
 import { G } from './g';
 import { Run, type GameMode, type View } from './run';
+import type { CameraT } from './core/camera';
+import type { CoopConfig } from './net/coop';
+import type { Player } from './entities/player';
 /* ============ game.ts — flujo del juego y bucle principal ============
  *
  *   login ──> test de personalidad ──> menú ──> run ──> resumen ──> menú
@@ -15,22 +18,32 @@ import { Run, type GameMode, type View } from './run';
  * pasa dentro de una partida lo pone el modo de juego (Run.mode, ver run.ts):
  * modes/survivor.ts es el de hordas.
  */
+/** Pokémon salvaje que pasea por el fondo de los menús. */
+interface Wanderer {
+  dex: number; anim: InstanceType<typeof G.Sprites.Animator>;
+  x: number; y: number; r: number; vx: number; vy: number; t: number;
+  draw(ctx: CanvasRenderingContext2D): void;
+}
+/** Algo que se dibuja ordenado por Y: un objeto del mundo o una entidad con draw. */
+interface DrawItem { y: number; prop?: ReturnType<typeof G.World.visibleProps>[number]; ent?: { draw(ctx: CanvasRenderingContext2D): void } }
+
 export const Game = (() => {
-  let cv, ctx, dpr = 1, w = 0, h = 0;
+  let cv: HTMLCanvasElement, ctx: CanvasRenderingContext2D, dpr = 1, w = 0, h = 0;
   let last = 0;
 
   /** Los modos de juego que se pueden empezar, por id. */
   const MODES: Record<string, () => GameMode> = { survivor: () => G.Survivor, td: () => G.TD };
 
   /** Tu Pokémon en la partida en curso (null en los menús antes de jugar). */
-  const player = () => Run.mode ? Run.mode.player : null;
+  // (null sin partida, como siempre; quien lo usa lo hace con partida.)
+  const player = (): Player => Run.mode ? Run.mode.player : null!;
   const st = { get time() { return Run.mode ? Run.mode.time : 0; } };
 
   /** Lo que se le presta al modo para dibujar (se rellena en init y en cada fotograma). */
-  const view: View = { ctx: null, w: 0, h: 0, dpr: 1, frameDt: 0, fps: 60, drawScene };
+  const view: View = { ctx: null!, w: 0, h: 0, dpr: 1, frameDt: 0, fps: 60, drawScene };
 
   /** Empieza una partida del modo `id`. */
-  function start(id: string, opts: any = null) {
+  function start(id: string, opts: unknown = null) {
     Run.mode = MODES[id]();
     Run.mode.start(opts);
   }
@@ -38,8 +51,8 @@ export const Game = (() => {
   // ---------------- arranque ----------------
 
   function init() {
-    cv = document.getElementById('game');
-    ctx = cv.getContext('2d');
+    cv = document.getElementById('game') as HTMLCanvasElement;
+    ctx = cv.getContext('2d')!;
     view.ctx = ctx;
     resize();
     // WebKit (iPhone, PWA) a veces avisa del giro con las medidas viejas: se
@@ -96,7 +109,7 @@ export const Game = (() => {
     const portrait = G.Touch.active && innerHeight > innerWidth;
     const el = document.getElementById('rotate');
     if (!el) return;
-    if (portrait && !document.getElementById('rotate-ico').innerHTML) document.getElementById('rotate-ico').innerHTML = G.Icons.html('phone', 48);
+    if (portrait && !document.getElementById('rotate-ico')!.innerHTML) document.getElementById('rotate-ico')!.innerHTML = G.Icons.html('phone', 48);
     el.classList.toggle('hidden', !portrait);
     if (portrait) autoPause();
   }
@@ -129,12 +142,12 @@ export const Game = (() => {
     if (Run.state === 'ui') {
       // Esc en una subpantalla del menú vuelve al menú.
       if (G.Input.tap('escape') && !G.UI.isOpen('scr-profile') && ['scr-dex', 'scr-upgrades', 'scr-gacha', 'scr-friends', 'scr-rooms', 'scr-rank', 'scr-goals'].some(G.UI.isOpen)
-          && document.getElementById('pull-fx').classList.contains('hidden')) G.MenuUI.open();
+          && document.getElementById('pull-fx')!.classList.contains('hidden')) G.MenuUI.open();
       return;
     }
     if (G.Input.tap('escape') || G.Input.tap('keyp')) { togglePause(); return; }
     if (Run.state !== 'playing' || !player()) return;
-    Run.mode.keysPlay();
+    Run.mode!.keysPlay();
   }
 
   // ---------------- bucle ----------------
@@ -151,7 +164,7 @@ export const Game = (() => {
   // partida se da por terminada a los ~3 s y se guarda: tiempo, derrotados,
   // récords y ranking. Mejor eso que una pantalla negra y perderlo todo.
   let loopErrs = 0, errRun = 0;
-  function loop(ts) {
+  function loop(ts: number) {
     requestAnimationFrame(loop);
     try { frame(ts); errRun = 0; }
     catch (e) {
@@ -160,14 +173,14 @@ export const Game = (() => {
       if (++errRun === 180 && player() && Run.state !== 'ui' && Run.state !== 'over') {
         try {
           G.UI.hideAll();
-          Run.mode.quit();
+          Run.mode!.quit();
           G.UI.toast('El juego ha fallado: tu partida se ha guardado hasta aquí', 5000);
         } catch (e2) { console.error('[Game] no se pudo cerrar la partida:', e2); }
       }
     }
   }
 
-  function frame(ts) {
+  function frame(ts: number) {
     const real = (ts - last) / 1000 || 0;
     const dt = Math.min(1 / 30, real) * speedK;
     last = ts;
@@ -179,8 +192,8 @@ export const Game = (() => {
 
     handleKeys();
 
-    if (Run.state === 'playing') Run.mode.update(dt);
-    else if (player() && Run.state !== 'ui') Run.mode.idle(dt);
+    if (Run.state === 'playing') Run.mode!.update(dt);
+    else if (player() && Run.state !== 'ui') Run.mode!.idle(dt);
     // La red se atiende siempre (también con las cartas de nivel abiertas).
     if (G.Coop.active && player() && Run.state !== 'ui' && Run.state !== 'over') G.Coop.tick(dt);
 
@@ -200,28 +213,28 @@ export const Game = (() => {
 
   // ---------------- dibujo ----------------
 
-  function drawScene(cam, extra) {
+  function drawScene(cam: CameraT, extra: { y: number; draw(ctx: CanvasRenderingContext2D): void }[]) {
     const t = performance.now() / 1000;
     G.World.drawGround(ctx, cam);
     G.World.drawLiquid(ctx, cam, t);
-    if (player() && Run.state !== 'ui' && Run.mode.drawGround) Run.mode.drawGround(ctx);
+    if (player() && Run.state !== 'ui' && Run.mode!.drawGround) Run.mode!.drawGround(ctx);
     G.Hazards.draw(ctx);
     G.Combat.drawGroundFields(ctx);
     G.Pickups.draw(ctx);
 
     // Todo lo que tiene "pies" se ordena por Y: objetos, enemigos, jugador.
-    const items = [];
+    const items: DrawItem[] = [];
     // Los planos (manantiales, trampas) siempre debajo de todo lo demás.
     for (const p of G.World.visibleProps(cam)) items.push({ y: p.flat ? p.y - 4000 : p.y, prop: p });
     for (const e of G.EnemyMgr.drawables(cam)) items.push({ y: e.y, ent: e });
     for (const e of extra) items.push({ y: e.y, ent: e });
     const rift = G.Rift.drawable();
     if (rift) items.push({ y: rift.y, ent: rift });
-    if (player() && Run.state !== 'ui') for (const d of Run.mode.drawables()) items.push({ y: d.y, ent: d });
+    if (player() && Run.state !== 'ui') for (const d of Run.mode!.drawables()) items.push({ y: d.y, ent: d });
     items.sort((a, b) => a.y - b.y);
     for (const it of items) {
       if (it.prop) G.World.drawProp(ctx, it.prop, t);
-      else it.ent.draw(ctx);
+      else it.ent!.draw(ctx);
     }
   }
 
@@ -233,7 +246,7 @@ export const Game = (() => {
    * Así el menú enseña desde el primer segundo cómo se ve el juego.
    */
   const Backdrop = (() => {
-    let wanderers = [], t = 0, ready = false, biomeT = 0, bi = 0;
+    let wanderers: Wanderer[] = [], t = 0, ready = false, biomeT = 0, bi = 0;
     const CAST = [1, 4, 7, 25, 133, 52, 39, 35, 16, 43, 60, 69, 74, 92, 129, 147, 113, 143, 54, 79];
 
     function init() {
@@ -244,7 +257,7 @@ export const Game = (() => {
       ready = true;
     }
 
-    function spawn(dex, anywhere) {
+    function spawn(dex: number, anywhere: boolean): Wanderer {
       const a = new G.Sprites.Animator(dex, 1);
       const r = G.Sprites.bodyRadius(dex);
       let x = 0, y = 0;
@@ -253,13 +266,13 @@ export const Game = (() => {
         y = G.Camera.y + G.U.rand(-1, 1) * (anywhere ? G.Camera.h * 0.6 : G.Camera.h * 0.7);
         if (G.World.isFree(x, y, r)) break;
       }
-      return { dex, anim: a, x, y, r, vx: 0, vy: 0, t: 0, draw(ctx) {
+      return { dex, anim: a, x, y, r, vx: 0, vy: 0, t: 0, draw(ctx: CanvasRenderingContext2D) {
         G.Sprites.drawShadow(ctx, this.dex, this.x, this.y);
         this.anim.draw(ctx, this.x, this.y);
       } };
     }
 
-    function step(dt) {
+    function step(dt: number) {
       t += dt;
       G.World.update(dt, G.Camera);
       // Deriva lenta de la cámara.
@@ -295,7 +308,7 @@ export const Game = (() => {
       }
     }
 
-    function render(ctx, w, h, dpr, dt) {
+    function render(ctx: CanvasRenderingContext2D, w: number, h: number, dpr: number, dt: number) {
       if (!ready) return;
       step(dt);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -322,19 +335,20 @@ export const Game = (() => {
   return {
     init, start, togglePause,
     /** Empieza una partida de hordas. @param coop  { seed, host, members } para una partida en grupo */
-    startRun(coop = null) { start('survivor', coop); },
+    startRun(coop: CoopConfig | null = null) { start('survivor', coop); },
     /** Todos los jugadores de la partida (tú primero). */
-    everyone() { return Run.mode ? Run.mode.everyone() : [null]; },
+    // (Sin partida, [null] como siempre: sólo se usa con partida.)
+    everyone(): Player[] { return Run.mode ? Run.mode.everyone() : [null!]; },
     // Lo que sigue es del modo de hordas; se llama desde aquí por comodidad.
     levelXp() { return G.Survivor.levelXp(); },
-    flash(col, dur) { G.Survivor.flash(col, dur); },
+    flash(col: string, dur: number) { G.Survivor.flash(col, dur); },
     offerBond(quiet = false) { G.Survivor.offerBond(quiet); },
     /** Para pruebas: salta el reloj de la run. */
-    debugTime(t) { G.Survivor.debugTime(t); },
+    debugTime(t: number) { G.Survivor.debugTime(t); },
     /** Para grabar vídeos: cámara lenta (0,5 = mitad de velocidad). */
-    debugSpeed(k) { if (k > 1) G.Survivor.tamper(); speedK = k; },
+    debugSpeed(k: number) { if (k > 1) G.Survivor.tamper(); speedK = k; },
     /** Abandona la partida en curso (p. ej. al cerrar sesión desde Ajustes). */
-    quit() { if (Run.state !== 'ui' && Run.state !== 'over') Run.mode.quit(); },
+    quit() { if (Run.state !== 'ui' && Run.state !== 'over') Run.mode!.quit(); },
     /** Para grabar vídeos: abre las cartas de subir de nivel. */
     debugLevelUp() { G.Survivor.debugLevelUp(); },
     toUI() { Run.state = 'ui'; Backdrop.restore(); },
@@ -350,12 +364,12 @@ export const Flow = {
     G.LoginUI.init(); G.TestUI.init(); G.MenuUI.init(); G.GachaUI.init();
     G.SocialUI.init(); G.RoomsUI.init(); G.RankingUI.init(); G.ModUI.init(); G.GoalsUI.init(); G.ProfileUI.init(); G.SettingsUI.init(); G.SupportUI.init(); G.NewsUI.init(); G.GuideUI.init(); G.Updater.init();
     // Tu nombre arriba a la derecha abre tu perfil.
-    document.getElementById('user-pill').onclick = () => G.GoalsUI.open('profile');
+    document.getElementById('user-pill')!.onclick = () => G.GoalsUI.open('profile');
     G.Audio.music('village');     // suena tras el primer clic (lo exige el navegador)
     G.Game.init();
     // La base de datos (nube o local) recupera la sesión anterior.
-    G.DB.ready().then(restored => {
-      document.getElementById('boot').classList.add('hidden');
+    G.DB.ready().then((restored: boolean) => {
+      document.getElementById('boot')!.classList.add('hidden');
       // En otra tarea: crear el sonido para comprobarlo cuesta ~60 ms y no debe bloquear la carga.
       setTimeout(() => this.tapToStart(() => { if (restored) this.afterLogin(); else this.toLogin(); }), 0);
     });
@@ -365,13 +379,13 @@ export const Flow = {
    * que se toca algo. Con esta pantalla la música empieza en cuanto entras.
    * (Si el navegador ya deja sonar, no sale.)
    */
-  tapToStart(then) {
+  tapToStart(then: () => void) {
     G.Audio.unlock();
     if (G.Audio.canPlay()) { then(); return; }
-    const el = document.getElementById('tap-start');
+    const el = document.getElementById('tap-start')!;
     el.classList.remove('hidden');
-    const go = e => {
-      if (e.type === 'keydown' && ['Shift', 'Control', 'Alt', 'Meta', 'Tab'].includes(e.key)) return;
+    const go = (e: Event) => {
+      if (e.type === 'keydown' && ['Shift', 'Control', 'Alt', 'Meta', 'Tab'].includes((e as KeyboardEvent).key)) return;
       e.preventDefault(); e.stopPropagation();
       G.Audio.unlock();
       el.classList.add('hidden');
@@ -384,7 +398,7 @@ export const Flow = {
   toLogin() { G.Audio.music('village'); G.LoginUI.open(); },
   afterLogin() {
     G.Audio.music('village');
-    if (!G.DB.save.partner) G.TestUI.start();
+    if (!G.DB.save!.partner) G.TestUI.start();
     else this.goMenu();
   },
   goMenu() {
@@ -403,7 +417,7 @@ export const Flow = {
   },
   play() { G.Game.startRun(); },
   /** Empieza la partida en grupo (el anfitrión la manda a todos): de hordas o, con mode 'td', de Defensa. */
-  startCoop(cfg) {
+  startCoop(cfg: CoopConfig) {
     // En 'over' (resumen de la partida anterior) se cierra el resumen como si se pulsara "volver" y se empieza.
     // En cualquier otro estado que no sea 'ui' (p. ej. 'playing') se ignora.
     if ((G.Game.state !== 'ui' && G.Game.state !== 'over') || !G.Social.room) return;

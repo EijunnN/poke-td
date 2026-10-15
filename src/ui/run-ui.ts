@@ -1,13 +1,26 @@
 import { G } from '../g';
+import type { Card } from '../systems/levelup';
+import type { MoveInstance } from '../data/moves';
 /* ============ run-ui.js — cartas de nivel, pausa y fin de run ============ */
+/** Lo que se enseña al acabar la run (la Defensa cambia las cuatro cifras de arriba con `cells`). */
+interface RunResult {
+  dead: boolean; time: number; level: number; kills: number; bosses: number; coins: number; record: boolean;
+  t1: number; t10: number; judge: { time: number; bosses: number } | null;
+  moves: MoveInstance[]; caught: { dex: number; isNew?: boolean }[]; breakdown: string;
+  cells?: [string, string | number][];
+}
+/** Lo que se puede hacer con un vínculo (Player.bondOptions): `group` sólo en 'add'. */
+interface BondOption { mode: string; group: MoveInstance[] | null; loose: MoveInstance[] }
+interface BondState { opt: BondOption; cb: (list: MoveInstance[]) => void; first: MoveInstance | null; list: MoveInstance[] }
+
 export const RunUI = (() => {
   const $ = G.UI.$;
-  let offers = null, offerCb = null, coopMode = false;
+  let offers: Card[] | null = null, offerCb: ((c: Card) => void) | null = null, coopMode = false;
 
   /** @param coop  en grupo: tras elegir, se queda esperando a los demás */
-  function showLevelUp(level, list, cb, coop = false) {
+  function showLevelUp(level: number, list: Card[], cb: (c: Card) => void, coop = false) {
     offerCb = cb; coopMode = coop;
-    $('lvl-num').textContent = level;
+    $('lvl-num').textContent = String(level);
     $('lvl-wait').textContent = '';
     $('lvl-wait').classList.toggle('hidden', !coop);
     $('cards').classList.remove('done');
@@ -28,16 +41,16 @@ export const RunUI = (() => {
 
   function reroll() {
     if (!offers || rerollsLeft() <= 0) return;
-    const p = G.Game.player;
+    const p = G.Game.player!;   // rerollsLeft() > 0 implica que hay jugador
     p.rerolls = (p.rerolls || 0) + 1;
     G.Audio.sfx('select');
     renderCards(G.LevelUp.offer(p));
   }
 
-  function renderCards(list) {
+  function renderCards(list: Card[]) {
     offers = list;
     const left = rerollsLeft();
-    $('lvl-rr-n').textContent = left;
+    $('lvl-rr-n').textContent = String(left);
     $('lvl-reroll').classList.toggle('hidden', left <= 0);
     const box = $('cards');
     box.innerHTML = '';
@@ -60,24 +73,24 @@ export const RunUI = (() => {
     });
   }
 
-  function pick(i) {
+  function pick(i: number) {
     if (!offers || !offers[i]) return;
     const c = offers[i], cb = offerCb;
     offers = null; offerCb = null;
     $('lvl-reroll').classList.add('hidden');
     if (coopMode) {
       // Se queda la carta elegida a la vista mientras eligen los demás.
-      $('cards').querySelectorAll('.card').forEach((el, j) => el.classList.toggle('picked', j === i));
+      $('cards').querySelectorAll('.card').forEach((el: Element, j: number) => el.classList.toggle('picked', j === i));
       $('cards').classList.add('done');
     } else G.UI.hide('scr-levelup');
-    cb(c);
+    cb!(c);
   }
 
   /** Cooperativo: quién falta por elegir. */
-  function setWaiting(names) {
+  function setWaiting(names: string[]) {
     const me = G.Social.me ? G.Social.me.name : '';
     const others = names.filter(n => n !== me);
-    const list = a => a.length > 1 ? a.slice(0, -1).join(', ') + ' y ' + a[a.length - 1] : a[0];
+    const list = (a: string[]) => a.length > 1 ? a.slice(0, -1).join(', ') + ' y ' + a[a.length - 1] : a[0];
     $('lvl-wait').textContent = !names.length ? ''
       : !others.length ? 'Elige tu carta'
       : names.includes(me) ? 'Faltan por elegir: ' + list([...others, 'tú'])
@@ -94,7 +107,7 @@ export const RunUI = (() => {
    * Mensaje de apoyo (Ko-fi) al acabar: tras un récord o cada 10 partidas,
    * nunca en la primera y como mucho una vez al día. Se cierra con la X.
    */
-  function askSupport(r) {
+  function askSupport(r: RunResult) {
     if (!G.Funding || !G.Funding.url) return false;
     const runs = (G.DB.save && G.DB.save.stats && G.DB.save.stats.runs) || 0;
     if (runs < 2 || !(r.record || runs % 10 === 0)) return false;
@@ -104,7 +117,7 @@ export const RunUI = (() => {
   }
 
   /** @param r  lo de la partida; `cells` ([nombre, valor][]) cambia las cuatro cifras de arriba (la Defensa enseña oleadas y vidas). */
-  function showOver(r, onBack) {
+  function showOver(r: RunResult, onBack: () => void) {
     $('over-title').textContent = r.dead ? 'Has caído…' : 'Run terminada';
     const cells: [string, string | number][] = r.cells || [['Tiempo', G.U.mmss(r.time)], ['Nivel', r.level], ['Derrotados', r.kills], ['Jefes', r.bosses]];
     $('over-stats').innerHTML = `
@@ -126,7 +139,7 @@ export const RunUI = (() => {
         <a class="btn small gold" href="${G.Funding.url}" target="_blank" rel="noopener">${G.Icons.html('heart', 14)} Apoyar en Ko-fi</a>
       </div>` : ''}`;
     const ask = $('over-ask');
-    if (ask) ask.querySelector('.x').onclick = () => ask.remove();
+    if (ask) ask.querySelector<HTMLElement>('.x')!.onclick = () => ask.remove();
     $('btn-again').onclick = onBack;
     if (r.caught && r.caught.length) {
       const row = $('over-caught');
@@ -141,10 +154,10 @@ export const RunUI = (() => {
   }
 
   /** Has encontrado un objeto llevando ya otro: ¿con cuál te quedas? */
-  function showItemChoice(cur, next, cb) {
+  function showItemChoice(cur: string, next: string, cb: (id: string) => void) {
     const box = $('item-cards');
     box.innerHTML = '';
-    [[cur, 'Quedarme con'], [next, 'Cambiar a']].forEach(([id, verb], i) => {
+    ([[cur, 'Quedarme con'], [next, 'Cambiar a']] as [string, string][]).forEach(([id, verb], i) => {
       const it = G.Items.BY[id];
       const el = document.createElement('div');
       el.className = 'card' + (i === 1 ? ' evo' : '');
@@ -159,13 +172,13 @@ export const RunUI = (() => {
 
   // ---------------- vínculo: qué movimientos se fusionan ----------------
 
-  let bond = null;          // { opt, cb, first, list }
+  let bond: BondState | null = null;
 
   /**
    * @param opt  pl.bondOptions(): 'add' (uno suelto al grupo) o 'pair' (dos sueltos, en dos pasos)
    * @param cb   recibe la lista de movimientos que se juntan
    */
-  function showBond(opt, cb) {
+  function showBond(opt: BondOption, cb: (list: MoveInstance[]) => void) {
     bond = { opt, cb, first: null, list: [] };
     $('bond-back').onclick = bondBack;
     renderBond();
@@ -173,18 +186,19 @@ export const RunUI = (() => {
   }
 
   function renderBond() {
-    const { opt, first } = bond;
-    const names = ms => ms.map(m => m.name).join(' + ');
+    const b = bond!;
+    const { opt, first } = b;
+    const names = (ms: MoveInstance[]) => ms.map(m => m.name).join(' + ');
     const step2 = opt.mode === 'pair' && first;
-    $('bond-sub').textContent = opt.mode === 'add' ? 'Elige qué movimiento se une a ' + names(opt.group)
+    $('bond-sub').textContent = opt.mode === 'add' ? 'Elige qué movimiento se une a ' + names(opt.group!)
       : step2 ? '¿Con cuál unes ' + first.name + '?' : 'Elige el primer movimiento que vas a unir';
     $('bond-back').classList.toggle('hidden', !step2);
-    bond.list = step2 ? opt.loose.filter(m => m !== first) : opt.loose;
+    b.list = step2 ? opt.loose.filter(m => m !== first) : opt.loose;
     const box = $('bond-cards');
     box.innerHTML = '';
-    bond.list.forEach((m, i) => {
+    b.list.forEach((m, i) => {
       const col = G.U.TYPE_COLOR[m.type];
-      const desc = opt.mode === 'add' ? 'Se lanzará a la vez que ' + names(opt.group) + '.'
+      const desc = opt.mode === 'add' ? 'Se lanzará a la vez que ' + names(opt.group!) + '.'
         : step2 ? 'Se lanzará a la vez que ' + first.name + '. Queda un hueco libre.'
         : m.desc || '';
       const el = document.createElement('div');
@@ -199,7 +213,7 @@ export const RunUI = (() => {
     });
   }
 
-  function pickBond(i) {
+  function pickBond(i: number) {
     if (!bond || !bond.list[i]) return;
     const m = bond.list[i];
     if (bond.opt.mode === 'pair' && !bond.first) {
@@ -208,7 +222,7 @@ export const RunUI = (() => {
       renderBond();
       return;
     }
-    const picked = bond.opt.mode === 'add' ? [m] : [bond.first, m];
+    const picked = bond.opt.mode === 'add' ? [m] : [bond.first!, m];
     const cb = bond.cb;
     bond = null;
     G.UI.hide('scr-bond');
@@ -228,7 +242,7 @@ export const RunUI = (() => {
     G.UI.show('scr-pause');
   }
 
-  function wirePause(onResume, onQuit) {
+  function wirePause(onResume: () => void, onQuit: () => void) {
     $('btn-resume').onclick = onResume;
     $('btn-quit').onclick = onQuit;
   }
