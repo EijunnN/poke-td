@@ -1548,3 +1548,25 @@ describe('sólo mirar desde la sala', () => {
   });
 });
 
+// ====================================================================
+
+describe('señales en el mapa', () => {
+  test('sólo con la partida en marcha; llegan a todos (también a quien mira) con nombre y sitio, y con tope de ritmo', async () => {
+    const h = account(), g = account(), w = account();
+    const { hc, gcs: [gc], room } = await roomWith(h, [g]);
+    expect(gc.req({ k: 'mark', x: 10, y: 20 }).ok).toBe(false);                 // aún en el vestíbulo
+    hc.req({ k: 'room.pub', v: true, mode: 'survivor', map: 'random' });
+    hc.send({ k: 'g', d: { k: 'start', seed: 1, host: h.uid, members: [h, g].map(a => ({ uid: a.uid, name: a.name, dex: 1 })) } });
+    const wc = online(w);
+    expect(wc.req({ k: 'room.watch', id: room.id }).ok).toBe(true);
+    expect(gc.req({ k: 'mark', x: 10.4, y: -20.6 }).ok).toBe(true);
+    for (const c of [hc, gc, wc]) expect(c.take(m => m.k === 'mark')).toMatchObject({ f: g.uid, n: g.name, x: 10, y: -21 });
+    expect(gc.req({ k: 'mark', x: 'a', y: 0 }).ok).toBe(false);
+    expect(gc.req({ k: 'mark', x: 1e9, y: 0 }).ok).toBe(false);
+    for (let i = 0; i < 3; i++) expect(gc.req({ k: 'mark', x: i, y: 0 }).ok).toBe(true);
+    expect(gc.req({ k: 'mark', x: 9, y: 9 }).error).toContain('Demasiadas');
+    advance(3_000);
+    expect(gc.req({ k: 'mark', x: 9, y: 9 }).ok).toBe(true);
+    expect(wc.req({ k: 'mark', x: 5, y: 5 }).ok).toBe(true);                     // también quien mira
+  });
+});

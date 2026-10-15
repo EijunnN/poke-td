@@ -1789,7 +1789,14 @@ export const TD = (() => {
       if (d > R) { x *= R / d; y *= R / d; }
       camFree = { x, y };
     };
-    mapCv.addEventListener('pointerdown', e => { dragging = true; mapCv!.setPointerCapture(e.pointerId); go(e); });
+    mapCv.addEventListener('pointerdown', e => {
+      if (G.Pings.available() && (G.Pings.armed || e.altKey)) {
+        const r = mapCv!.getBoundingClientRect(), R = mapR();
+        G.Pings.send(((e.clientX - r.left) / r.width * 2 - 1) * R, ((e.clientY - r.top) / r.height * 2 - 1) * R);
+        return;
+      }
+      dragging = true; mapCv!.setPointerCapture(e.pointerId); go(e);
+    });
     mapCv.addEventListener('pointermove', e => { if (dragging) go(e); });
     const stop = () => { dragging = false; };
     mapCv.addEventListener('pointerup', stop);
@@ -1849,6 +1856,13 @@ export const TD = (() => {
       ctx.strokeStyle = '#10131c'; ctx.lineWidth = dpr;
       ctx.beginPath(); ctx.arc(X(h.x), Y(h.y), 3.5 * dpr, 0, 6.2832); ctx.fill(); ctx.stroke();
     }
+    // Las señales de los compañeros (net/ping.ts): un anillo que late, de su color.
+    const beat = (performance.now() % 600) / 600;
+    for (const g of G.Pings.list) {
+      ctx.strokeStyle = g.color; ctx.lineWidth = 2 * dpr; ctx.globalAlpha = 1 - beat * 0.6;
+      ctx.beginPath(); ctx.arc(X(g.x), Y(g.y), (4 + beat * 6) * dpr, 0, 6.2832); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
     // Lo que se ve ahora.
     ctx.strokeStyle = camFree ? '#ffd23f' : 'rgba(255, 255, 255, 0.8)'; ctx.lineWidth = 1.5 * dpr;
     ctx.strokeRect(X(G.Camera.left()), Y(G.Camera.top()), G.Camera.w * k, G.Camera.h * k);
@@ -2149,10 +2163,12 @@ export const TD = (() => {
     G.Projectiles.draw(ctx);
     G.Combat.drawAirFields(ctx);
     G.FX.draw(ctx);
+    G.Pings.drawWorld(ctx);
     ctx.restore();
 
     G.World.drawVignette(ctx, w, h);
     G.HUD.draw(ctx, w, h, watching() ? G.Spectate.target() || pl : pl, st);
+    G.Pings.drawHud(ctx, w, h);
     G.Touch.draw(ctx);
     if (show) drawMap();
   }

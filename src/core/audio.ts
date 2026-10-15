@@ -26,7 +26,7 @@ interface Compilada { steps: number; ev: Evento[][]; bpm: number; swing: number 
 /** Tema que está sonando. */
 interface Reproduccion { name: string; song: Compilada; bus: GainNode; step: number; next: number }
 /** Opciones de un efecto (shot: kind y type · burst, reveal: rarity). */
-interface SfxOpts { kind?: string; type?: string; rarity?: number }
+interface SfxOpts { kind?: string; type?: string; rarity?: number; pan?: number }
 
 type Melodico = (t: number, f: number, d: number, v: number, bus: AudioNode) => void;
 type Percusion = (t: number, v: number, bus: AudioNode) => void;
@@ -399,7 +399,7 @@ export const Audio = (() => {
     steel: 750, bug: 980, dark: 330, flying: 820
   };
 
-  function tone(type: OscillatorType, f0: number, f1: number, dur: number, vol: number, at = 0, bus = sfxBus) {
+  function tone(type: OscillatorType, f0: number, f1: number, dur: number, vol: number, at = 0, bus: AudioNode = sfxBus) {
     const t = ctx.currentTime + at;
     const g = ctx.createGain(); g.connect(bus);
     g.gain.setValueAtTime(0.0001, t);
@@ -447,6 +447,14 @@ export const Audio = (() => {
       tone('sine', 880 * Math.pow(2, xpCombo / 12), 0, 0.06, 0.035);
     },
     coin:    () => { tone('square', 1320, 1320, 0.05, 0.035); tone('square', 1760, 1760, 0.14, 0.035, 0.05); },
+    /** Señal en el mapa (net/ping.ts): dos notas agudas, del lado de la pantalla donde está. */
+    ping(o?: SfxOpts) {
+      const pn = ctx.createStereoPanner();
+      pn.pan.value = Math.max(-1, Math.min(1, (o && o.pan) || 0));
+      pn.connect(sfxBus);
+      tone('sine', 1200, 1600, 0.12, 0.09, 0, pn);
+      tone('sine', 1600, 1600, 0.1, 0.07, 0.09, pn);
+    },
     heal:    () => arp('triangle', [523, 659, 784, 1047], 0.06, 0.18, 0.06),
     levelup: () => { arp('square', [523, 659, 784, 1047], 0.07, 0.14, 0.05); arp('triangle', [1047, 1319, 1568], 0.07, 0.3, 0.05); },
     hurt:    () => { tone('square', 150, 70, 0.14, 0.06); hiss(0.1, 0.06, 'lowpass', 900); },

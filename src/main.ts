@@ -54,6 +54,7 @@ import './net/coop';
 import './net/spectate';
 import './net/ranking';
 import './net/chat';
+import './net/ping';
 import './ui/icons';
 import './ui/ui';
 import './ui/hud';

@@ -110,6 +110,7 @@ export const SettingsUI = (() => {
              <div><kbd>1</kbd>–<kbd>3</kbd></div><span>elegir carta al subir de nivel</span>
              <div><kbd>Enter</kbd> o <kbd>T</kbd></div><span>chat (en una sala)</span>
              <div><kbd>V</kbd>, luego <kbd>1</kbd>–<kbd>8</kbd></div><span>frases rápidas</span>
+             <div><kbd>Alt</kbd> + clic</div><span>señal en el mapa (en grupo)</span>
            </div>`;
     } else if (tab === 'acc') {
       renderAccount(box);

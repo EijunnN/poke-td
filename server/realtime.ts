@@ -35,6 +35,8 @@
  *                                                 las salas públicas (para entrar sin invitación, o mirar si ya juegan)
  *   { k:'room.watch', id }                        mirar como espectador la partida de una sala pública -> ack { room, cfg }
  *   { k:'room.unwatch' }                          dejar de mirar
+ *   { k:'mark', x, y }                            señal en el mapa de la partida en curso (miembros y espectadores);
+ *                                                 como mucho PING_BURST cada PING_WINDOW ms
  *   { k:'chat', t } · { k:'chat', q }             chat de la sala (miembros y espectadores): texto libre `t` (sin
  *                                                 invisibles y como mucho CHAT_MAX letras; las palabras, tal cual: el
  *                                                 que quiera las censura en su juego) o frase rápida `q`
@@ -49,6 +51,7 @@
  *   { k:'room', room: { id, host, open, started, pub, mode, map, members:[{uid,name,dex,shiny,away,spec}], watchers:[{uid,name}] } | null, why? }
  *   { k:'watch', room: <igual> | null, why? }     la sala que miras (null: se acabó la partida o se cerró)
  *   { k:'chat', f, n, t?, q?, at }                un mensaje del chat de tu sala (también el tuyo)
+ *   { k:'mark', f, n, x, y }                      una señal en el mapa (también la tuya)
  *   { k:'chat.h', m: [<chat>] }                   los últimos mensajes, al entrar, mirar o volver a una sala
  *                                                 (sólo en memoria: tras un reinicio del servidor empieza vacío)
  *
@@ -115,6 +118,8 @@ const MAX_OUT_INVITES = 8;
 const ID = /^[A-Za-z0-9_-]{8,32}$/;
 /** Chat: mensajes que guarda cada sala (para quien entra después), y el ritmo de cada uno. */
 const CHAT_KEEP = 30, CHAT_BURST = 5, CHAT_WINDOW = 8_000, CHAT_REPEAT = 15_000;
+/** Señales en el mapa: como mucho tantas cada tanto (más, se ignoran). */
+const PING_BURST = 4, PING_WINDOW = 3_000;
 /** Un mensaje del chat tal y como se reparte. */
 interface ChatMsg { k: 'chat'; f: string; n: string; t?: string; q?: string; at: number }
 
@@ -164,6 +169,8 @@ export interface Conn {
   bad: number; badT: number;
   /** Chat: cuándo mandó sus últimos mensajes, y el último texto. */
   chatAt: number[]; lastChat: string; lastChatAt: number;
+  /** Cuándo lanzó sus últimas señales en el mapa. */
+  pingAt: number[];
 }
 
 const newRoomId = () => Buffer.from(crypto.getRandomValues(new Uint8Array(9))).toString('base64url');
@@ -342,7 +349,7 @@ export function createRealtime(db: Db, opts: RealtimeOptions = {}) {
   function open(ws: ServerWebSocket<WsData>) {
     const u = ws.data.user;
     const c: Conn = { ws, id: u.id, name: u.name, play: false, gone: false, msgs: msgBurst, bytes: byteBurst, t: now(), bad: 0, badT: 0,
-                      chatAt: [], lastChat: '', lastChatAt: 0 };
+                      chatAt: [], lastChat: '', lastChatAt: 0, pingAt: [] };
     ws.data.c = c;
     const old = conns.get(u.id);
     if (old) {
@@ -609,6 +616,20 @@ export function createRealtime(db: Db, opts: RealtimeOptions = {}) {
         const s = text({ k: 'g', f: String(c.id), d });
         for (const t of targets) { const tc = conns.get(t); if (tc) raw(tc, s); }
         return;
+      }
+
+      case 'mark': {
+        const r = roomOf.get(c.id) ?? watchOf.get(c.id);
+        if (!r || !r.started) return no('No hay ninguna partida en curso.');
+        const ok = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && Math.abs(v) <= 1e6;
+        if (!ok(m.x) || !ok(m.y)) return bad('Señal no válida.');
+        const at = now();
+        c.pingAt = c.pingAt.filter(x => at - x < PING_WINDOW);
+        if (c.pingAt.length >= PING_BURST) return no('Demasiadas señales seguidas.');
+        c.pingAt.push(at);
+        const s = text({ k: 'mark', f: String(c.id), n: c.name, x: Math.round(m.x), y: Math.round(m.y) });
+        for (const id of [...r.members.keys(), ...r.watchers.keys()]) { const tc = conns.get(id); if (tc) raw(tc, s); }
+        return reply(true);
       }
 
       case 'chat': {

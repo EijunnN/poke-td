@@ -12,10 +12,13 @@ import type { ChatMsg } from '../net/chat';
  *   - V: sólo las frases rápidas, numeradas (1-8 las manda sin escribir).
  *   - En el lobby, el chat va dentro de la pantalla de la sala.
  * Tocar el nombre de alguien lo silencia (y otra vez, lo vuelve a oír).
+ *
+ * Al lado, en partida, el botón 📍: arma el siguiente toque en el mapa como señal para
+ * los demás (net/ping.ts; con ratón, Alt + clic lo hace directamente).
  */
 export const ChatUI = (() => {
   const FEED_MS = 7000, FEED_MAX = 4;
-  let btn: HTMLButtonElement, feed: HTMLElement, panel: HTMLElement, quickPop: HTMLElement;
+  let btn: HTMLButtonElement, pingBtn: HTMLButtonElement, feed: HTMLElement, panel: HTMLElement, quickPop: HTMLElement;
   let built = false, open = false, quickOpen = false, unread = false;
   const esc = (s: string) => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 
@@ -86,6 +89,11 @@ export const ChatUI = (() => {
         border: 2px solid rgba(255,255,255,.85); background: rgba(16,28,64,.78); color: #fff; display: grid; place-items: center;
         cursor: pointer; padding: 0; }
       #chat-btn svg { width: 20px; height: 20px; }
+      #ping-btn { position: fixed; top: 10px; right: 110px; z-index: 40; width: 38px; height: 38px; border-radius: 12px;
+        border: 2px solid rgba(255,255,255,.85); background: rgba(16,28,64,.78); color: #fff; display: grid; place-items: center;
+        cursor: pointer; padding: 0; }
+      #ping-btn svg { width: 20px; height: 20px; }
+      #ping-btn.armed { background: #ffd23f; color: #10204a; border-color: #fff; box-shadow: 0 0 0 3px rgba(255,210,63,.45); }
       #chat-btn .dot { position: absolute; top: -3px; right: -3px; width: 10px; height: 10px; border-radius: 50%; background: #ffd23f;
         border: 2px solid #102040; display: none; }
       #chat-btn.unread .dot { display: block; }
@@ -116,6 +124,7 @@ export const ChatUI = (() => {
         .chat-panel { top: 6px; bottom: auto; left: 50%; transform: translateX(-50%); width: min(460px, calc(100vw - 16px)); padding: 8px; gap: 6px; }
         .chat-log { max-height: 22vh; font-size: 13px; }
         #chat-btn { top: 8px; right: 58px; width: 36px; height: 36px; }
+        #ping-btn { top: 8px; right: 100px; width: 36px; height: 36px; }
         #chat-feed { max-width: min(300px, 32vw); }
         #chat-feed .chat-line { font-size: 12px; }
       }
@@ -133,6 +142,19 @@ export const ChatUI = (() => {
     btn.onclick = () => (open ? close() : openPanel(false));
     btn.addEventListener('pointerdown', e => e.stopPropagation());
 
+    pingBtn = document.createElement('button');
+    pingBtn.id = 'ping-btn';
+    pingBtn.title = 'Señal en el mapa (o Alt + clic)';
+    pingBtn.setAttribute('aria-label', 'Señal en el mapa');
+    pingBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><path d="M12 21s-6-6.2-6-11a6 6 0 0 1 12 0c0 4.8-6 11-6 11z"/><circle cx="12" cy="10" r="2.2"/></svg>`;
+    pingBtn.onclick = () => {
+      const v = !G.Pings.armed;
+      G.Pings.setArmed(v);
+      if (v) G.UI.toast(G.Touch.active ? 'Toca el mapa donde quieras marcar' : 'Haz clic en el mapa donde quieras marcar (Alt + clic, sin botón)', 2400);
+    };
+    pingBtn.addEventListener('pointerdown', e => e.stopPropagation());
+    G.Pings.onArmed(v => pingBtn.classList.toggle('armed', v));
+
     feed = document.createElement('div');
     feed.id = 'chat-feed';
 
@@ -146,7 +168,7 @@ export const ChatUI = (() => {
     quickPop.className = 'box hidden';
     quickPop.addEventListener('pointerdown', e => e.stopPropagation());
 
-    document.body.append(feed, btn, panel, quickPop);
+    document.body.append(feed, btn, pingBtn, panel, quickPop);
     setInterval(sync, 400);
     sync();
   }
@@ -157,6 +179,9 @@ export const ChatUI = (() => {
   function sync() {
     const on = G.Chat.available() && !lobbyOpen();
     btn.style.display = on ? '' : 'none';
+    const pingOn = G.Pings.available() && !lobbyOpen();
+    pingBtn.style.display = pingOn ? '' : 'none';
+    if (!pingOn && G.Pings.armed) G.Pings.setArmed(false);
     btn.classList.toggle('unread', unread);
     feed.style.display = on && !open ? '' : 'none';
     if (!on && (open || quickOpen)) close();
@@ -237,7 +262,7 @@ export const ChatUI = (() => {
       { right: '12px', top: '160px', left: 'auto', bottom: 'auto' },
       { left: '12px', top: '64px', right: 'auto', bottom: 'auto' },
     ];
-    const blocks = ['td-shop', 'td-panel', 'td-map', 'td-bar', 'td-hud', 'chat-btn', 'td-tip']
+    const blocks = ['td-shop', 'td-panel', 'td-map', 'td-bar', 'td-hud', 'chat-btn', 'ping-btn', 'td-tip']
       // (offsetParent no sirve: con position: fixed siempre es null.)
       .map(id => document.getElementById(id)).filter((el): el is HTMLElement => !!el && el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden')
       .map(el => el.getBoundingClientRect());
@@ -298,6 +323,7 @@ export const ChatUI = (() => {
       close(); e.preventDefault(); e.stopImmediatePropagation(); return;
     }
     if (e.code === 'Escape' && (open || quickOpen)) { close(); e.preventDefault(); e.stopImmediatePropagation(); return; }
+    if (e.code === 'Escape' && G.Pings.armed) { G.Pings.setArmed(false); e.preventDefault(); e.stopImmediatePropagation(); return; }
     if (e.code === 'KeyT') { e.preventDefault(); e.stopImmediatePropagation(); openPanel(true); return; }
     if (e.code === 'KeyV') { e.preventDefault(); e.stopImmediatePropagation(); quickOpen ? close() : openQuick(); }
   }, true);

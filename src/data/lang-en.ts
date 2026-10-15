@@ -292,6 +292,11 @@ G.I18n.add({
   'El mensaje está vacío.': 'The message is empty.', 'No estás en ninguna sala.': 'You are not in a room.',
   'En las salas. Con <b>Sólo frases</b> ves las frases rápidas de los demás, pero no lo que escriben.':
     'In rooms. With <b>Phrases only</b> you see the others\' quick phrases, but not what they write.',
+  'Señal en el mapa (o Alt + clic)': 'Map ping (or Alt + click)', 'Señal en el mapa': 'Map ping',
+  'Toca el mapa donde quieras marcar': 'Tap the map where you want to ping',
+  'Haz clic en el mapa donde quieras marcar (Alt + clic, sin botón)': 'Click the map where you want to ping (Alt + click, no button needed)',
+  'señal en el mapa (en grupo)': 'map ping (in a group)', 'No hay ninguna partida en curso.': 'There is no game in progress.',
+  'Demasiadas señales seguidas.': 'Too many pings in a row.',
   'Sólo mira': 'Watching only', '{x} mirando': '{x} watching', 'Quiero jugar': 'I want to play', 'Sólo mirar la partida': 'Just watch the game',
   'Mirarás la partida sin jugar; al acabar vuelves aquí.': 'You will watch the game without playing; afterwards you come back here.',
   'Hace falta al menos otro jugador (los que sólo miran no cuentan).': 'You need at least one more player (those who only watch do not count).',

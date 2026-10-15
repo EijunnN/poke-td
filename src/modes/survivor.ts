@@ -618,6 +618,7 @@ export const Survivor = (() => {
     G.Combat.drawAirFields(ctx);
     G.FX.draw(ctx);
     G.Judgment.drawAir(ctx);
+    G.Pings.drawWorld(ctx);
     ctx.restore();
 
     G.Weather.draw(ctx, w, h, frameDt);
@@ -631,7 +632,7 @@ export const Survivor = (() => {
       ctx.fillStyle = g;
       ctx.fillRect(0, 0, w, h);
     }
-    if (!G.Judgment.cinematic) G.HUD.draw(ctx, w, h, spectating ? G.Spectate.target() || pl : pl, st);
+    if (!G.Judgment.cinematic) { G.HUD.draw(ctx, w, h, spectating ? G.Spectate.target() || pl : pl, st); G.Pings.drawHud(ctx, w, h); }
     G.Judgment.drawOverlay(ctx, w, h);
     G.Touch.draw(ctx);
     if (G.Settings.get('fps')) {

@@ -423,6 +423,33 @@ describe('cooperativo', () => {
     expect(await B.allErrors()).toEqual([]);
   });
 
+  test('señal en el mapa: Alt + clic en A le llega a B en ese punto, con el color y el nombre de A', async () => {
+    // En estas páginas la portada ("Pulsa para empezar") sigue encima: fuera, como si ya se hubiera pasado.
+    await A.eval(() => { const t = document.getElementById('tap-start'); if (t) t.style.display = 'none'; });
+    // Un punto cerca del héroe donde lo de encima sea el mapa.
+    const pt = await A.eval(() => {
+      const pl = G.Game.player, cam = G.Camera, cv = document.getElementById('game')!.getBoundingClientRect();
+      for (const [dx, dy] of [[60, 0], [-60, 0], [0, 60], [60, 60], [-60, 60], [0, -60], [120, 90], [-120, 90]]) {
+        const x = pl.x + dx, y = pl.y + dy, sx = cv.left + (x - cam.left()) * cam.scale, sy = cv.top + (y - cam.top()) * cam.scale;
+        const e = document.elementFromPoint(sx, sy);
+        if (e && e.id === 'game') return { x, y, sx, sy };
+      }
+      return null;
+    });
+    expect(pt).not.toBeNull();
+    await A.page.keyboard.down('Alt');
+    await A.page.mouse.click(pt!.sx, pt!.sy);
+    await A.page.keyboard.up('Alt');
+    await waitPage(B, 'B ve la señal de A', u => G.Pings.list.some((p: any) => p.f === u), uidA);
+    const got = await B.call(u => { const q = G.Pings.list.find((p: any) => p.f === u); return { x: q.x, y: q.y, color: q.color, name: q.name }; }, uidA);
+    expect(Math.abs(got.x - pt!.x)).toBeLessThan(3);
+    expect(Math.abs(got.y - pt!.y)).toBeLessThan(3);
+    expect(got.name).toBe(nameA);
+    expect(got.color).toBe(await A.eval(() => G.Game.player.tagColor));
+    expect(await A.allErrors()).toEqual([]);
+    expect(await B.allErrors()).toEqual([]);
+  });
+
   test('enemigos del anfitrión en el invitado, compañeros y golpes', async () => {
     // Los dos aguantan lo que haga falta: la prueba no va de sobrevivir.
     for (const d of [A, B]) await d.eval(() => { const p = G.Game.player; p.maxHp = p.hp = 1e7; });
