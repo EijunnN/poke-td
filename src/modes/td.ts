@@ -1100,6 +1100,8 @@ export const TD = (() => {
       if (Run.mode !== TD || Run.state !== 'playing' || !d || d.id !== e.pointerId) return;
       // Un toque o clic corto y sin arrastrar; arrastrar es mover al héroe.
       if (performance.now() - d.t > 350 || Math.hypot(e.clientX - d.x, e.clientY - d.y) > 14) return;
+      // Un icono de ataque del HUD ya ha hecho lo suyo: no es un toque en el mapa.
+      if (G.Touch.onButton(d.x, d.y)) return;
       const p = toWorld(e);
       if (placing) {
         if (d.button === 2) { cancelPlacing(); return; }                      // clic derecho: la suelta

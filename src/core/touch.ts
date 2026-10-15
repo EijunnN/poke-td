@@ -136,7 +136,10 @@ export const Touch = (() => {
     ctx.restore();
   }
 
-  return { init, vector, draw, clearButtons, addButton, reset, safeArea,
+  /** ¿Hay un botón del HUD en ese punto de la pantalla? (para que el modo no lo tome por un toque en el mapa) */
+  const onButton = (x: number, y: number) => !!hit(x, y);
+
+  return { init, vector, draw, clearButtons, addButton, reset, safeArea, onButton,
            get active() { return active; }, get stick() { return stick; } };
 })();
 G.Touch = Touch;
