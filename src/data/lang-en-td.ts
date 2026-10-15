@@ -88,7 +88,7 @@ G.I18n.add({
   '{x}: sobran {x}. Elige otro modo o mapa.': '{x}: {x} players too many. Choose another mode or map.',
   'Sale en Salas públicas: cualquiera puede entrar, o mirar si ya habéis empezado': 'Shows in Public rooms: anyone can join, or watch if you have already started',
   'Espectador': 'Spectator', 'Mirando a': 'Watching', 'Esperando a los jugadores…': 'Waiting for the players…', 'Salir': 'Leave',
-  'Anterior (Q)': 'Previous (Q)', 'Siguiente (Tab)': 'Next (Tab)', 'La partida que mirabas ha terminado': 'The game you were watching has ended',
+  'Anterior (Q)': 'Previous (Q)', 'Siguiente (Tab)': 'Next (Tab)', 'La partida que mirabas ha terminado': 'The game you were watching has ended', '¡Han defendido la base!': 'They defended the base!',
   'No se pudo entrar a mirar.': 'Could not start watching.', 'Sal de tu sala para mirar otra partida.': 'Leave your room to watch another game.',
 
   // ---------------- sala ----------------
