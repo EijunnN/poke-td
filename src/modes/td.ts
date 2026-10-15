@@ -570,7 +570,7 @@ export const TD = (() => {
     pool = candidates();
     team = cleanTeam(opts && opts.team);
     if (!opts || !Array.isArray(opts.team)) { if (!team.length) team = cleanTeam(save.tdTeam); }
-    shopFilter = team.length ? 'fav' : 'all';
+    shopFilter = 'all';                // empieza en Todos (los favoritos salen primero igual)
     G.Sprites.preload(team, 4000);
     preloadWave(1);
     listenPointer();
@@ -1553,7 +1553,7 @@ export const TD = (() => {
   /** Punto del mundo al que has llevado la cámara con el minimapa, o null (sigue al héroe). */
   let camFree: { x: number; y: number } | null = null;
   /** Qué enseña la tienda: favoritos, todos, o un tipo. */
-  let shopFilter = 'fav';
+  let shopFilter = 'all';
   let shopOpen = true;
 
   function styles() {
