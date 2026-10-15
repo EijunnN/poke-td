@@ -1019,6 +1019,8 @@ export const EnemyMgr = (() => {
    */
   // Segundos que un rezagado tiene que llevar fuera de la vista antes de volver por delante.
   const LAG_T = 2.5;
+  // Un jefe a más de BOSS_FAR px de todos durante BOSS_LAG_T s se recoloca.
+  const BOSS_FAR = 1000, BOSS_LAG_T = 10;
 
   function update(dt: number, players: EnemyTarget | EnemyTarget[]) {
     if (!Array.isArray(players)) players = [players];
@@ -1058,6 +1060,17 @@ export const EnemyMgr = (() => {
         G.Spawner.say('¡' + e.name + ' se ha escapado!', 2.4);
         list.splice(i, 1); byId.delete(e.id);
         if (G.Coop.isHost) G.Coop.enemyGone(e, false);
+        continue;
+      }
+      // Jefe que se queda muy atrás de todos: vuelve a salir por delante (si no, su barra
+      // sale arriba pero no hay jefe que ver). No si está lanzando un ataque.
+      if (e.boss && !e.judge && !G.Rift.inArena) {
+        if (G.U.dist2(e.x, e.y, near.x, near.y) > BOSS_FAR * BOSS_FAR && !(e.ai && e.ai.cast)) e.lagT += dt;
+        else e.lagT = 0;
+        if (e.lagT > BOSS_LAG_T) {
+          e.lagT = BOSS_LAG_T - 2;     // si no hay sitio, reintenta en 2 s
+          if (G.Spawner.ahead(e, near)) e.lagT = 0;
+        }
         continue;
       }
       if (e.boss || e.shiny || G.Rift.inArena) continue;

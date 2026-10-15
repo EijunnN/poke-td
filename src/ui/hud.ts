@@ -138,6 +138,27 @@ export const HUD = (() => {
       G.Icons.draw(ctx, 'shiny', -12, -12, 24);
       ctx.restore();
     }
+    // El jefe fuera de pantalla: flecha dorada en el borde hacia donde está.
+    if (boss) {
+      const sx = (boss.x - cam.left()) * cam.scale, sy = (boss.y - cam.top()) * cam.scale;
+      if (!(sx > 0 && sx < w && sy > 0 && sy < h)) {
+        const M = 34;
+        const ex = G.U.clamp(sx, M, w - M), ey = G.U.clamp(sy, M + 60, h - M - 70);
+        const a = Math.atan2(sy - ey, sx - ex);
+        ctx.save();
+        ctx.globalAlpha = pulse;
+        ctx.translate(ex, ey);
+        ctx.fillStyle = '#ffcb3d';
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(a) * 24, Math.sin(a) * 24);
+        ctx.lineTo(Math.cos(a + 2.5) * 12, Math.sin(a + 2.5) * 12);
+        ctx.lineTo(Math.cos(a - 2.5) * 12, Math.sin(a - 2.5) * 12);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        G.Icons.draw(ctx, 'crown', -12, -12, 24);
+        ctx.restore();
+      }
+    }
 
     // Poder de altar activo.
     if (pl.power) {
