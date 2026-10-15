@@ -404,7 +404,14 @@ export const Flow = {
   play() { G.Game.startRun(); },
   /** Empieza la partida en grupo (el anfitrión la manda a todos): de hordas o, con mode 'td', de Defensa. */
   startCoop(cfg) {
-    if (G.Game.state !== 'ui' || !G.Social.room) return;
+    // En 'over' (resumen de la partida anterior) se cierra el resumen como si se pulsara "volver" y se empieza.
+    // En cualquier otro estado que no sea 'ui' (p. ej. 'playing') se ignora.
+    if ((G.Game.state !== 'ui' && G.Game.state !== 'over') || !G.Social.room) return;
+    if (G.Game.state === 'over') {
+      document.getElementById('btn-again')!.click();
+      if ((G.Game.state as string) !== 'ui') G.Game.toUI();
+      G.UI.hide('scr-over');
+    }
     G.LobbyUI.close();
     if (cfg.mode === 'td') G.Game.start('td', { coop: cfg });
     else G.Game.startRun(cfg);
