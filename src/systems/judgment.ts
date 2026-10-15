@@ -359,7 +359,7 @@ export const Judgment = (() => {
       x = center.x + Math.cos(a) * d; y = center.y + Math.sin(a) * d;
       if (G.Game.everyone().every(p => G.U.dist2(p.x, p.y, x, y) > 280 * 280)) break;
     }
-    const k = Math.pow(2, bossN);          // cada uno, el doble que el anterior
+    const k = Math.pow(2, Math.min(bossN, 60));          // cada uno, el doble que el anterior
     const def = {
       dex, name: mon.name,
       hp: Math.round(base * k),
