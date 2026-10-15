@@ -14,7 +14,7 @@ import time
 import urllib.error
 import urllib.request
 
-UA = 'pokesurvivor/1.0'
+UA = 'poke-td/1.0'
 RETRY_WAIT = 2.0          # segundos; se multiplica por el nº de intento (las pruebas lo ponen a 0)
 
 

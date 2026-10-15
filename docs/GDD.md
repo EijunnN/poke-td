@@ -1,4 +1,4 @@
-# GDD — PokéSurvivor · Mundo Misterioso
+# GDD — PokéTD · Mundo Misterioso (nació como PokéSurvivor)
 
 > Documento de diseño vivo. Refleja el estado **actual** del juego; al final hay
 > un registro de decisiones con fecha.
