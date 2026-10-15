@@ -67,6 +67,8 @@ interface RemoteEnemyInfo {
 type BossMove = [number, number, string];
 
 let nextId = 1;
+/** Segundos mínimos entre dos curaciones / dos escudos sobre el mismo enemigo (menos que la recarga del apoyo, para que uno solo no falle). */
+const HEAL_CD = 3.2, SHIELD_CD = 5.5;
 /** Los jefes se agrandan hasta ~110 de alto, según lo grande que ya sea su sprite. */
 function bossScale(dex: number) {
   const m = G.Sprites.animMeta(dex, 'Idle');
@@ -126,6 +128,8 @@ export class Enemy {
   declare sc: EnemyScale;
   declare shield: number;
   declare shieldT: number;
+  declare shieldCd: number;           // hasta entonces no recibe otro escudo
+  declare healT: number;              // hasta entonces no recibe otra curación
   declare skillCd: number;
   declare minions: Enemy[];
   declare jump: EnemyJump | null;
@@ -192,6 +196,7 @@ export class Enemy {
     // personalidades
     this.sc = sc;                       // escala de la run (para sus invocaciones)
     this.shield = 0; this.shieldT = 0;  // escudo que absorbe daño
+    this.shieldCd = 0; this.healT = 0;  // enfriamientos por objetivo: varios apoyos no se suman
     this.skillCd = G.U.rand(1, 4);      // escudos / saltos
     this.minions = [];
     this.jump = null;                   // { sx, sy, tx, ty, t, dur }
@@ -371,6 +376,8 @@ export class Enemy {
       }
     }
     if (this.touchCd > 0) this.touchCd -= dt;
+    if (this.healT > 0) this.healT -= dt;
+    if (this.shieldCd > 0) this.shieldCd -= dt;
     this.bob += dt * 6;
 
     // --- estados ---
@@ -716,12 +723,16 @@ export class Enemy {
     // pegabas), y más cuanto más fuerte pegas, pero cada vez menos: con el
     // doble de ataque cura un 27 % más, con 10 veces más un 124 %, y como
     // mucho ×2,5. (Como los enemigos que tienen más vida si haces más daño.)
+    // Cada enemigo recibe como mucho una curación cada HEAL_CD s, vengan de
+    // quien vengan (N curanderos juntos no curan N veces), y los curanderos
+    // ni se curan entre sí ni curan a los jefes: se les puede matar.
     const pow = Math.max(1, ...G.Game.everyone().map(p => (p.atk > 0 && p.baseAtk > 0 ? p.atk / p.baseAtk : 1)));
     const k = 0.07 * Math.min(2.5, Math.pow(pow, 0.35));
     let n = 0;
     for (const e of G.EnemyMgr.queryCircle(this.x, this.y, 150)) {
-      if (e.dead || e.hp >= e.maxHp) continue;
+      if (e.dead || e.hp >= e.maxHp || e.healT > 0 || e.boss || e.behavior === 'healer') continue;
       e.hp = Math.min(e.maxHp, e.hp + e.maxHp * k);
+      e.healT = HEAL_CD;
       G.FX.burst(e.x, e.y - e.bodyH * 0.6, '#7dffb0', 5, 60);
       n++;
     }
@@ -732,9 +743,11 @@ export class Enemy {
   }
 
   castShields() {
-    const near = G.EnemyMgr.queryCircle(this.x, this.y, 160).filter(e => !e.dead)
+    // Ni a los escudadores ni a los jefes; y un escudo nuevo a cada enemigo
+    // como mucho cada SHIELD_CD s, aunque haya varios escudadores.
+    const near = G.EnemyMgr.queryCircle(this.x, this.y, 160).filter(e => !e.dead && !e.boss && e.behavior !== 'shielder' && e.shieldCd <= 0)
       .sort((a, b) => G.U.dist2(a.x, a.y, this.x, this.y) - G.U.dist2(b.x, b.y, this.x, this.y)).slice(0, 6);
-    for (const e of near) { e.shield = Math.max(e.shield, e.maxHp * 0.35); e.shieldT = 8; }
+    for (const e of near) { e.shield = Math.max(e.shield, e.maxHp * 0.35); e.shieldT = 8; e.shieldCd = SHIELD_CD; }
     this.anim.play('Charge');
     G.FX.ring(this.x, this.y, 8, 160, '#7fc8ff', 0.5, 3);
     if (G.Coop.isHost) G.Coop.broadcast(['fxr', Math.round(this.x), Math.round(this.y), 160, '#7fc8ff']);
