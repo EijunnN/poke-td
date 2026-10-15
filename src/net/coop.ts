@@ -400,7 +400,7 @@ export const Coop = (() => {
     if (mode === 'relay') {
       if (!host) return;
       if (mates.has(u)) { resync(u); return; }
-      const w = G.Social.room && (G.Social.room.watchers || []).find(x => x.uid === u);
+      const w = G.Social.room && G.LobbyUI.lookers(G.Social.room).find(x => x.uid === u);
       if (w) addWatcher(u, w.name);
       return;
     }

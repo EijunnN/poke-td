@@ -427,6 +427,8 @@ export const Flow = {
       G.UI.hide('scr-over');
     }
     G.LobbyUI.close();
+    // Si en la sala elegiste sólo mirar (o no estás en el equipo), entras como espectador.
+    if (G.Social.amSpec() || !cfg.members.some(m => m.uid === G.Social.uid)) { G.Spectate.startInRoom(cfg); return; }
     if (cfg.mode === 'td') G.Game.start('td', { coop: cfg });
     else G.Game.startRun(cfg);
   }

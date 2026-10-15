@@ -782,6 +782,9 @@ a.btn { text-decoration: none; display: inline-block; color: var(--ink); }
 /* Sala: a qué se juega (ui/social-ui.ts, LobbyUI) */
 .lobby-mode { gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
 .lob-card.over { border-color: #ff5f6d; }
+/* Sólo mira la partida: tarjeta apagada (sigue en la sala). */
+.lob-card.spec { border-style: dashed; }
+.lob-card.spec canvas { opacity: .45; filter: grayscale(.6); }
 .lobby-access .sub { align-self: center; }
 /* Salas públicas (ui/rooms-ui.ts) y la barra del espectador (net/spectate.ts) */
 .rooms-row .st { font-size: 13px; }

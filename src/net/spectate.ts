@@ -1,4 +1,5 @@
 import { G } from '../g';
+import type { CoopConfig } from './coop';
 /* ============ spectate.ts — mirar la partida de una sala pública ============
  * Desde la lista de salas (ui/rooms-ui.ts), una sala pública que ya juega se puede MIRAR:
  * el servidor te apunta como espectador (server/realtime.ts, room.watch) y te da la partida
@@ -9,11 +10,16 @@ import { G } from '../g';
  * Defensa, también el minimapa). Al acabar la partida, al cerrarse la sala o al salir, se
  * vuelve a la lista. No se gana nada mirando.
  *
+ * También mira quien está en la sala pero eligió «Sólo mirar» (startInRoom): igual, pero al
+ * acabar vuelve al lobby de su sala.
+ *
  * Los modos llaman a: target() (a quién sigue la cámara), keys() (las teclas del espectador),
  * tick() (cada fotograma) y ended(msg) (cuando su partida se acaba para el espectador).
  */
 export const Spectate = (() => {
   let on = false, idx = 0, shown = '';
+  /** Miras la partida de tu propia sala (elegiste "Sólo mirar"): al acabar, de vuelta al lobby. */
+  let inRoom = false;
   let bar: HTMLElement | null = null;
   const esc = (s: string) => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 
@@ -31,6 +37,17 @@ export const Spectate = (() => {
     else G.Game.startRun(cfg);
     showBar();
     return true;
+  }
+
+  /** Empieza a mirar la partida de tu sala (llega el inicio y elegiste sólo mirar). */
+  function startInRoom(cfg: CoopConfig) {
+    if (on) return;
+    on = true; inRoom = true; idx = 0; shown = '';
+    G.UI.hideAll();
+    const c = { ...cfg, watch: true };
+    if (c.mode === 'td') G.Game.start('td', { coop: c });
+    else G.Game.startRun(c);
+    showBar();
   }
 
   /** Los jugadores a los que se puede seguir (sus copias). */
@@ -80,6 +97,13 @@ export const Spectate = (() => {
     if (!on) return;
     on = false;
     hideBar();
+    if (inRoom) {
+      inRoom = false;
+      if (G.Coop.active) G.Coop.leave();
+      if (msg) G.UI.toast(msg, 3000);
+      G.Flow.afterRun();
+      return;
+    }
     if (G.Coop.active) G.Coop.leave();
     G.Social.unwatch();
     G.Net.close();
@@ -96,7 +120,7 @@ export const Spectate = (() => {
     ended('La partida que mirabas ha terminado');
   });
 
-  return { start, target, next, keys, tick, ended, get active() { return on; } };
+  return { start, startInRoom, target, next, keys, tick, ended, get active() { return on; } };
 })();
 G.Spectate = Spectate;
 

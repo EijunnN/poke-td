@@ -292,6 +292,11 @@ G.I18n.add({
   'El mensaje está vacío.': 'The message is empty.', 'No estás en ninguna sala.': 'You are not in a room.',
   'En las salas. Con <b>Sólo frases</b> ves las frases rápidas de los demás, pero no lo que escriben.':
     'In rooms. With <b>Phrases only</b> you see the others\' quick phrases, but not what they write.',
+  'Sólo mira': 'Watching only', '{x} mirando': '{x} watching', 'Quiero jugar': 'I want to play', 'Sólo mirar la partida': 'Just watch the game',
+  'Mirarás la partida sin jugar; al acabar vuelves aquí.': 'You will watch the game without playing; afterwards you come back here.',
+  'Hace falta al menos otro jugador (los que sólo miran no cuentan).': 'You need at least one more player (those who only watch do not count).',
+  'No se pudo cambiar.': 'Could not change it.', 'El anfitrión juega siempre: es quien lleva la partida.': 'The host always plays: they run the game.',
+  'La partida ya ha empezado.': 'The game has already started.', 'El anfitrión aún está en el resumen de la partida.': 'The host is still on the game summary.',
   'Todo': 'All', 'Sólo frases': 'Phrases only', 'Nada': 'None', 'Censurar palabrotas': 'Censor swear words',
   'Tacha palabrotas y enlaces en lo que ves tú (los demás lo ven como lo escribieron).':
     'Blanks out swear words and links in what you see (the others see it as it was written).',

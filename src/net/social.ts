@@ -33,7 +33,8 @@ export interface Friend {
   online: boolean; play: boolean; room: string; seen: number;
 }
 /** `away`: ha perdido la conexión y el servidor le guarda el sitio unos segundos. */
-export interface Member { uid: string; name: string; dex: number; shiny: boolean; away?: boolean }
+/** `spec`: sólo mirará la partida (lo elige él en la sala, antes de empezar). */
+export interface Member { uid: string; name: string; dex: number; shiny: boolean; away?: boolean; spec?: boolean }
 /**
  * `started`: la partida en grupo ya ha empezado. `pub`: sale en la lista de salas públicas, con
  * su modo y mapa. `watchers`: los que la miran (no juegan).
@@ -344,6 +345,14 @@ export const Social = (() => {
     if (room && room.isHost) Link.send({ k: 'room.open', v: !!open });
   }
 
+  /** Sólo mirar (o volver a jugar) la próxima partida de tu sala. */
+  async function setSpec(v: boolean) {
+    const r = await Link.request({ k: 'room.spec', v }).catch(() => null);
+    if (!r || !r.ok) G.UI.toast((r && r.error) || 'No se pudo cambiar.', 2400);
+  }
+  /** ¿Sólo miras la partida de tu sala? */
+  const amSpec = () => !!(room && uid && room.members.some(m => m.uid === uid && m.spec));
+
   /** Actualiza tu Pokémon en la sala (si cambias de compañero). */
   function refreshMember() {
     if (room && me) Link.send({ k: 'room.me', ...memberInfo() });
@@ -437,7 +446,7 @@ export const Social = (() => {
 
   return {
     start, stop, claimNick, request, accept, remove, publishProfile, getProfile, profileData,
-    createRoom, joinRoom, leaveRoom, setOpen, refreshMember, setPlaying, refreshPresence,
+    createRoom, joinRoom, leaveRoom, setOpen, refreshMember, setPlaying, refreshPresence, setSpec, amSpec,
     setPublic, listRooms, watch, unwatch,
     invite, acceptInvite, declineInvite,
     on(fn: (what: string) => void) { listeners.add(fn); }, off(fn: (what: string) => void) { listeners.delete(fn); },

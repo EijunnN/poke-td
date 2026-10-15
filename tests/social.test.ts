@@ -1496,3 +1496,55 @@ describe('chat de la sala', () => {
   });
 });
 
+// ====================================================================
+
+describe('sólo mirar desde la sala', () => {
+  /** Sala pública de Survivor (caben 4) con el anfitrión y `n` más dentro. */
+  function room(n: number) {
+    const h = account();
+    const hc = online(h);
+    const r = hc.req({ k: 'room.new', dex: 25, shiny: false }).room;
+    hc.req({ k: 'room.pub', v: true, mode: 'survivor', map: 'random' });
+    const gs = Array.from({ length: n }, () => account());
+    const gcs = gs.map(g => { const c = online(g); expect(c.req({ k: 'room.join', id: r.id, dex: 4, shiny: false }).ok).toBe(true); return c; });
+    return { h, hc, id: r.id as string, gs, gcs };
+  }
+  const lastRoom = (c: Client) => { let r: any = null; for (;;) { try { r = c.take(m => m.k === 'room').room; } catch { return r; } } };
+
+  test('un invitado elige sólo mirar (y volver a jugar); el anfitrión no puede', async () => {
+    const { hc, gs, gcs } = room(1);
+    expect(gcs[0].req({ k: 'room.spec', v: true }).ok).toBe(true);
+    expect(lastRoom(hc).members.find((m: any) => m.uid === gs[0].uid).spec).toBe(true);
+    expect(hc.req({ k: 'room.spec', v: true }).ok).toBe(false);
+    hc.none(m => m.k === 'room');                      // (rechazado: la sala no cambia)
+    expect(gcs[0].req({ k: 'room.spec', v: false }).ok).toBe(true);
+    expect(lastRoom(hc).members.find((m: any) => m.uid === gs[0].uid).spec).toBe(false);
+  });
+
+  test('quien sólo mira no ocupa plaza; para volver a jugar tiene que haber sitio', async () => {
+    const { id, gcs } = room(1);
+    expect(gcs[0].req({ k: 'room.spec', v: true }).ok).toBe(true);
+    // Caben 4 que juegan: el anfitrión y 3 más, aunque ya haya uno mirando.
+    for (let i = 0; i < 3; i++) expect(online(account()).req({ k: 'room.join', id, dex: 7, shiny: false }).ok).toBe(true);
+    expect(online(account()).req({ k: 'room.join', id, dex: 7, shiny: false }).error).toContain('llena');
+    const back = gcs[0].req({ k: 'room.spec', v: false });
+    expect(back.ok).toBe(false);
+    expect(back.error).toContain('sitio');
+  });
+
+  test('al empezar, los que sólo miran quedan fuera del equipo (y ya no pueden cambiar)', async () => {
+    const { h, hc, gs, gcs } = room(2);
+    gcs[1].req({ k: 'room.spec', v: true });
+    // Aunque el anfitrión los apuntara a todos, el servidor sólo cuenta a los que juegan.
+    hc.send({ k: 'g', d: { k: 'start', seed: 5, host: h.uid, members: [h, ...gs].map(a => ({ uid: a.uid, name: a.name, dex: 1 })) } });
+    // El inicio les llega a todos (el que mira también lo necesita, para mirar).
+    expect(gcs[1].take(m => m.k === 'g' && m.d.k === 'start')).toBeTruthy();
+    const r = lastRoom(gcs[0]);
+    expect(r.started).toBe(true);
+    const team = String((rawDb().query('SELECT team FROM group_starts WHERE host_id = ?').get(Number(h.uid)) as { team: string }).team);
+    expect(team).toContain(gs[0].uid);
+    expect(team).not.toContain(gs[1].uid);
+    expect(gcs[1].req({ k: 'room.spec', v: false }).error).toContain('empezado');
+  });
+});
+

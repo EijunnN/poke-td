@@ -177,7 +177,7 @@ import type { CoopConfig } from '../net/coop';
           G.Net.open(room.id, room.isHost, room.host);
           // Los que miran también reciben del anfitrión (como compañeros que no juegan).
           G.Net.syncMembers([...room.members.map(m => m.uid), ...room.watchers.map(w => w.uid)], room.members.filter(m => m.away).map(m => m.uid));
-          if (room.isHost && G.Coop.active) G.Coop.syncWatchers(room.watchers);
+          if (room.isHost && G.Coop.active) G.Coop.syncWatchers(lookers(room));
         } else if (G.Net.open_ && !G.Social.watching) G.Net.close();
         if (what === 'room-closed') {
           G.UI.toast('La sala se ha cerrado', 2600);
@@ -269,20 +269,25 @@ import type { CoopConfig } from '../net/coop';
         : 'Estás en la sala de ' + ((ms.find(m => m.uid === room.host) || {}).name || '…') + '. El anfitrión empezará la partida.';
 
       // Las tarjetas sólo se rehacen si cambian los miembros (los sprites no parpadean).
-      const key = room.max + '#' + ms.map(m => m.uid + ':' + m.dex + ':' + (m.shiny ? 1 : 0)).join('|');
+      const key = room.max + '#' + ms.map(m => m.uid + ':' + m.dex + ':' + (m.shiny ? 1 : 0) + (m.spec ? 's' : '')).join('|');
       const box = $('lobby-members');
       if (key !== membersKey) {
         membersKey = key;
         box.innerHTML = '';
         // Un hueco por plaza (Survivor 4; Defensa según el mapa); si sobra gente tras cambiar de modo, se ve.
-        for (let i = 0; i < Math.max(room.max, ms.length); i++) {
-          const m = ms[i];
+        // Detrás, los que sólo miran (no ocupan plaza).
+        const playing = ms.filter(x => !x.spec), looking = ms.filter(x => x.spec);
+        const cards: (typeof ms[number] | undefined)[] = [];
+        for (let i = 0; i < Math.max(room.max, playing.length); i++) cards.push(playing[i]);
+        cards.push(...looking);
+        for (let i = 0; i < cards.length; i++) {
+          const m = cards[i];
           const c = document.createElement('div');
-          c.className = 'lob-card' + (m ? '' : ' empty') + (i >= room.max ? ' over' : '');
+          c.className = 'lob-card' + (m ? '' : ' empty') + (m && m.spec ? ' spec' : '') + (m && !m.spec && i >= room.max ? ' over' : '');
           if (m) {
             c.style.setProperty('--pc', G.Coop.COLORS[i]);
             c.appendChild(G.UI.spriteCanvas(m.dex, 120, 96, { scale: 2, lively: true, shiny: !!m.shiny }));
-            c.insertAdjacentHTML('beforeend', `<b translate="no">${esc(m.name)}</b><small>${esc((G.DEX_BY[m.dex] || {}).name || '')}</small><span class="conn" data-u="${m.uid}"></span>`);
+            c.insertAdjacentHTML('beforeend', `<b translate="no">${esc(m.name)}</b><small>${m.spec ? 'Sólo mira' : esc((G.DEX_BY[m.dex] || {}).name || '')}</small><span class="conn" data-u="${m.uid}"></span>`);
           } else c.innerHTML = '<span>Libre</span>';
           box.appendChild(c);
         }
@@ -296,7 +301,7 @@ import type { CoopConfig } from '../net/coop';
       });
 
       // Invitar (sólo el anfitrión y si queda sitio).
-      const canInvite = room.isHost && ms.length < room.max;
+      const canInvite = room.isHost && ms.filter(m => !m.spec).length < room.max;
       $('lobby-inv-title').classList.toggle('hidden', !canInvite);
       const inv = $('lobby-invite');
       inv.classList.toggle('hidden', !canInvite);
@@ -316,24 +321,38 @@ import type { CoopConfig } from '../net/coop';
         }
       }
 
+      // El anfitrión empieza; los demás eligen si juegan o sólo miran.
       const btn = $<HTMLButtonElement>('lobby-start');
-      btn.classList.toggle('hidden', !room.isHost);
+      const players = ms.filter(m => !m.spec), lookN = ms.length - players.length;
       const connecting = ms.some(m => m.uid !== room.host && G.Net.mode(m.uid) === 'connecting');
-      const over = ms.length - room.max;
-      btn.disabled = !room.isHost || ms.length < 2 || connecting || over > 0;
-      btn.textContent = 'Empezar partida (' + ms.length + '/' + room.max + ')';
-      $('lobby-note').textContent = !room.isHost ? 'Cuando el anfitrión empiece, entraréis todos a la vez.'
+      const over = players.length - room.max;
+      if (room.isHost) {
+        btn.disabled = players.length < 2 || connecting || over > 0;
+        btn.textContent = 'Empezar partida (' + players.length + '/' + room.max + ')' + (lookN ? ' · ' + G.I18n.f('{x} mirando', lookN) : '');
+        btn.classList.add('gold'); btn.classList.remove('ghost');
+      } else {
+        const spec = G.Social.amSpec();
+        btn.disabled = room.started;                // (hasta que el anfitrión vuelva del resumen, no se cambia)
+        btn.textContent = spec ? 'Quiero jugar' : 'Sólo mirar la partida';
+        btn.classList.toggle('gold', spec); btn.classList.toggle('ghost', !spec);
+      }
+      $('lobby-note').textContent = !room.isHost
+        ? (room.started ? 'El anfitrión aún está en el resumen de la partida.' : G.Social.amSpec() ? 'Mirarás la partida sin jugar; al acabar vuelves aquí.' : 'Cuando el anfitrión empiece, entraréis todos a la vez.')
         : over > 0 ? (game.mode === 'td' ? 'En este mapa caben ' + room.max : 'En el Survivor caben ' + room.max) + ': sobra' + (over > 1 ? 'n ' + over : ' 1') + '. Elige otro modo o mapa.'
-        : ms.length < 2 ? 'Necesitas al menos un amigo en la sala.'
+        : players.length < 2 ? (lookN ? 'Hace falta al menos otro jugador (los que sólo miran no cuentan).' : 'Necesitas al menos un amigo en la sala.')
         : connecting ? 'Conectando con tus amigos…' : 'La partida empieza para todos a la vez.';
     }
 
     function start() {
       const room = G.Social.room;
-      if (!room || !room.isHost || room.members.length < 2 || room.members.length > room.max) return;
+      if (!room) return;
+      // Sin ser anfitrión, el botón cambia entre jugar y sólo mirar.
+      if (!room.isHost) { G.Social.setSpec(!G.Social.amSpec()); return; }
+      const players = room.members.filter(m => !m.spec);
+      if (players.length < 2 || players.length > room.max) return;
       const cfg: CoopConfig & { k: string; mode?: 'survivor' | 'td'; map?: string } = {
         k: 'start', seed: Math.floor(Math.random() * 1e6), host: room.host,
-        members: room.members.map(m => ({ uid: m.uid, name: m.name, dex: m.dex, shiny: !!m.shiny }))
+        members: players.map(m => ({ uid: m.uid, name: m.name, dex: m.dex, shiny: !!m.shiny }))
       };
       // Defensa: el mapa elegido (o uno al azar, el mismo para todos).
       if (game.mode === 'td') { cfg.mode = 'td'; cfg.map = game.map === 'random' ? G.U.pick(G.TD_MAPS).id : game.map; }
@@ -342,7 +361,12 @@ import type { CoopConfig } from '../net/coop';
       G.Flow.startCoop(cfg);
     }
 
-    return { init, open, close, render, get game() { return { ...game }; }, setGame(mode: 'hordas' | 'td', map = 'random') { game = { mode, map }; tellGame(); render(); } };
+    /** Los que miran la partida: los espectadores de fuera y los de la sala que sólo miran. */
+    function lookers(room: NonNullable<typeof G.Social.room>) {
+      return [...room.watchers, ...room.members.filter(m => m.spec).map(m => ({ uid: m.uid, name: m.name }))];
+    }
+
+    return { init, open, close, render, lookers, get game() { return { ...game }; }, setGame(mode: 'hordas' | 'td', map = 'random') { game = { mode, map }; tellGame(); render(); } };
   })();
   G.LobbyUI = LobbyUI;
 

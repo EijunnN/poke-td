@@ -411,7 +411,8 @@ describe('cooperativo', () => {
     expect(await A.eval(() => G.Social.room.members.map((m: any) => [m.name, m.dex]))).toEqual([[nameA, 25], [nameB, 4]]);
 
     await waitPage(A, 'el botón de empezar se habilita', () => !(document.getElementById('lobby-start') as HTMLButtonElement).disabled);
-    expect(await B.eval(() => document.getElementById('lobby-start').classList.contains('hidden'))).toBe(true);   // el invitado no empieza
+    // El invitado no empieza: su botón es para elegir entre jugar y sólo mirar.
+    expect(await B.eval(() => document.getElementById('lobby-start')!.textContent)).toContain('Sólo mirar');
     await click(A, '#lobby-start');
     await waitPage(A, 'A juega en grupo', () => G.Coop.active && G.Game.state === 'playing');
     await waitPage(B, 'B entra en la misma partida', () => G.Coop.active && G.Game.state === 'playing');
@@ -893,6 +894,7 @@ describe('cooperativo', () => {
   let nameC = '', roomId = '';
   /** Lo que C tiene en su cuenta (para ver que mirar no da nada). */
   // (Antes se cobran los logros pendientes, como el de tener tu primer Pokémon: no tienen que ver con mirar.)
+  const account = (d: Dev) => d.eval(() => (G.Progress.checkAch(), { coins: G.DB.save.coins, td: G.DB.save.stats.tdRuns || 0, runs: G.DB.save.stats.runs || 0, kills: G.DB.save.stats.totalKills || 0 }));
   const cAccount = () => C.eval(() => (G.Progress.checkAch(), { coins: G.DB.save.coins, td: G.DB.save.stats.tdRuns || 0, runs: G.DB.save.stats.runs || 0, kills: G.DB.save.stats.totalKills || 0 }));
 
   test('sala pública: sale en la lista de otro jugador (sin ser amigos) y se puede mirar en cuanto empieza', async () => {
@@ -1003,9 +1005,47 @@ describe('cooperativo', () => {
     expect(await C.allErrors()).toEqual([]);
   });
 
-  test('segunda partida: el anfitrión desaparece y no vuelve', async () => {
+  test('desde la sala, «Sólo mirar»: no juega, mira la partida y al acabar vuelve a la sala', async () => {
     await click(A, '#btn-again');
     await click(B, '#btn-again');
+    await waitPage(A, 'A de vuelta en la sala', () => G.Social.room && G.Social.room.members.length === 2 && G.Game.state === 'ui');
+    // C entra a jugar (sala pública); B elige sólo mirar con el botón de la sala.
+    await A.eval(() => G.Social.setPublic(true, 'survivor', 'random'));
+    await waitPage(A, 'la sala es pública', () => G.Social.room.pub === true);
+    expect((await C.call(id => G.Social.joinRoom(id), roomId)).ok).toBe(true);
+    await C.eval(() => G.LobbyUI.open());
+    await B.eval(() => G.LobbyUI.open());
+    await click(B, '#lobby-start');
+    await waitPage(A, 'A ve que B sólo mira', u => G.Social.room.members.some((m: any) => m.uid === u && m.spec), uidB);
+    expect(await B.eval(() => document.getElementById('lobby-start')!.textContent)).toContain('Quiero jugar');
+    await waitPage(A, 'A puede empezar (con C)', () => !(document.getElementById('lobby-start') as HTMLButtonElement).disabled);
+    expect(await A.eval(() => document.getElementById('lobby-start')!.textContent)).toContain('mirando');
+    const before = await account(B);
+    await click(A, '#lobby-start');
+    for (const d of [A, C]) await waitPage(d, 'juegan A y C', () => G.Coop.active && !G.Coop.watching && G.Game.state === 'playing');
+    await waitPage(B, 'B mira, sin jugar', () => G.Coop.active && G.Coop.watching && G.Game.state === 'playing' && !!document.getElementById('spec-bar'));
+    await waitPage(A, 'el anfitrión tiene a B como espectador', () => G.Coop.watchers.length === 1 && G.Coop.players().length === 2);
+    expect(await B.eval(() => G.Coop.puppets().length)).toBe(2);
+    // El anfitrión termina: B vuelve a su sala (no a la lista), sin premio.
+    await A.eval(() => G.Game.quit());
+    await waitPage(C, 'acaba para C', () => G.Game.state === 'over' && !G.Coop.active);
+    await waitPage(B, 'B de vuelta en la sala', () => G.Game.state === 'ui' && !G.Coop.active && G.UI.isOpen('scr-lobby') && !!G.Social.room);
+    expect(await account(B)).toEqual(before);
+    // Mientras el anfitrión sigue en el resumen, B no puede cambiar (la sala aún no se ha reabierto).
+    expect(await B.eval(() => (document.getElementById('lobby-start') as HTMLButtonElement).disabled)).toBe(true);
+    // Como estaba: C sale de la sala, el anfitrión vuelve y B vuelve a jugar.
+    await C.call(() => G.Social.leaveRoom());
+    await click(A, '#btn-again');
+    await waitPage(B, 'la sala se reabre', () => !G.Social.room.started && !(document.getElementById('lobby-start') as HTMLButtonElement).disabled);
+    await click(B, '#lobby-start');
+    await waitPage(A, 'B vuelve a jugar', u => G.Social.room.members.length === 2 && !G.Social.room.members.some((m: any) => m.spec), uidB);
+    await A.eval(() => G.Social.setPublic(false, 'survivor', 'random'));
+    for (const d of [A, B, C]) expect(await d.allErrors()).toEqual([]);
+  });
+
+  test('segunda partida: el anfitrión desaparece y no vuelve', async () => {
+    // (Quien esté en el resumen vuelve a la sala; quien sólo miraba ya está en ella.)
+    for (const d of [A, B]) if (await d.eval(() => G.Game.state === 'over')) await click(d, '#btn-again');
     await waitPage(A, 'tras el resumen, vuelven a la sala', () => G.Social.room && G.Social.room.members.length === 2 && G.Game.state === 'ui');
     await waitPage(A, 'A puede empezar otra', () => !(document.getElementById('lobby-start') as HTMLButtonElement).disabled);
     await click(A, '#lobby-start');
