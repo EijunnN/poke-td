@@ -9,6 +9,8 @@ import { G } from '../g';
  *   fps         true/false                        contador de FPS
  *   stick       0.8 | 1 | 1.25                    tamaño del joystick táctil
  *   res         'high' | 'normal'                 resolución del lienzo (×1,5 o ×1)
+ *   chat        'all' | 'quick' | 'off'           chat de la sala: todo, sólo frases rápidas o nada
+ *   chatFilter  true/false                        tachar palabrotas y enlaces del chat (sólo lo que ves tú)
  *
  *   G.Settings.get('quality')  ·  G.Settings.set('fps', true)  ·  G.Settings.on(fn)
  *   G.Settings.fx   nivel efectivo 0 (bajo) .. 2 (alto), ya resuelto el 'auto'
@@ -20,11 +22,13 @@ export interface SettingsData {
   fps: boolean;
   stick: number;
   res: 'high' | 'normal';
+  chat: 'all' | 'quick' | 'off';
+  chatFilter: boolean;
 }
 
 export const Settings = (() => {
   const KEY = 'ps.settings';
-  const DEF: SettingsData = { quality: 'auto', dmgNumbers: true, calm: false, fps: false, stick: 1, res: 'high' };
+  const DEF: SettingsData = { quality: 'auto', dmgNumbers: true, calm: false, fps: false, stick: 1, res: 'high', chat: 'all', chatFilter: false };
   let s: SettingsData = Object.assign({}, DEF);
   try { Object.assign(s, JSON.parse(localStorage.getItem(KEY) || '{}')); } catch (e) { /* nada */ }
   const fns = new Set<(k: string, v: unknown) => void>();

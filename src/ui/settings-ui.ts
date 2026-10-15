@@ -90,6 +90,9 @@ export const SettingsUI = (() => {
         + toggle('dmgNumbers', 'Números de daño', 'Los números que salen al golpear y al recibir daño.')
         + toggle('calm', 'Menos sacudidas y destellos', 'La cámara tiembla menos y los fogonazos son suaves.')
         + toggle('fps', 'Mostrar FPS', 'Fotogramas por segundo, en la esquina de abajo.')
+        + section('Chat', 'En las salas. Con <b>Sólo frases</b> ves las frases rápidas de los demás, pero no lo que escriben.')
+        + choice('chat', [['all', 'Todo'], ['quick', 'Sólo frases'], ['off', 'Nada']])
+        + toggle('chatFilter', 'Censurar palabrotas', 'Tacha palabrotas y enlaces en lo que ves tú (los demás lo ven como lo escribieron).')
         + (canFull() ? `<div class="set-row"><div class="grow"><b>Pantalla completa</b><small>Sin barras del navegador.</small></div>
              <button class="btn small" id="set-full">${isFull() ? 'Salir' : 'Activar'}</button></div>`
            : iosTip() ? `<div class="set-row"><div class="grow"><b>Pantalla completa</b><small>${esc(IOS_TIP)}</small></div></div>` : '');
@@ -105,6 +108,8 @@ export const SettingsUI = (() => {
              <div><kbd>Q</kbd> / <kbd>E</kbd></div><span>ataque anterior / siguiente</span>
              <div><kbd>Esc</kbd> o <kbd>P</kbd></div><span>pausa</span>
              <div><kbd>1</kbd>–<kbd>3</kbd></div><span>elegir carta al subir de nivel</span>
+             <div><kbd>Enter</kbd> o <kbd>T</kbd></div><span>chat (en una sala)</span>
+             <div><kbd>V</kbd>, luego <kbd>1</kbd>–<kbd>8</kbd></div><span>frases rápidas</span>
            </div>`;
     } else if (tab === 'acc') {
       renderAccount(box);

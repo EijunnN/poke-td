@@ -1406,3 +1406,93 @@ describe('salas públicas tras un reinicio', () => {
     expect(wc.req({ k: 'room.watch', id: room.id }).cfg).toMatchObject({ seed: 5, mode: 'td', map: 'espiral' });
   });
 });
+
+// ====================================================================
+
+describe('chat de la sala', () => {
+  const chats = (c: Client) => { const out: any[] = []; for (;;) { try { out.push(c.take(m => m.k === 'chat')); } catch { return out; } } };
+
+  test('un mensaje llega a todos los de la sala (también a quien lo manda), con su nombre', async () => {
+    const h = account(), g = account();
+    const { hc, gcs: [gc] } = await roomWith(h, [g]);
+    expect(gc.req({ k: 'chat', t: '  hola   a todos ' }).ok).toBe(true);
+    for (const c of [hc, gc]) expect(c.take(m => m.k === 'chat')).toMatchObject({ f: g.uid, n: g.name, t: 'hola a todos' });
+  });
+
+  test('chat libre: las palabras llegan tal cual (censurar es un ajuste de cada uno, en su juego)', async () => {
+    const h = account(), g = account();
+    const { hc, gcs: [gc] } = await roomWith(h, [g]);
+    gc.req({ k: 'chat', t: 'eres un PUT0 idiota, mira www.ejemplo.com' });
+    expect(hc.take(m => m.k === 'chat').t).toBe('eres un PUT0 idiota, mira www.ejemplo.com');
+  });
+
+  test('frases rápidas: sólo las que existen', async () => {
+    const h = account(), g = account();
+    const { hc, gcs: [gc] } = await roomWith(h, [g]);
+    expect(gc.req({ k: 'chat', q: 'gg' }).ok).toBe(true);
+    expect(hc.take(m => m.k === 'chat')).toMatchObject({ f: g.uid, q: 'gg' });
+    expect(gc.req({ k: 'chat', q: 'insulto' }).ok).toBe(false);
+    hc.none(m => m.k === 'chat');
+  });
+
+  test('vacío, invisible o fuera de sala: no sale; lo largo se corta', async () => {
+    const h = account(), g = account(), x = account();
+    const { hc, gcs: [gc] } = await roomWith(h, [g]);
+    expect(gc.req({ k: 'chat', t: '   ' }).ok).toBe(false);
+    expect(gc.req({ k: 'chat', t: '​​\n' }).ok).toBe(false);
+    expect(online(x).req({ k: 'chat', t: 'hola' }).ok).toBe(false);
+    gc.req({ k: 'chat', t: 'a'.repeat(500) });
+    expect(hc.take(m => m.k === 'chat').t.length).toBe(120);
+  });
+
+  test('ritmo: 5 mensajes cada 8 s, y no el mismo texto dos veces seguidas', async () => {
+    const h = account(), g = account();
+    const { hc, gcs: [gc] } = await roomWith(h, [g]);
+    for (let i = 0; i < 5; i++) expect(gc.req({ k: 'chat', t: 'm' + i }).ok).toBe(true);
+    const r = gc.req({ k: 'chat', t: 'otro' });
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain('deprisa');
+    expect(chats(hc).length).toBe(5);
+    advance(8_000);
+    expect(gc.req({ k: 'chat', t: 'otro' }).ok).toBe(true);
+    expect(gc.req({ k: 'chat', t: 'otro' }).error).toContain('Ya lo has dicho');
+    advance(15_000);
+    expect(gc.req({ k: 'chat', t: 'otro' }).ok).toBe(true);
+    // Ir deprisa no es una falta: la conexión sigue abierta.
+    expect(gc.req({ k: 'chat', q: 'hi' }).ok).toBe(true);
+  });
+
+  test('quien entra (o vuelve) recibe los últimos mensajes', async () => {
+    const h = account(), g = account(), k = account();
+    const { hc, room } = await roomWith(h, [g]);
+    hc.req({ k: 'chat', t: 'primero' });
+    hc.req({ k: 'chat', q: 'hi' });
+    await befriend(h, k);
+    const kc = online(k);
+    hc.req({ k: 'inv', to: k.uid });
+    kc.take(m => m.k === 'inv');
+    expect(kc.req({ k: 'room.join', id: room.id, dex: 4, shiny: false }).ok).toBe(true);
+    expect(kc.take(m => m.k === 'chat.h').m.map((x: any) => x.t || x.q)).toEqual(['primero', 'hi']);
+    // Al reconectar, igual.
+    kc.kill();
+    const again = online(k);
+    expect(again.take(m => m.k === 'chat.h').m.length).toBe(2);
+  });
+
+  test('los espectadores leen y escriben; quien no está en la sala, no', async () => {
+    const h = account(), w = account(), out = account();
+    const hc = online(h);
+    const room = hc.req({ k: 'room.new', dex: 25, shiny: false }).room;
+    hc.req({ k: 'room.pub', v: true, mode: 'survivor', map: 'random' });
+    hc.send({ k: 'g', d: { k: 'start', seed: 1, host: h.uid, members: [{ uid: h.uid, name: h.name, dex: 25 }] } });
+    const wc = online(w);
+    expect(wc.req({ k: 'room.watch', id: room.id }).ok).toBe(true);
+    expect(wc.req({ k: 'chat', t: '¡qué partida!' }).ok).toBe(true);
+    expect(hc.take(m => m.k === 'chat')).toMatchObject({ f: w.uid, t: '¡qué partida!' });
+    hc.req({ k: 'chat', q: 'thx' });
+    expect(wc.take(m => m.k === 'chat' && m.q === 'thx').f).toBe(h.uid);
+    const oc = online(out);
+    oc.none(m => m.k === 'chat');
+  });
+});
+

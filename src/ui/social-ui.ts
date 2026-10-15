@@ -247,6 +247,7 @@ import type { CoopConfig } from '../net/coop';
       G.UI.show('scr-lobby', true);
       membersKey = '';
       render();
+      G.ChatUI.renderLobby();
     }
 
     function close() { G.UI.hide('scr-lobby'); }

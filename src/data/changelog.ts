@@ -19,6 +19,18 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { d: '2026-10-15', title: ['Chat en las salas', 'Room chat'], new: [
+    ['Chat en las salas y en la partida en grupo: escribe lo que quieras o usa las frases rápidas («¡Ayuda!», «¡Voy!», «¡Bien jugado!»…). Lo que dice cada uno sale como bocadillo sobre su Pokémon y en unas líneas pequeñas que se apagan solas.',
+     'Chat in rooms and in group games: write anything or use quick phrases ("Help!", "On my way!", "Well played!"…). What each player says shows as a bubble over their Pokémon and in a few small lines that fade on their own.'],
+    ['En PC: Enter (o T) abre el chat ya para escribir, y Enter envía; V, las frases rápidas (luego 1-8). En el móvil, el botón de arriba a la derecha.',
+     'On PC: Enter (or T) opens the chat ready to type, and Enter sends; V, the quick phrases (then 1-8). On mobile, the button at the top right.'],
+    ['Señales en el mapa: Alt + clic (también en el minimapa de la Defensa) marca un punto para todos, con tu color, un aviso sonoro y una flecha si queda fuera de la pantalla. En el móvil, el botón 📍 y luego toca el mapa.',
+     'Map pings: Alt + click (also on the Defense minimap) marks a spot for everyone, in your color, with a sound and an arrow if it is off screen. On mobile, the 📍 button and then tap the map.'],
+    ['En una sala, antes de empezar, puedes elegir «Sólo mirar la partida»: la ves como espectador sin ocupar sitio de jugador ni contar para el ranking, y al acabar vuelves a la sala.',
+     'In a room, before starting, you can choose "Just watch the game": you watch it as a spectator without taking a player slot or counting for the ranking, and afterwards you are back in the room.'],
+    ['Toca el nombre de alguien para silenciarlo. En Ajustes puedes censurar palabrotas y enlaces (sólo en lo que ves tú), dejar sólo las frases rápidas o quitar el chat.',
+     'Tap someone’s name to mute them. In Settings you can censor swear words and links (only in what you see), keep only quick phrases or turn the chat off.']
+  ] },
   { d: '2026-10-14', title: ['Salas públicas y espectadores', 'Public rooms and spectators'], new: [
     ['Salas públicas: el anfitrión marca «Sala pública» y su sala sale en «Salas públicas» (en el menú), con su modo y su mapa. Cualquiera entra sin invitación ni ser amigos.',
      'Public rooms: the host ticks “Public room” and the room shows in “Public rooms” (in the menu), with its mode and map. Anyone can join without an invitation or being friends.'],

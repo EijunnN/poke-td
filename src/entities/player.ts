@@ -105,6 +105,9 @@ export class Player {
   declare uid: string;
   declare coopHost: boolean;
   declare tag: string;
+  /** Lo último que dijo en el chat (net/chat.ts) y hasta cuándo se ve el bocadillo (performance.now). */
+  declare chatText: string | undefined;
+  declare chatUntil: number | undefined;
   declare tagColor: string;
   declare revLabel: string;
   declare net: NetState | undefined;     // estado que manda el dueño del compañero (ver netUpdate)
@@ -402,6 +405,48 @@ export class Player {
   // ---------------- objeto equipado ----------------
   hasItem(id: string) { return this.item === id; }
 
+  /** Un mensaje del chat: bocadillo sobre la cabeza unos segundos (sólo se dibuja; no toca la partida). */
+  speak(text: string) {
+    if (!text) return;
+    this.chatText = text;
+    this.chatUntil = performance.now() + Player.SAY_MS;
+  }
+  static SAY_MS = 4500;
+
+  /** Bocadillo pequeño encima del nombre: dos líneas como mucho, y se apaga al final. */
+  private drawSay(ctx: CanvasRenderingContext2D) {
+    const left = (this.chatUntil || 0) - performance.now();
+    if (!this.chatText || left <= 0) return;
+    ctx.save();
+    ctx.font = '600 7px Pixelify,"Segoe UI",sans-serif';
+    // Partir en líneas de unos 70 px; si no cabe en dos, la segunda acaba en "…".
+    const words = this.chatText.split(' '), lines: string[] = [];
+    let cur = '';
+    for (const w of words) {
+      const t = cur ? cur + ' ' + w : w;
+      if (ctx.measureText(t).width > 80 && cur) { lines.push(cur); cur = w; } else cur = t;
+    }
+    if (cur) lines.push(cur);
+    if (lines.length > 2) { lines.length = 2; lines[1] += '…'; }
+    for (let i = 0; i < lines.length; i++) {
+      while (ctx.measureText(lines[i]).width > 86 && lines[i].length > 2) lines[i] = lines[i].slice(0, -2) + '…';
+    }
+    const lh = 8, pad = 3;
+    const w = Math.max(...lines.map(l => ctx.measureText(l).width)) + pad * 2, h = lines.length * lh + pad * 2 - 1;
+    const bottom = this.y - this.bodyH - (this.tag ? 15 : 7);
+    const x = this.x - w / 2, y = bottom - h;
+    ctx.globalAlpha = Math.min(1, left / 400) * 0.95;
+    ctx.fillStyle = '#fff';
+    ctx.strokeStyle = 'rgba(0,0,0,.55)'; ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(x, y, w, h, 3);
+    ctx.moveTo(this.x - 3, bottom); ctx.lineTo(this.x, bottom + 3); ctx.lineTo(this.x + 3, bottom);
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#1b2233'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    lines.forEach((l, i) => ctx.fillText(l, this.x, y + pad + i * lh));
+    ctx.restore();
+  }
+
   /** Se pone un objeto (y se quita el que llevara). */
   equip(id: string | null) {
     if (this.item) G.Items.BY[this.item].off(this);
@@ -604,6 +649,7 @@ export class Player {
       ctx.stroke();
       ctx.restore();
     }
+    this.drawSay(ctx);
     if (this.tag) {
       ctx.save();
       ctx.font = '700 7px Pixelify,"Segoe UI",sans-serif';

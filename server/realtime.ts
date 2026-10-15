@@ -33,6 +33,11 @@
  *                                                 las salas públicas (para entrar sin invitación, o mirar si ya juegan)
  *   { k:'room.watch', id }                        mirar como espectador la partida de una sala pública -> ack { room, cfg }
  *   { k:'room.unwatch' }                          dejar de mirar
+ *   { k:'chat', t } · { k:'chat', q }             chat de la sala (miembros y espectadores): texto libre `t` (sin
+ *                                                 invisibles y como mucho CHAT_MAX letras; las palabras, tal cual: el
+ *                                                 que quiera las censura en su juego) o frase rápida `q`
+ *                                                 (src/data/quick-chat.ts). Como mucho CHAT_BURST mensajes
+ *                                                 cada CHAT_WINDOW ms, y no el mismo texto dos veces seguidas.
  *
  * Servidor -> cliente:
  *   { k:'hello', uid, name, room }                al conectar (room: la sala en la que ya estabas, o null)
@@ -41,6 +46,9 @@
  *   { k:'inv', from, name, room, at } · { k:'invx', from }   invitación recibida / retirada
  *   { k:'room', room: { id, host, open, started, pub, mode, map, members:[{uid,name,dex,shiny,away}], watchers:[{uid,name}] } | null, why? }
  *   { k:'watch', room: <igual> | null, why? }     la sala que miras (null: se acabó la partida o se cerró)
+ *   { k:'chat', f, n, t?, q?, at }                un mensaje del chat de tu sala (también el tuyo)
+ *   { k:'chat.h', m: [<chat>] }                   los últimos mensajes, al entrar, mirar o volver a una sala
+ *                                                 (sólo en memoria: tras un reinicio del servidor empieza vacío)
  *
  * Salas públicas: cualquiera con cuenta entra sin invitación mientras están en el vestíbulo (sin
  * ser amigos). Si ya juegan, sólo se puede MIRAR: el espectador no es miembro (no ocupa sitio ni
@@ -58,6 +66,8 @@ import type { ServerWebSocket, WebSocketHandler } from 'bun';
 import type { Db, User } from './db';
 import { MAX_DEX, socialStore } from './social-store';
 import { roomMax, MAX_ROOM } from '../src/modes/td-geom';
+import { QUICK_IDS } from '../src/data/quick-chat';
+import { cleanChat } from '../src/data/chat-filter';
 
 export interface WsData { user: User; c?: Conn }
 
@@ -101,6 +111,10 @@ const MAX_BAD = 40;
 const BAD_WINDOW = 10_000;
 const MAX_OUT_INVITES = 8;
 const ID = /^[A-Za-z0-9_-]{8,32}$/;
+/** Chat: mensajes que guarda cada sala (para quien entra después), y el ritmo de cada uno. */
+const CHAT_KEEP = 30, CHAT_BURST = 5, CHAT_WINDOW = 8_000, CHAT_REPEAT = 15_000;
+/** Un mensaje del chat tal y como se reparte. */
+interface ChatMsg { k: 'chat'; f: string; n: string; t?: string; q?: string; at: number }
 
 interface Member { uid: number; name: string; dex: number; shiny: boolean }
 /**
@@ -112,6 +126,8 @@ interface RoomInfo { pub: boolean; mode: 'survivor' | 'td'; map: string; cfg: Re
 interface Room {
   id: string; host: number; open: boolean; started: number; created: number; members: Map<number, Member>;
   info: RoomInfo; watchers: Map<number, { uid: number; name: string }>;
+  /** Los últimos mensajes del chat (sólo en memoria). */
+  chat: ChatMsg[];
 }
 /** Espectadores por sala, como mucho. */
 export const MAX_WATCHERS = 8;
@@ -143,6 +159,8 @@ export interface Conn {
   gone: boolean;
   msgs: number; bytes: number; t: number;
   bad: number; badT: number;
+  /** Chat: cuándo mandó sus últimos mensajes, y el último texto. */
+  chatAt: number[]; lastChat: string; lastChatAt: number;
 }
 
 const newRoomId = () => Buffer.from(crypto.getRandomValues(new Uint8Array(9))).toString('base64url');
@@ -307,7 +325,7 @@ export function createRealtime(db: Db, opts: RealtimeOptions = {}) {
     }
     if (!members.has(rec.host)) { store.deleteRoom(rec.id); continue; }
     const r: Room = { id: rec.id, host: rec.host, open: rec.open, started: rec.started, created: rec.created, members,
-                      info: readInfo(rec.info), watchers: new Map() };
+                      info: readInfo(rec.info), watchers: new Map(), chat: [] };
     rooms.set(r.id, r);
     for (const id of members.keys()) { roomOf.set(id, r); markAway(id); }
   }
@@ -318,7 +336,8 @@ export function createRealtime(db: Db, opts: RealtimeOptions = {}) {
 
   function open(ws: ServerWebSocket<WsData>) {
     const u = ws.data.user;
-    const c: Conn = { ws, id: u.id, name: u.name, play: false, gone: false, msgs: msgBurst, bytes: byteBurst, t: now(), bad: 0, badT: 0 };
+    const c: Conn = { ws, id: u.id, name: u.name, play: false, gone: false, msgs: msgBurst, bytes: byteBurst, t: now(), bad: 0, badT: 0,
+                      chatAt: [], lastChat: '', lastChatAt: 0 };
     ws.data.c = c;
     const old = conns.get(u.id);
     if (old) {
@@ -331,6 +350,7 @@ export function createRealtime(db: Db, opts: RealtimeOptions = {}) {
     clearAway(u.id);
     const mine = roomOf.get(u.id) ?? null;
     raw(c, text({ k: 'hello', uid: String(u.id), name: u.name, room: mine && snapshot(mine) }));
+    if (mine) chatHistory(c, mine);
     if (mine) tellRoom(mine, u.id);                        // los demás ven que has vuelto
     for (const [from, iv] of invites.get(u.id) ?? []) {
       if (live(iv)) raw(c, text({ k: 'inv', from: String(from), name: db.userById(from)?.name ?? '?', room: iv.room, at: iv.at }));
@@ -404,7 +424,7 @@ export function createRealtime(db: Db, opts: RealtimeOptions = {}) {
         const cur = roomOf.get(c.id);
         if (cur) return reply(true, { room: snapshot(cur) });
         unwatch(c.id);
-        const r: Room = { id: newRoomId(), host: c.id, open: true, started: 0, created: now(), members: new Map(), info: newInfo(), watchers: new Map() };
+        const r: Room = { id: newRoomId(), host: c.id, open: true, started: 0, created: now(), members: new Map(), info: newInfo(), watchers: new Map(), chat: [] };
         r.members.set(c.id, { uid: c.id, name: c.name, dex: m.dex, shiny: m.shiny });
         rooms.set(r.id, r); roomOf.set(c.id, r);
         persist(r);
@@ -434,7 +454,9 @@ export function createRealtime(db: Db, opts: RealtimeOptions = {}) {
         persist(r);
         tellRoom(r);
         pushPresence(c.id);
-        return reply(true, { room: snapshot(r) });
+        reply(true, { room: snapshot(r) });
+        chatHistory(c, r);
+        return;
       }
 
       case 'room.leave': {
@@ -491,7 +513,9 @@ export function createRealtime(db: Db, opts: RealtimeOptions = {}) {
         r.watchers.set(c.id, { uid: c.id, name: c.name });
         watchOf.set(c.id, r);
         tellRoom(r, c.id);
-        return reply(true, { room: snapshot(r), cfg: r.info.cfg });
+        reply(true, { room: snapshot(r), cfg: r.info.cfg });
+        chatHistory(c, r);
+        return;
       }
 
       case 'room.unwatch': {
@@ -567,9 +591,37 @@ export function createRealtime(db: Db, opts: RealtimeOptions = {}) {
         return;
       }
 
+      case 'chat': {
+        const r = roomOf.get(c.id) ?? watchOf.get(c.id);
+        if (!r) return no('No estás en ninguna sala.');
+        const out: ChatMsg = { k: 'chat', f: String(c.id), n: c.name, at: now() };
+        if (typeof m.q === 'string') {
+          if (!QUICK_IDS.has(m.q)) return bad('Frase no válida.');
+          out.q = m.q;
+        } else if (typeof m.t === 'string' && m.t.length <= 2000) {
+          const t = cleanChat(m.t);
+          if (!t) return no('El mensaje está vacío.');
+          out.t = t;
+        } else return bad('Mensaje no válido.');
+        // Ritmo: no cuenta como falta (es fácil pulsar de más), sólo no sale.
+        c.chatAt = c.chatAt.filter(x => out.at - x < CHAT_WINDOW);
+        if (c.chatAt.length >= CHAT_BURST) return no('Vas muy deprisa: espera un momento.');
+        const said = out.t ?? '#' + out.q;
+        if (said === c.lastChat && out.at - c.lastChatAt < CHAT_REPEAT) return no('Ya lo has dicho.');
+        c.chatAt.push(out.at); c.lastChat = said; c.lastChatAt = out.at;
+        r.chat.push(out);
+        if (r.chat.length > CHAT_KEEP) r.chat.shift();
+        const s = text(out);
+        for (const id of [...r.members.keys(), ...r.watchers.keys()]) { const tc = conns.get(id); if (tc) raw(tc, s); }
+        return reply(true);
+      }
+
       default: return bad('Mensaje no válido.');
     }
   }
+
+  /** Los últimos mensajes del chat de la sala, a quien acaba de entrar, mirar o volver. */
+  function chatHistory(c: Conn, r: Room) { if (r.chat.length) raw(c, text({ k: 'chat.h', m: r.chat })); }
 
   // ---------------- partidas en grupo ----------------
 
