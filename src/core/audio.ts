@@ -69,9 +69,16 @@ export const Audio = (() => {
   function unlock() {
     if (!init()) return;
     // 'suspended' o 'interrupted' (iPhone al volver de otra app): se reanuda.
-    if (ctx.state !== 'running') ctx.resume().catch(() => {});
+    if (ctx.state !== 'running' && !document.hidden) ctx.resume().catch(() => {});
     if (wanted && !current) startSong(wanted);
   }
+  // Con la pestaña oculta o la app minimizada, el sonido se para; al volver
+  // se reanuda (salvo que esté silenciado: entonces ya lo hará el primer toque).
+  function sleep() { if (ctx && ctx.state === 'running') ctx.suspend().catch(() => {}); }
+  function wake() { if (ctx && ctx.state !== 'running' && !settings.muted) ctx.resume().catch(() => {}); }
+  document.addEventListener('visibilitychange', () => { if (document.hidden) sleep(); else wake(); });
+  addEventListener('pagehide', sleep);
+  addEventListener('pageshow', () => { if (!document.hidden) wake(); });
   // En móvil, tocar la pantalla (pointerdown) no cuenta como gesto para el
   // sonido: sí levantar el dedo (pointerup / touchend). Se escuchan todos.
   for (const ev of ['pointerdown', 'pointerup', 'touchend', 'keydown']) addEventListener(ev, unlock, { capture: true });
