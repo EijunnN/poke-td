@@ -28,7 +28,28 @@ export const CHANGELOG: ChangelogEntry[] = [
      'Minimap in Defense: click it to look at any part of the map without moving your hero.']
   ], chg: [
     ['Defensa: tras congelar, paralizar, confundir o empujar a un enemigo, queda un momento inmune a otro de esos efectos.',
-     'Defense: after freezing, paralyzing, confusing or pushing an enemy, it is briefly immune to another of those effects.']
+     'Defense: after freezing, paralyzing, confusing or pushing an enemy, it is briefly immune to another of those effects.'],
+    ['Los curanderos ya no se curan entre ellos ni a los jefes, y cada enemigo sólo recibe una curación cada pocos segundos: un grupo de curanderos ya no es inmortal.',
+     'Healers no longer heal each other or bosses, and each enemy only gets one heal every few seconds: a group of healers is no longer immortal.'],
+    ['Todos los Pokémon chocan con el mismo tamaño: los grandes (Moltres, Gyarados...) ya no se atascan.',
+     'Every Pokémon collides with the same size: big ones (Moltres, Gyarados...) no longer get stuck.'],
+    ['Los Pokémon de 5★ que no son legendarios salen como "Élite".', '5★ Pokémon that are not legendary show as "Elite".'],
+    ['Ajustes → Gráficos → Resolución: "Normal" va más fluido en móviles y portátiles. Los menús y la pausa gastan menos batería.',
+     'Settings → Graphics → Resolution: "Normal" runs smoother on phones and laptops. Menus and pause use less battery.']
+  ], fix: [
+    ['Grupo: la partida ya no se queda parada "esperando" a alguien que ya eligió, ni con la pantalla morada al salir de la grieta.',
+     'Group: the game no longer gets stuck "waiting" for someone who already chose, nor with a purple screen after the rift.'],
+    ['Grupo: al salir de la grieta, los invitados ya ven a los enemigos.', 'Group: after the rift, guests can see the enemies again.'],
+    ['Grupo: si cambias de Pokémon en la sala, los demás ven el nuevo.', 'Group: if you change Pokémon in the room, the others see the new one.'],
+    ['Al revivir tienes 2 s de protección de verdad (antes las zonas de los jefes y las trampas te tumbaban al momento).',
+     'When revived you really get 2 s of protection (boss zones and traps used to knock you out instantly).'],
+    ['Un jefe lejano ya no impide que salgan grietas; una flecha señala dónde está, y si se queda muy atrás vuelve.',
+     'A far-away boss no longer stops rifts from appearing; an arrow shows where it is, and if it falls far behind it comes back.'],
+    ['Tóxico y Rueda Fuego (y otros rastros) juntos ya funcionan los dos.', 'Toxic and Flame Wheel (and other trails) now both work together.'],
+    ['Móvil: la pantalla ya no se queda estirada al girar el teléfono, el joystick no se desplaza y la música se para al salir del juego.',
+     'Mobile: the screen no longer stays stretched after rotating the phone, the joystick stays put and the music stops when you leave the game.'],
+    ['Si una partida no entra en el ranking, se dice por qué.', 'If a run does not make it into the ranking, you are told why.'],
+    ['Defensa: tocar un icono de ataque ya no planta ni selecciona la torre que hay debajo.', 'Defense: tapping an attack icon no longer places or selects the tower underneath.']
   ] },
   { d: '2026-10-14', title: ['Defensa en grupo', 'Group Defense'], new: [
     ['Defensa en grupo, de 2 a 4: desde una sala, el anfitrión elige Defensa y el mapa. Las vidas son de todos y las monedas de cada uno; cada torre es de quien la compra.',
