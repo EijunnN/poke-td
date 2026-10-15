@@ -56,6 +56,7 @@ export const MenuUI = (() => {
         if ((b.dataset.v === '1') === shiny) return;
         s.partnerShiny = b.dataset.v === '1';
         G.DB.commit();
+        G.Social.refreshMember();             // si hay sala, los demás ven el sprite nuevo
         G.Audio.sfx('confirm');
         open();
       };
@@ -226,6 +227,7 @@ export const MenuUI = (() => {
       s.partner = dex;
       s.partnerShiny = hasSh && viewShiny;
       G.DB.commit();
+      G.Social.refreshMember();
       G.UI.toast(p.name + (s.partnerShiny ? ' shiny' : '') + ' es ahora tu compañero');
       renderGrid(); showDetail(dex);
     };
