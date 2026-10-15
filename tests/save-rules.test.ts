@@ -16,7 +16,7 @@ import { ACH_VALUE, LIMITS, judgeSave } from '../server/save-rules';
 let srv: ReturnType<typeof startServer>;
 let base = '';
 beforeAll(() => {
-  srv = startServer({ port: 0, dbPath: ':memory:', dist: '.', loginLimit: 1000 });
+  srv = startServer({ port: 0, dbPath: ':memory:', dist: '.', loginLimit: 1000, saveGapMs: 0 });
   base = `http://127.0.0.1:${srv.server.port}`;
 });
 afterAll(() => srv.stop());
@@ -118,6 +118,20 @@ describe('judgeSave (función pura)', () => {
     expect(judgeSave(p, { ...p, coins: p.coins + 60000 }, o(-5000)).kind).toBe('sus');
   });
 
+  test('el margen fijo es proporcional al tiempo real: subir a menudo no lo multiplica (#79)', () => {
+    const p = prev({ tickets: { t1: 0, t10: 0 } });
+    const mas = (k: number) => ({ ...p, owned: { ...p.owned, ...Object.fromEntries(Array.from({ length: k }, (_, i) => [100 + i, mon()])) } });
+    /** Cuántos Pokémon sin gastar tickets caben en un guardado a los `secs` s del anterior. */
+    const cabe = (secs: number) => { let m = 0; while (judgeSave(p, mas(m + 1), o(secs)).kind === 'ok') m++; return m; };
+    expect(cabe(60)).toBeLessThan(10);                                        // antes eran ~20 por minuto
+    expect(judgeSave(p, mas(20), o(60)).kind).toBe('sus');
+    // diez guardados de un minuto no pueden valer más que uno de diez minutos
+    expect(10 * cabe(60)).toBeLessThanOrEqual(cabe(600));
+    // y el margen no crece más allá de su tope
+    expect(LIMITS.marginSecs).toBe(600);
+    expect(judgeSave(p, mas(cabe(600) + 1), o(5 * 600)).kind).toBe('ok');
+  });
+
   test('gastar tickets explica Pokémon nuevos; no gastarlos, no', () => {
     const p = prev({ tickets: { t1: 0, t10: 5 } });
     const mas = (k: number) => ({ ...p.owned, ...Object.fromEntries(Array.from({ length: k }, (_, i) => [100 + i, mon()])) });
@@ -142,7 +156,7 @@ describe('judgeSave (función pura)', () => {
     const con = (id: string, t1: number, t10 = 0) => ({ ...p, ach: { [id]: 1 }, tickets: { t1, t10 } });
     expect(judgeSave(p, con('ownAll', 0, 100), o(1)).kind).toBe('sus');       // 100 tiradas de premio + el margen fijo no llegan a 1000 de t10
     expect(judgeSave(p, con('own100', 0, 1), o(60)).kind).toBe('ok');
-    expect(judgeSave(p, con('inventado', 0, 2), o(60)).kind).toBe('ok');      // 10 tiradas de margen por logro desconocido
+    expect(judgeSave(p, con('inventado', 0, 1), o(60)).kind).toBe('ok');      // 10 tiradas de margen por logro desconocido
     expect(judgeSave(p, con('leg_150', 1), o(60)).kind).toBe('ok');
   });
 
@@ -490,6 +504,99 @@ describe('PUT /api/save: versiones que retroceden y choques', () => {
     expect(rs.filter(r => r.status === 200).length).toBe(1);
     expect(rs.filter(r => r.status === 409).length).toBe(9);
     expect(marked(u)).toBe(true);
+  });
+});
+
+describe('PUT /api/save: abusar subiendo a menudo (#79)', () => {
+  test('un script que sube cada minuto con Pokémon de más queda marcado', async () => {
+    const u = mkUser();
+    let s = game({ created: Date.now() - 20 * 86400000, coins: 1000 }, 30);
+    seed(u, s);
+    let ver = 1;
+    for (let i = 0; i < 3; i++) {
+      age(u, 60);                                                             // pasa un minuto entre subidas
+      s = { ...s, owned: { ...s.owned, ...Object.fromEntries(Array.from({ length: 20 }, (_, j) => [100 + i * 20 + j, mon()])) } };
+      const r = await put(u, s, ver);
+      expect(r.status).toBe(200);
+      ver = r.j.ver;
+      expect(marked(u)).toBe(true);                                           // desde la primera
+    }
+  });
+
+  test('una partida normal subida cada minuto no se marca', async () => {
+    const u = mkUser();
+    let s = game({ created: Date.now() - 20 * 86400000, coins: 1000 }, 30);
+    seed(u, s);
+    let ver = 1;
+    for (let i = 0; i < 5; i++) {
+      age(u, 60);
+      s = { ...s, coins: s.coins + 500, owned: { ...s.owned, [100 + i]: mon() }, tickets: { t1: 1, t10: 0 } };
+      ver = (await put(u, s, ver)).j.ver;
+    }
+    expect(marked(u)).toBe(false);
+  });
+});
+
+describe('PUT /api/save: limitador de frecuencia (#79)', () => {
+  let s2: ReturnType<typeof startServer>;
+  let b2 = '';
+  // (Sin tope por defecto: aquí se activa para probarlo.)
+  beforeAll(() => { s2 = startServer({ port: 0, dbPath: ':memory:', dist: '.', loginLimit: 1000, saveGapMs: 20_000 }); b2 = `http://127.0.0.1:${s2.server.port}`; });
+  afterAll(() => s2.stop());
+
+  function user() {
+    const name = 'Rate' + (++n) + Math.random().toString(36).slice(2, 6);
+    const id = s2.db.addUser(name, name.toLowerCase(), 'x');
+    const token = Buffer.from(crypto.getRandomValues(new Uint8Array(30))).toString('base64url');
+    s2.db.addSession(sha256(token), id);
+    return { id, token };
+  }
+  const put2 = async (u: { token: string }, save: unknown, ver: number) => {
+    const res = await send(b2 + '/api/save', { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + u.token }, body: JSON.stringify({ save, base: ver }) });
+    return { status: res.status, j: (await res.json()) as any, res };
+  };
+  const fresh = () => game({ coins: 500 });
+
+  test('el segundo guardado seguido responde 429 con el tiempo de espera, y no se pierde lo guardado', async () => {
+    const u = user();
+    const a = await put2(u, fresh(), 0);
+    expect(a.status).toBe(200);
+    const b = await put2(u, { ...fresh(), coins: 900 }, a.j.ver);
+    expect(b.status).toBe(429);
+    expect(b.j.ok).toBe(false);
+    expect(b.j.wait).toBeGreaterThan(0);
+    expect(b.j.wait).toBeLessThanOrEqual(20);
+    expect(b.res.headers.get('Retry-After')).toBe(String(b.j.wait));
+    const got: any = await (await send(b2 + '/api/save', { method: 'GET', headers: { Authorization: 'Bearer ' + u.token } })).json();
+    expect(got.ver).toBe(a.j.ver);                                            // nada nuevo se guardó
+    expect(got.save.coins).toBe(500);
+  });
+
+  test('pasado el tiempo vuelve a guardar', async () => {
+    const u = user();
+    const a = await put2(u, fresh(), 0);
+    s2.db.raw.run('UPDATE saves SET updated = ? WHERE user_id = ?', [Date.now() - 21_000, u.id]);
+    const b = await put2(u, { ...fresh(), coins: 600 }, a.j.ver);
+    expect(b.status).toBe(200);
+    expect(b.j.ver).toBe(a.j.ver + 1);
+  });
+
+  test('con una versión vieja responde 409 (para fusionar), no 429; cada cuenta tiene su propio límite', async () => {
+    const u = user(), v = user();
+    const a = await put2(u, fresh(), 0);
+    expect((await put2(v, fresh(), 0)).status).toBe(200);                     // otra cuenta no se ve afectada
+    const stale = await put2(u, fresh(), 0);
+    expect(stale.status).toBe(409);
+    expect(stale.j.ver).toBe(a.j.ver);
+  });
+
+  test('un 429 no marca la cuenta ni cuenta como guardado', async () => {
+    const u = user();
+    const a = await put2(u, fresh(), 0);
+    for (let i = 0; i < 5; i++) expect((await put2(u, { ...fresh(), coins: 1e9 }, a.j.ver)).status).toBe(429);
+    expect(isMarkedAccount(s2.db, u.id)).toBe(false);
+    s2.db.raw.run('UPDATE saves SET updated = ? WHERE user_id = ?', [Date.now() - 21_000, u.id]);
+    expect((await put2(u, { ...fresh(), coins: 700 }, a.j.ver)).status).toBe(200);
   });
 });
 

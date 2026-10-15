@@ -21,7 +21,7 @@ beforeAll(() => {
   mkdirSync(join(root, 'dist'));
   writeFileSync(join(root, 'dist', 'index.html'), '<h1>juego</h1>');
   writeFileSync(join(root, 'secreto.txt'), 'NO');
-  srv = startServer({ port: 0, dbPath: ':memory:', dist: join(root, 'dist'), loginLimit: 1000 });
+  srv = startServer({ port: 0, dbPath: ':memory:', dist: join(root, 'dist'), loginLimit: 1000, saveGapMs: 0 });
   base = `http://127.0.0.1:${srv.server.port}`;
 });
 afterAll(() => srv.stop());

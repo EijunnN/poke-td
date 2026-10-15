@@ -32,6 +32,8 @@ export interface ServerOptions {
   trustProxy?: boolean;
   /** Intentos de entrar o crear cuenta por IP y minuto. */
   loginLimit?: number;
+  /** Mínimo entre dos guardados de una cuenta, en ms (SAVE_GAP; las pruebas lo bajan). */
+  saveGapMs?: number;
   /** Límites del WebSocket (pruebas). */
   realtime?: RealtimeOptions;
 }
@@ -48,7 +50,7 @@ export function startServer(o: ServerOptions = {}) {
   const clock = o.realtime?.clock;
   const ranking = createRanking(db, { verifyTeam: rt.verifyTeam, now: clock ? () => clock.now() : undefined });
   const modules: Module[] = [createAccount(db, { perIp: o.loginLimit }), ranking, createSocial(db, rt)];
-  const api = createApi(db, { loginLimit: o.loginLimit, modules });
+  const api = createApi(db, { loginLimit: o.loginLimit, saveGapMs: o.saveGapMs, modules });
 
   async function serveFile(pathname: string) {
     let path = pathname;

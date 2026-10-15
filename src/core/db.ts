@@ -449,6 +449,8 @@ export const DB = (() => {
           if (r.j.save && save) { applyInPlace(merge(plain(save), migrate(r.j.save))); write(K_CLOUD + uid, save); }
           continue;
         }
+        // 429: guardó hace nada. No es un fallo: se espera lo que pide el servidor y se sube lo pendiente.
+        if (r.status === 429) throw Object.assign(new Error(r.j.error), { code: 'rate', wait: Math.max(1, Math.min(60, Number(r.j.wait) || 20)) * 1000 });
         throw Object.assign(new Error(r.j.error), { code: r.status === 401 ? 'auth' : 'server' });
       }
       throw Object.assign(new Error('demasiados choques'), { code: 'conflict' });
@@ -461,7 +463,8 @@ export const DB = (() => {
       pending = true; failed = true;
       setSync(navigator.onLine === false || e.name === 'TimeoutError' || e instanceof TypeError ? 'offline' : 'pending');
       // Con la sesión caducada no sirve reintentar: la copia queda aquí hasta volver a entrar.
-      if (e.code !== 'auth') scheduleRetry();
+      if (e.code === 'rate') { clearTimeout(retryT); retryT = setTimeout(() => { if (pending) pushNow(); }, e.wait * (1 + Math.random() * 0.2)); }
+      else if (e.code !== 'auth') scheduleRetry();
     }).finally(() => {
       pushing = null;
       if (!failed && pending && syncState === 'pending') schedulePush(Math.max(1500, PUSH_GAP - (Date.now() - lastPush)));

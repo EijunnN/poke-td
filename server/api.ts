@@ -6,13 +6,18 @@
  *   POST   /api/logout                        -> { ok }
  *   GET    /api/me                            -> { ok, uid, name }
  *   GET    /api/save                          -> { ok, save, ver }   (save null si no hay)
- *   PUT    /api/save      { save, base }      -> { ok, ver } | 409 { ok:false, save, ver }
+ *   PUT    /api/save      { save, base }      -> { ok, ver } | 409 { ok:false, save, ver } | 429 { ok:false, wait }
  *   DELETE /api/account   { pass }            -> { ok }
  *   GET    /api/health                        -> { ok }
  *
  * Guardado sin pisarse: el cliente manda la versión que leyó (`base`). Si otro
  * dispositivo ha guardado entre medias, responde 409 con la partida de la base;
  * el cliente la FUSIONA con la suya (src/core/db.ts, merge) y vuelve a mandar.
+ *
+ * Subir a menudo no da ventaja: el margen de save-rules.ts es proporcional al tiempo real entre guardados.
+ * Por eso no hay tope de frecuencia por defecto (con él fallaban los guardados inmediatos del juego: crear
+ * cuenta, cerrar sesión o la pestaña justo tras una tirada). `saveGapMs` lo activa: entonces un guardado
+ * demasiado seguido responde 429 con `wait` (segundos) y Retry-After, y el cliente (db.ts) lo reintenta.
  *
  * Errores: { ok: false, error } con un texto que se puede enseñar al jugador.
  *
@@ -28,12 +33,15 @@ const VALID_NAME = /^[A-Za-z0-9_ñÑáéíóúÁÉÍÓÚ]{3,16}$/;
 const MIN_PASS = 6, MAX_PASS = 200;
 /** Tamaño máximo de una partida guardada (JSON). Las reales rondan unos pocos KB. */
 export const MAX_SAVE = 512 * 1024;
+/** Tiempo mínimo entre dos guardados aceptados de la misma cuenta (ms); 0 = sin tope. */
+export const SAVE_GAP = 0;
 /** Una sesión sin usar en 60 días caduca. */
 const SESSION_TTL = 60 * 24 * 3600 * 1000;
 
 const newToken = () => Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64url');
 
-export function createApi(db: Db, opts: { loginLimit?: number; modules?: Module[] } = {}) {
+export function createApi(db: Db, opts: { loginLimit?: number; saveGapMs?: number; modules?: Module[] } = {}) {
+  const saveGap = opts.saveGapMs ?? SAVE_GAP;
   const authLimit = limiter(opts.loginLimit ?? 20, 60_000);
   db.pruneSessions(Date.now() - SESSION_TTL);
 
@@ -101,6 +109,16 @@ export function createApi(db: Db, opts: { loginLimit?: number; modules?: Module[
     const save = b.save, base = b.base;
     if (!save || typeof save !== 'object' || Array.isArray(save)) return fail(400, 'Partida no válida.');
     if (!Number.isInteger(base) || base < 0) return fail(400, 'Versión no válida.');
+    // Frecuencia: contra el último guardado ACEPTADO (hora del servidor). Una versión vieja no la cuenta:
+    // no va a escribir nada y el 409 le da al cliente la partida con la que fusionarse.
+    const last = db.save(userId);
+    const wait = saveGap > 0 && last && last.ver === base ? Math.min(saveGap, last.updated + saveGap - Date.now()) : 0;
+    if (wait > 0) {
+      const secs = Math.ceil(wait / 1000);
+      const r = json({ ok: false, error: 'Guardando demasiado a menudo. Espera unos segundos.', wait: secs }, 429);
+      r.headers.set('Retry-After', String(secs));
+      return r;
+    }
     const vet = vetSave(db, userId, save, base);           // anti-trampas (server/save-rules.ts)
     if (!vet.ok) return fail(400, vet.error);
     const ver = db.putSave(userId, JSON.stringify(vet.save), base);

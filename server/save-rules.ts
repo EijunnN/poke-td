@@ -32,6 +32,9 @@
  *   tienen que alcanzar para los Pokémon, shinies y monedas nuevos. Lo que pudiste
  *   ganar crece con el tiempo REAL transcurrido desde el guardado anterior (hora del
  *   servidor), con mucho margen: se calibró con alguien muy bueno jugando sin parar.
+ *   El margen fijo (k) también es proporcional a ese tiempo, hasta LIMITS.marginSecs: si valiera
+ *   entero con un minuto, un script que subiera cada minuto lo cobraría cada vez. (Por eso PUT /api/save no
+ *   necesita tope de frecuencia: api.ts, SAVE_GAP.)
  *   Cambios respecto a las reglas originales: el tope de tiempo por guardado pasa de
  *   3 h a 12 h (el cliente ya no guarda cada 2 h y una tarde sin conexión no debe
  *   marcar a nadie) y el premio de cada logro se mira en una tabla con los premios
@@ -66,6 +69,8 @@ export const LIMITS = {
   ach: 200,
   /** Tope de tiempo de juego que se concede entre dos guardados. */
   gapSecs: 12 * 3600,
+  /** Segundos desde el guardado anterior para que valga el margen fijo entero (antes bastaban 60: subiendo cada minuto se cobraba cada vez). */
+  marginSecs: 600,
   /** Una partida nueva cuenta como "recién empezada" si se creó hace menos de esto. */
   freshMs: 2 * 86400000,
 };
@@ -129,7 +134,7 @@ function possibleSave(o: Obj, n: Obj, secs: number, now: number): string | null 
   if (mis(n) > 10 + (now - num(o.created)) / 86400000 * 5) return 'demasiadas misiones para los días que lleva la partida';
 
   const e = Math.min(Math.max(secs, 0), LIMITS.gapSecs);          // segundos de juego que pudo haber
-  const k = secs >= 60 ? 1 : secs > 0 ? secs / 60 : 0;            // margen fijo (0-1): guardados muy seguidos, menos margen
+  const k = Math.min(Math.max(secs, 0) / LIMITS.marginSecs, 1);   // margen fijo (0-1): proporcional al tiempo real desde el último guardado, así subir a menudo no lo multiplica
   let achV = 0;
   for (const id of Object.keys(isObj(n.ach) ? n.ach : {})) if (!(isObj(o.ach) && id in o.ach)) achV += achValue(id);
 
