@@ -1,4 +1,5 @@
 import { G } from '../g';
+import type { PokeType } from '../data/types';
 /* ============ player.js — el Pokémon que controlas ============
  * (x, y) son los PIES. Sólo UN movimiento está activo a la vez: se dispara
  * solo y se cambia con 1-4 / Q / E. Cada disparo reproduce la animación de
@@ -55,6 +56,7 @@ export class Player {
   declare dmgDealt: number;
 
   declare invuln: number;
+  declare reviveShield: number;       // protección al revivir: ningún golpe la anula (ver hurt)
   declare flash: number;
   declare aim: number;
   declare moveAngle: number;
@@ -139,6 +141,7 @@ export class Player {
     this.dmgDealt = 0;
 
     this.invuln = 0;
+    this.reviveShield = 0;
     this.flash = 0;
     this.aim = Math.PI / 2;
     this.moveAngle = Math.PI / 2;
@@ -305,9 +308,9 @@ export class Player {
    * @param type  tipo del ataque (tabla de tipos y clima); sin tipo, daño tal cual
    * @param pure  daño que no baja con la defensa ni el cuerpo a cuerpo (Arceus)
    */
-  hurt(amount, type = null, pure = false) {
-    if (this.invuln > 0 || this.dead) return;
-    let eff = null;
+  hurt(amount: number, type: PokeType | null = null, pure = false) {
+    if (this.invuln > 0 || this.reviveShield > 0 || this.dead) return;
+    let eff: 'super' | 'weak' | null = null;
     if (type) {
       const k = G.Types.mult(type, this.mon.types);
       eff = G.Types.label(k);
@@ -396,6 +399,7 @@ export class Player {
     this.anim.update(dt);
     if (this.dead) return;
     if (this.invuln > 0) this.invuln -= dt;
+    if (this.reviveShield > 0) this.reviveShield -= dt;
     if (this.flash > 0) this.flash -= dt;
     if (this.attackFace > 0) this.attackFace -= dt;
 
@@ -468,6 +472,7 @@ export class Player {
     this.dead = false;
     this.hp = Math.max(1, this.maxHp * frac);
     this.invuln = 2;
+    this.reviveShield = 2;      // el golpe de trampas / lava / Arceus pone invuln = 0, esto no
     this.reviveT = 0;
     this.anim._start('Idle', false);
     G.FX.ring(this.x, this.y, 6, 70, '#5fe08a', 0.5, 4);
@@ -533,7 +538,8 @@ export class Player {
       ctx.restore();
     }
 
-    const alpha = this.invuln > 0 && !this.dead ? (Math.floor(this.invuln * 18) % 2 ? 0.45 : 1) : 1;
+    const blink = Math.max(this.invuln, this.reviveShield);
+    const alpha = blink > 0 && !this.dead ? (Math.floor(blink * 18) % 2 ? 0.45 : 1) : 1;
     this.anim.draw(ctx, this.x, this.y, { flash: this.flash > 0, softFlash: true, alpha, color: '#ffcb3d' });
 
     // Arcos de buff alrededor de los pies.
