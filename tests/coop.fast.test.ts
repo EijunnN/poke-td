@@ -477,6 +477,33 @@ describe('cooperativo', () => {
     await waitPage(B, 'B sigue', () => G.Game.state === 'playing');
   });
 
+  test('objeto y cartas de nivel a la vez en el invitado: salen de una en una y nadie se queda parado', async () => {
+    const ids: string[] = await B.eval(() => Object.keys(G.Items.BY));
+    await B.eval(i => { G.Game.player.equip(i); }, ids[0]);
+    await A.eval(i => {
+      G.Coop.collected({ id: -7, kind: 'item', value: i }, G.Coop.mates[0].pl);   // B tiene que elegir objeto...
+      G.Game.debugLevelUp();                                                         // ...y las cartas de nivel llegan en la misma tanda
+    }, ids[1]);
+    const seen = new Set<string>();
+    for (let i = 0; i < 12 && !(await state(A) === 'playing' && await state(B) === 'playing' && i > 2); i++) {
+      const open: string[] = await B.eval(() => ['scr-levelup', 'scr-item', 'scr-bond'].filter(s => G.UI.isOpen(s)));
+      expect(open.length).toBeLessThanOrEqual(1);                                     // UI.show tapa a la anterior: nunca dos a la vez
+      for (const s of open) seen.add(s);
+      if (open[0] === 'scr-item') await click(B, '#item-cards > *');
+      if (open[0] === 'scr-levelup') await click(B, '#cards .card');
+      if (await A.eval(() => G.UI.isOpen('scr-levelup'))) await click(A, '#cards .card');
+      await rig.run(8);
+    }
+    expect([...seen].sort()).toEqual(['scr-item', 'scr-levelup']);                    // salieron las dos
+    await waitPage(A, 'A sigue', () => G.Game.state === 'playing');
+    await waitPage(B, 'B sigue', () => G.Game.state === 'playing');
+    await rig.run(30);
+    expect(await state(A)).toBe('playing');                                           // y la pausa de grupo está quitada
+    expect(await state(B)).toBe('playing');
+    expect(await A.allErrors()).toEqual([]);
+    expect(await B.allErrors()).toEqual([]);
+  });
+
   test('el invitado se corta y vuelve: recupera enemigos, clima, grieta y las cartas que se perdió', async () => {
     const hostRoom = await A.eval(() => G.Social.room.id);
     rig.cut(B);

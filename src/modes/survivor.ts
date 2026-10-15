@@ -18,7 +18,14 @@ export const Survivor = (() => {
 
   const st = { get time() { return time; } };
 
-  let holdBy = [];                   // grupo: quién está eligiendo fusión (todo parado)
+  let holdBy: string[] = [];                   // grupo: quién está eligiendo fusión (todo parado)
+  let ownHold = false;               // grupo: este ordenador ha pedido pausa (holdStart) y aún no la ha quitado
+  // Elecciones (cartas, objeto, vínculo): UI.show oculta las demás pantallas, así que sólo hay una a la
+  // vez; las que llegan con otra abierta esperan aquí a que se cierre (cada una con su propio cierre).
+  const CHOICE_SCR = ['scr-levelup', 'scr-item', 'scr-bond'];
+  const choiceOpen = () => CHOICE_SCR.some(G.UI.isOpen);
+  let choiceQ: ((() => void) & { lv?: boolean })[] = [];
+  let bondQueued = false;
 
   // ---------------- run ----------------
 
@@ -31,6 +38,7 @@ export const Survivor = (() => {
   /** @param coop  { seed, host, members } para una partida en grupo (con `watch`, como espectador) */
   function start(coop = null) {
     holdBy = []; awayBy = null;
+    ownHold = false; choiceQ = []; bondQueued = false; flashT = 0;
     spectating = !!(coop && coop.watch);
     const save = G.DB.save;
     const mon = G.DEX_BY[save.partner];
@@ -144,17 +152,16 @@ export const Survivor = (() => {
       if (!spectating) bankTickets();               // mirar no da tickets
     },
     levelStart(level) {
-      Run.state = 'levelup';
-      G.UI.hide('scr-pause');
-      G.Audio.sfx('levelup');
-      G.RunUI.showLevelUp(level, G.LevelUp.offer(pl), card => {
-        G.Audio.sfx('confirm');
-        card.apply(pl);
-        G.Coop.localPicked();
-      }, true);
+      choiceQ = choiceQ.filter(f => !f.lv);          // (un 'lu' repetido tras un corte no abre dos veces)
+      queueChoice(Object.assign(() => openLevelUp(level), { lv: true }));
     },
     waiting(names) { G.RunUI.setWaiting(names); },
-    resume() { G.RunUI.closeLevelUp(); if (Run.state === 'levelup') Run.state = 'playing'; },
+    resume() {
+      G.RunUI.closeLevelUp();
+      choiceQ = choiceQ.filter(f => !f.lv);          // se acabó la ronda: unas cartas que no llegaron a salir ya no tocan
+      if (Run.state === 'levelup') Run.state = holdBy.length || awayBy ? 'held' : 'playing';
+      drainChoices();
+    },
     shiny(dex) { G.onShinyCaught({ dex, name: (G.DEX_BY[dex] || {}).name || '' }); },
     over(d) {
       if (d) Object.assign(pl, { kills: d.ki, bosses: d.bo, coins: d.co, level: Math.max(pl.level, d.lv || 1), t1: d.t1 || pl.t1, t10: d.t10 || pl.t10 });
@@ -168,6 +175,14 @@ export const Survivor = (() => {
     /** Grupo: quién está eligiendo fusión. Mientras haya alguien, todo parado. */
     hold(names) {
       holdBy = names || [];
+      // Invitado: tras un corte, el anfitrión puede conservar mi pausa sin que yo elija nada (o haberla
+      // perdido estando yo eligiendo): se corrige aquí.
+      const me = G.Social.me && G.Social.me.name;
+      if (G.Coop.active && !G.Coop.isHost && me) {
+        const listed = holdBy.includes(me);
+        if (listed && !ownHold) G.Coop.holdEnd();
+        else if (!listed && ownHold) G.Coop.holdStart();
+      }
       const mine = G.UI.isOpen('scr-bond');
       if (holdBy.length) {
         if (Run.state === 'playing') Run.state = 'held';
@@ -333,25 +348,76 @@ export const Survivor = (() => {
    */
   function offerBond(quiet = false) {
     if (!pl || pl.bonds <= 0 || pl.dead || (Run.state !== 'playing' && Run.state !== 'held') || G.Rift.inArena) return;
-    if (['scr-bond', 'scr-pause', 'scr-item', 'scr-levelup'].some(G.UI.isOpen)) return;
+    if (G.UI.isOpen('scr-pause')) return;
+    if (choiceOpen()) {                 // otra elección a la vista: espera a que se cierre (una sola vez)
+      if (!bondQueued) { bondQueued = true; choiceQ.push(() => { bondQueued = false; offerBond(quiet); }); }
+      return;
+    }
     const opt = pl.bondOptions();
     if (!opt) {
       if (!quiet) G.Spawner.say('Guardas el vínculo: aprende otro movimiento para usarlo', 3, true);
       return;
     }
-    // Se para el juego; en grupo, para todos hasta que cada uno elige (G.Coop.holdStart).
-    Run.state = 'choice';
-    if (G.Coop.active) G.Coop.holdStart();
+    beginChoice();
     G.Audio.sfx('levelup');
     G.RunUI.showBond(opt, picked => {
-      const group = pl.fuse(picked, opt.group);
-      G.Audio.sfx('legend');
-      G.FX.ring(pl.x, pl.y, 8, 130, '#ff8ad8', 0.8, 6);
-      G.FX.burst(pl.x, pl.y - pl.bodyH * 0.5, '#ffb3e6', 40, 240);
-      G.Spawner.say('¡Vínculo! ' + group.length + ' movimientos a la vez', 2.6, true);
-      if (Run.state === 'choice') Run.state = holdBy.length ? 'held' : 'playing';
-      if (G.Coop.active) G.Coop.holdEnd();
+      try {
+        const group = pl.fuse(picked, opt.group);
+        G.Audio.sfx('legend');
+        G.FX.ring(pl.x, pl.y, 8, 130, '#ff8ad8', 0.8, 6);
+        G.FX.burst(pl.x, pl.y - pl.bodyH * 0.5, '#ffb3e6', 40, 240);
+        G.Spawner.say('¡Vínculo! ' + group.length + ' movimientos a la vez', 2.6, true);
+      } finally { endChoice(); }
     });
+  }
+
+  // ---------------- cola de elecciones ----------------
+
+  /** Se para el juego; en grupo, para todos hasta que cada uno elige (G.Coop.holdStart). */
+  function beginChoice() {
+    Run.state = 'choice';
+    if (G.Coop.active) { ownHold = true; G.Coop.holdStart(); }
+  }
+
+  /** Cierre de una elección de objeto o vínculo: el juego sigue (o espera a quien aún elige) y sale la siguiente. */
+  function endChoice() {
+    if (Run.state === 'choice') Run.state = holdBy.length ? 'held' : 'playing';
+    if (ownHold) { ownHold = false; if (G.Coop.active) G.Coop.holdEnd(); }
+    drainChoices();
+  }
+
+  /** Cartas de nivel en grupo: eligen todos a la vez y se espera a los demás. */
+  function openLevelUp(level: number) {
+    Run.state = 'levelup';
+    G.UI.hide('scr-pause');
+    G.Audio.sfx('levelup');
+    G.RunUI.showLevelUp(level, G.LevelUp.offer(pl), card => {
+      G.Audio.sfx('confirm');
+      try { card.apply(pl); } finally { G.Coop.localPicked(); }     // sin esto, un fallo dejaría a todos esperando
+    }, true);
+  }
+
+  function queueChoice(open: () => void) {
+    choiceQ.push(open);
+    drainChoices();
+  }
+
+  /** Abre las elecciones pendientes de una en una (una que no abre pantalla deja paso a la siguiente). */
+  function drainChoices() {
+    while (choiceQ.length && !choiceOpen() && (Run.state === 'playing' || Run.state === 'held')) choiceQ.shift()!();
+  }
+
+  /**
+   * Cada fotograma (también con la partida parada): saca la siguiente elección y repara los cuelgues:
+   * una pausa o un estado 'choice' sin pantalla de objeto o vínculo que lo justifique se quita.
+   */
+  function choiceTick() {
+    if (!pl || Run.state === 'over') return;
+    if (!G.UI.isOpen('scr-item') && !G.UI.isOpen('scr-bond')) {
+      if (ownHold) endChoice();
+      else if (Run.state === 'choice') Run.state = holdBy.length ? 'held' : 'playing';
+    }
+    drainChoices();
   }
 
   // ---------------- recogida ----------------
@@ -361,27 +427,27 @@ export const Survivor = (() => {
   /** Has cogido un objeto: si no llevas ninguno te lo pones; si no, eliges. */
   function offerItem(id) {
     if (!pl || !G.Items.BY[id]) return;
-    let mine = false;            // esta elección es la que ha parado el juego
-    const take = got => {
-      if (got !== pl.item) {
-        pl.equip(got);
-        G.Spawner.say('¡Llevas ' + G.Items.BY[got].name + '!', 2.6, true);
-        G.Progress.event('item', { id: got });
-      }
-      if (!mine) return;
-      if (Run.state === 'choice') Run.state = holdBy.length ? 'held' : 'playing';
-      if (G.Coop.active) G.Coop.holdEnd();
-    };
-    if (!pl.item) { take(id); return; }
-    if (pl.item === id) { G.Spawner.say('Ya llevas ' + G.Items.BY[id].name, 2, true); return; }
+    if (!pl.item) { equipItem(id); return; }
     // Se para el juego mientras eliges; en grupo, para todos (como con las
-    // fusiones). Antes en grupo seguía y te pegaban mientras elegías.
-    if (Run.state === 'playing' || Run.state === 'held') {
-      mine = true;
-      Run.state = 'choice';
-      if (G.Coop.active) G.Coop.holdStart();
-    }
-    G.RunUI.showItemChoice(pl.item, id, take);
+    // fusiones). Si ya hay otra elección abierta, espera a que se cierre.
+    queueChoice(() => openItem(id));
+  }
+
+  function equipItem(got: string) {
+    if (got === pl.item) return;
+    pl.equip(got);
+    G.Spawner.say('¡Llevas ' + G.Items.BY[got].name + '!', 2.6, true);
+    G.Progress.event('item', { id: got });
+  }
+
+  /** Se mira al abrirla, no al cogerlo: lo que llevas puede haber cambiado mientras esperaba. */
+  function openItem(id: string) {
+    if (!pl.item) { equipItem(id); return; }
+    if (pl.item === id) { G.Spawner.say('Ya llevas ' + G.Items.BY[id].name, 2, true); return; }
+    beginChoice();
+    G.RunUI.showItemChoice(pl.item, id, got => {
+      try { equipItem(got); } finally { endChoice(); }
+    });
   }
 
   /** @param who  quien lo ha cogido (en cooperativo puede ser un compañero) */
@@ -440,6 +506,7 @@ export const Survivor = (() => {
   function update(dt) {
     const coop = G.Coop.active;
     if (flashT > 0) flashT -= dt;
+    choiceTick();
     // La Sentencia de Arceus: mientras dura la animación, todo lo demás se para.
     if (G.Judgment.cinematic) {
       G.Judgment.cineTick(dt);
@@ -617,7 +684,11 @@ export const Survivor = (() => {
     if (G.Input.tap('keye') || G.Input.tap('tab')) pl.cycle(1);
   }
 
-  function idle(dt) { G.FX.update(dt * 0.25); pl.anim.update(dt * 0.25); }
+  function idle(dt: number) {
+    if (flashT > 0) flashT -= dt;                   // el destello no puede quedarse si la partida está parada
+    choiceTick();
+    G.FX.update(dt * 0.25); pl.anim.update(dt * 0.25);
+  }
 
   function drawables() {
     const out = [];
