@@ -20,6 +20,8 @@ import { parseProfile, socialStore } from './social-store';
 
 const VALID_NAME = /^[A-Za-z0-9_ñÑáéíóúÁÉÍÓÚ]{3,16}$/;
 const UID = /^[1-9]\d{0,11}$/;
+/** Caracteres de ancho cero y marcas de dirección que se cuelan al copiar un apodo (no se ven, pero no coinciden). */
+const INVISIBLE = /[\u00AD\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF]/g;
 const MAX_FRIENDS = 200, MAX_OUT = 30, MAX_IN = 100;
 
 export function createSocial(db: Db, rt: Realtime): Module {
@@ -46,7 +48,8 @@ export function createSocial(db: Db, rt: Realtime): Module {
     if (!reqLimit('r' + me)) return fail(429, 'Demasiadas solicitudes seguidas. Espera un poco.');
     const b = await readBody(req, 512);
     if (b instanceof Response) return b;
-    const name = typeof b.name === 'string' ? b.name.trim() : '';
+    // El apodo se escribe o se pega: se normaliza (ñ y tildes compuestas, sin caracteres invisibles) antes de validar.
+    const name = typeof b.name === 'string' ? b.name.normalize('NFC').replace(INVISIBLE, '').trim() : '';
     if (!VALID_NAME.test(name)) return fail(400, 'Escribe el apodo exacto de tu amigo.');
     const other = db.userByKey(name.toLowerCase());
     if (!other) return fail(404, 'No hay ningún jugador con ese apodo.');

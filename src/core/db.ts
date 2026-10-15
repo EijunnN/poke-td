@@ -411,7 +411,8 @@ export const DB = (() => {
     let s = merge(cached && migrate(cached), remote && migrate(remote));
     if (!s) s = newSave(name);
     save = migrate(s, s.name);
-    key = uid; user = save.name; guest = false;
+    // El nombre que se ve es el de la cuenta del servidor (el de amigos y ranking), no el de la partida.
+    key = uid; user = name; guest = false;
     write(K_CLOUD + uid, save);
     // Sólo se sube si esta copia tiene algo que el servidor no (cuenta nueva,
     // progreso de este navegador sin subir...), y sin esperar a que acabe.

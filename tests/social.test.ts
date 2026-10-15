@@ -199,6 +199,23 @@ const advance = (ms: number) => E.advance(ms);
 // ====================================================================
 
 describe('amistades por REST', () => {
+  test('el apodo buscado se normaliza: ñ descompuesta y caracteres de ancho cero (#3)', async () => {
+    const a = account();
+    const name = 'Pe' + String.fromCharCode(0xF1) + 'a' + Math.random().toString(36).slice(2, 6);     // Peña...
+    E.srv.db.addUser(name, name.toLowerCase(), HASH);
+    const nfd = name.replace(String.fromCharCode(0xF1), 'n' + String.fromCharCode(0x303));            // la ñ como n + tilde
+    const zw = String.fromCharCode(0x200B), bom = String.fromCharCode(0xFEFF), shy = String.fromCharCode(0xAD);
+    for (const typed of [nfd, zw + name, name + zw, name.slice(0, 3) + zw + name.slice(3), bom + name, name.slice(0, 2) + shy + name.slice(2), ' ' + name + ' ']) {
+      const r = await api(a, 'POST', '/api/social/friends/request', { name: typed });
+      expect(r.status).toBe(200);                                  // se encuentra la cuenta de verdad
+      const other = E.srv.db.userByKey(name.toLowerCase())!;
+      expect((await api(a, 'DELETE', '/api/social/friends/' + other.id)).status).toBe(200);   // para repetir la solicitud con el siguiente
+    }
+    // lo que sigue sin ser un apodo (otras letras o símbolos) sigue rechazado
+    expect((await api(a, 'POST', '/api/social/friends/request', { name: 'Pe' + String.fromCharCode(0x4E2D) + 'a123' })).status).toBe(400);
+    expect((await api(a, 'POST', '/api/social/friends/request', { name: zw + zw })).status).toBe(400);
+  });
+
   test('a uno mismo, a inexistentes y con inyección', async () => {
     const a = account();
     expect((await api(a, 'POST', '/api/social/friends/request', { name: a.name })).status).toBe(400);
