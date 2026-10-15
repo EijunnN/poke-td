@@ -5,9 +5,11 @@ import {
   leadAngle, placementError, moveRange, towerCost, upgradeCost, sellValue, killReward, waveBonus,
   evolvesAt, START_MONEY, MAX_LEVEL, PATH_CLEAR, TOWER_GAP, ENDS_CLEAR,
   pathLengths, pathProgress, stepBack, pickTarget, TARGET_MODES, TARGET_NAME, type TargetMode,
-  ROLES, roleHit, SUPPORT, AURAS, AURA_KINDS, auraStrength, auraRadius, aurasAt, type AuraKind, type AuraTotals
+  ROLES, roleHit, SUPPORT, AURAS, AURA_KINDS, auraStrength, auraRadius, aurasAt, type AuraKind, type AuraTotals,
+  MAPS, mapById, randomMap, costFor, type TdMap
 } from './td-geom';
-import { START_LIVES, LAST_WAVE, waveAt, waveHp, waveCount, waveGap, bossHpMul, leakCost } from './td-waves';
+import { START_LIVES, LAST_WAVE, MAX_WAVE, WIN_COINS, waveAt, waveHp, waveCount, waveGap, bossHpMul, leakCost, defenseCoins } from './td-waves';
+import type { CoopConfig } from '../net/coop';
 /* ============ td.ts — modo Defensa (tower defense) ============
  * Los enemigos entran por un camino fijo y van hacia la base; cada uno que
  * llega te quita vidas. Tú sigues llevando a tu compañero (el héroe).
@@ -35,14 +37,37 @@ import { START_LIVES, LAST_WAVE, waveAt, waveHp, waveCount, waveGap, bossHpMul, 
  * enemigos son de la clase Walker: van al siguiente punto del camino en vez de
  * perseguir al jugador, y en ellos se aplican los poderes de cada tipo.
  *
+ * Hay tres mapas (td-geom.ts, MAPS). Tras la oleada 30 (la victoria) sigue el modo
+ * sin fin, hasta que caiga la base o abandones. Al acabar se cobran monedas de la
+ * cuenta (td-waves.ts, defenseCoins), cuentan las misiones y logros (evento tdEnd) y
+ * la marca sube al ranking de Defensa (modo 'd', o 'e' en grupo).
+ *
+ * Cooperativo (de 2 a 4, desde una sala; net/coop.ts lleva la red):
+ *   ANFITRIÓN  lo simula todo: oleadas, enemigos, torres, vidas y la cartera de cada uno.
+ *   CADA UNO   lleva a su héroe (sus golpes van al anfitrión, como en las hordas) y
+ *              manda lo que quiere hacer (comprar, mejorar, vender...): lo aplica el
+ *              anfitrión si se puede, y lo cuenta a todos.
+ * Las vidas son de todos; las monedas, de cada uno (por cada enemigo cobráis todos, y
+ * los enemigos tienen más vida cuantos más sois). Cada torre es de quien la compró:
+ * sólo él la mejora o la vende. Los invitados ven copias de las torres que repiten
+ * sus ataques sin hacer daño (G.Combat.ghostCast).
+ *
+ *   invitado -> anfitrión   ['tp', dex, x, y, shiny] plantar · ['tu', id] mejorar · ['ts', id] vender
+ *                           ['tm', id, modo] a quién ataca · ['te', id, dex] evolución elegida
+ *                           ['th'] mejorar al héroe · ['tw'] adelantar la oleada
+ *   anfitrión -> invitados  ['tt', id, dueño, dex, x, y, nivel, modo, shiny, base, gastado] una torre (nueva o cambiada)
+ *                           ['tr', id] torre vendida · ['tc', id, mov, nivel, ángulo, evolucionado] ataque de una torre
+ *                           ['tv', id, [dex...]] evolución por elegir (la ve su dueño)
+ *                           ['tg', vidas, oleada, fase, segundos, quedan, ×2, superadas, ganada, {uid: monedas}, escapados]
+ *                           ['tb', idEnemigo, 'boss'|'legend'] un jefe (más grande) · ['th', uid, nivel] héroe mejorado
+ *                           ['tx', x, y, texto, color] un número o aviso flotante
+ *
  * Todo lo del modo vive aquí, en td-geom.ts y en td-waves.ts: no cambia nada
- * del modo de hordas. Sin recompensas de cuenta, ranking ni cooperativo (aún).
+ * del modo de hordas.
  */
 export const TD = (() => {
-  /** Radio del claro sin obstáculos, en tiles: ahí cabe todo el camino. */
+  /** Radio del claro sin obstáculos, en tiles: ahí cabe todo el camino (los de td-geom.ts, MAPS). */
   const CLEAR = 24;
-  /** El camino, en tiles: de la entrada (oeste) a la base (este). */
-  const ROUTE: [number, number][] = [[-20, -8], [-8, -8], [-8, 6], [4, 6], [4, -6], [14, -6], [14, 8], [19, 8]];
   /** Segundos de descanso entre oleadas (se pueden adelantar con el botón). */
   const BREAK = 12;
   /** Antes de la primera oleada, más rato para plantar las primeras torres. */
@@ -59,22 +84,40 @@ export const TD = (() => {
   /** Cuántos Pokémon enseña la tienda a la vez (con más, se filtra por tipo). */
   const SHOP_MAX = 60;
 
-  /** Una torre: el Pokémon que ataca, lo gastado y a quién apunta. */
   /**
-   * Una torre: el Pokémon, lo gastado, a quién apunta, su ataque sin auras (`atk`)
-   * y las auras que recibe ahora (`buff`).
+   * Una torre: su id (el mismo en todos los ordenadores), de quién es, el Pokémon, lo
+   * gastado, a quién apunta, su ataque sin auras (`atk`) y las auras que recibe ahora (`buff`).
    */
-  interface Tower { p: any; dex: number; level: number; base: number; spent: number; mode: TargetMode; atk: number; buff: AuraTotals }
+  interface Tower {
+    id: number; owner: string; p: any; dex: number; shiny: boolean; level: number; base: number; spent: number;
+    mode: TargetMode; atk: number; buff: AuraTotals;
+  }
 
   let time = 0;
   let pl = null;                     // el héroe
   let heroLevel = 1;                 // mejoras del ataque del héroe compradas con monedas
   let towers: Tower[] = [];
+  let nextTowerId = 1;
   /** Favoritos (salen primero en la tienda). */
   let team: number[] = [];
   /** Todo lo que se puede comprar: tu colección y, si es corta, iniciales prestados. */
   let pool: { dex: number; lent: boolean }[] = [];
-  let money = START_MONEY;
+  /** Quién eres en la partida: 'me' en solitario, tu uid en grupo. */
+  let me = 'me';
+  /** Las monedas de cada jugador (en solitario, sólo las tuyas). Las lleva el anfitrión. */
+  let purse: Record<string, number> = {};
+  /** Mejoras del héroe de cada jugador (anfitrión: para cobrarlas). */
+  let heroLv: Record<string, number> = {};
+  /** La partida en grupo (o null en solitario): lo que mandó el anfitrión al empezar, con el mapa. */
+  let coop: (CoopConfig & { map?: string }) | null = null;
+  /** Anfitrión: cuánto falta para volver a mandar el estado de la partida a los invitados. */
+  let stateT = 0;
+  /** Invitado: el anfitrión no responde (cambió de pestaña o se le paró el juego): su nombre, o null. */
+  let hostAway: string | null = null;
+  /** Lo que el anfitrión cuenta de la oleada (en el invitado: los enemigos que quedan). */
+  let leftShown = 0;
+  /** El mapa de la partida. */
+  let map: TdMap = MAPS[0];
   let lives = START_LIVES, wave = 0, leaked = 0;
   /** 'break' = descanso antes de la oleada, 'wave' = saliendo y peleando. */
   let phase: 'break' | 'wave' = 'break';
@@ -86,8 +129,10 @@ export const TD = (() => {
   let won = false;
   /** Oleadas superadas (lo que cuenta para el ranking). */
   let cleared = 0;
-  /** La partida se ha tocado desde la consola (debugHpMul): no sube al ranking. */
+  /** La partida se ha tocado desde la consola (debugHpMul): no sube al ranking ni da premio. */
   let tampered = false;
+  /** Se ganó sin que llegara ningún enemigo a la base (logro "Muralla"). */
+  let flawless = false;
   /** ×1 o ×2: todo pasa el doble de deprisa. */
   let fast = false;
   /** Puntos del camino en unidades de mundo (los comparten todos los enemigos como destino). */
@@ -125,6 +170,8 @@ export const TD = (() => {
     textCd = 0;
 
     get chief() { return this.kind !== 'normal'; }
+    /** Sus estados para las copias del cooperativo (ver drawStatus). */
+    netBits = () => (this.frozenT > 0 ? 1 : 0) | (this.stunT > 0 ? 2 : 0) | (this.confuseT > 0 ? 4 : 0) | (this.curseT > 0 ? 8 : 0) | (this.slow > 0.2 ? 16 : 0);
 
     update(dt: number) {
       // Nunca cuenta como rezagado (en las hordas, los rezagados reaparecen junto al jugador).
@@ -189,42 +236,52 @@ export const TD = (() => {
       const bonus = Math.ceil(n * (fairy + pay));
       if (fairy) note('fairy');
       if (pay) note('bounty');
-      money += n + bonus;
+      // Cobráis todos (en grupo, cada uno en su cartera).
+      for (const u of Object.keys(purse)) purse[u] += n + bonus;
       if (this.chief) {
-        G.FX.dmgText(this.x, this.y - this.bodyH - 10, '+' + (n + bonus), '#ffd23f', true);
-        G.Spawner.say('¡' + this.name + ' derrotado!', 2.4, true);
+        floatText(this.x, this.y - this.bodyH - 10, '+' + (n + bonus), '#ffd23f');
+        announce('¡' + this.name + ' derrotado!', 2.4);
       }
     }
 
     draw(ctx: CanvasRenderingContext2D) {
       super.draw(ctx);
-      if (this.dead) return;
-      const cy = this.y - this.bodyH * 0.5, top = this.y - this.bodyH - 6;
-      ctx.save();
-      if (this.frozenT > 0) {
-        // Bloque de hielo encima.
-        ctx.globalAlpha = 0.45;
-        ctx.fillStyle = '#bff3ff'; ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.ellipse(this.x, cy, this.r * 1.3, this.bodyH * 0.65, 0, 0, 6.2832); ctx.fill(); ctx.stroke();
-      } else if (this.slow > 0.2) {
-        ctx.globalAlpha = 0.35; ctx.fillStyle = '#7fe0e0';
-        ctx.beginPath(); ctx.ellipse(this.x, this.y, this.r * 1.3, this.r * 0.5, 0, 0, 6.2832); ctx.fill();
-      }
-      if (this.stunT > 0) {
-        // Chispas amarillas dando vueltas sobre la cabeza.
-        ctx.globalAlpha = 0.9; ctx.fillStyle = '#ffe14d';
-        for (let i = 0; i < 3; i++) { const a = time * 8 + i * 2.1; ctx.fillRect(this.x + Math.cos(a) * 10 - 2, top + Math.sin(a) * 3 - 2, 4, 4); }
-      }
-      if (this.confuseT > 0) {
-        ctx.globalAlpha = 0.9; ctx.strokeStyle = '#ff8ac4'; ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.arc(this.x, top - 2, 5, time * 6, time * 6 + 4.5); ctx.stroke();
-      }
-      if (this.curseT > 0) {
-        ctx.globalAlpha = 0.3 + Math.sin(time * 5) * 0.08; ctx.fillStyle = '#7a6bc4';
-        ctx.beginPath(); ctx.ellipse(this.x, this.y, this.r * 1.5, this.r * 0.6, 0, 0, 6.2832); ctx.fill();
-      }
-      ctx.restore();
+      if (!this.dead) drawStatus(ctx, this, this.netBits());
     }
+  }
+
+  /**
+   * Lo que le pasa a un enemigo, encima de él: bloque de hielo (bit 1), chispas de
+   * parálisis (2), confusión (4), maldición (8) y frenado (16). Los bits son los de
+   * Walker.netBits: así se dibuja igual en las copias del cooperativo.
+   */
+  function drawStatus(ctx: CanvasRenderingContext2D, e: any, bits: number) {
+    if (!bits) return;
+    const cy = e.y - e.bodyH * 0.5, top = e.y - e.bodyH - 6;
+    ctx.save();
+    if (bits & 1) {
+      // Bloque de hielo encima.
+      ctx.globalAlpha = 0.45;
+      ctx.fillStyle = '#bff3ff'; ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.ellipse(e.x, cy, e.r * 1.3, e.bodyH * 0.65, 0, 0, 6.2832); ctx.fill(); ctx.stroke();
+    } else if (bits & 16) {
+      ctx.globalAlpha = 0.35; ctx.fillStyle = '#7fe0e0';
+      ctx.beginPath(); ctx.ellipse(e.x, e.y, e.r * 1.3, e.r * 0.5, 0, 0, 6.2832); ctx.fill();
+    }
+    if (bits & 2) {
+      // Chispas amarillas dando vueltas sobre la cabeza.
+      ctx.globalAlpha = 0.9; ctx.fillStyle = '#ffe14d';
+      for (let i = 0; i < 3; i++) { const a = time * 8 + i * 2.1; ctx.fillRect(e.x + Math.cos(a) * 10 - 2, top + Math.sin(a) * 3 - 2, 4, 4); }
+    }
+    if (bits & 4) {
+      ctx.globalAlpha = 0.9; ctx.strokeStyle = '#ff8ac4'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(e.x, top - 2, 5, time * 6, time * 6 + 4.5); ctx.stroke();
+    }
+    if (bits & 8) {
+      ctx.globalAlpha = 0.3 + Math.sin(time * 5) * 0.08; ctx.fillStyle = '#7a6bc4';
+      ctx.beginPath(); ctx.ellipse(e.x, e.y, e.r * 1.5, e.r * 0.6, 0, 0, 6.2832); ctx.fill();
+    }
+    ctx.restore();
   }
 
   /** Poderes de tipo que han salido (para las pruebas). */
@@ -244,7 +301,41 @@ export const TD = (() => {
   /** Ataques lanzados por cada torre (para las pruebas). */
   const shots = new WeakMap<object, number>();
 
-  const st = { get time() { return time; } };
+  /** Para el HUD del juego (ui/hud.ts): el reloj; sin el de arriba (la Defensa tiene su marcador). */
+  const st = { get time() { return time; }, noClock: true };
+
+  // ---------------- quién lleva la partida ----------------
+
+  /** ¿Simulas tú la partida? En solitario sí; en grupo, sólo el anfitrión. */
+  const hosting = () => !coop || G.Coop.isHost;
+  /** ¿Eres invitado en una partida en grupo? */
+  const guest = () => !!coop && !G.Coop.isHost;
+  /** Tus monedas. */
+  const cash = () => purse[me] || 0;
+  /** Texto de un jugador (su apodo) dentro de HTML. */
+  const esc = (v: string) => String(v).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
+  /** El nombre de un jugador de la partida. */
+  function nameOf(uid: string) {
+    if (uid === me) return 'Tú';
+    const m = coop && coop.members.find(x => x.uid === uid);
+    return m ? m.name : '?';
+  }
+  /** El color de un jugador (el de su etiqueta), o null en solitario. */
+  function colorOf(uid: string): string | null {
+    if (!coop) return null;
+    const i = coop.members.findIndex(m => m.uid === uid);
+    return i >= 0 ? G.Coop.COLORS[i] : null;
+  }
+  /** Un aviso grande para todos (en grupo, el anfitrión se lo manda a los invitados). */
+  function announce(text: string, secs = 2.4) {
+    G.Spawner.say(text, secs, true);
+    if (coop && G.Coop.isHost) G.Coop.broadcast(['say', text, secs]);
+  }
+  /** Un número o aviso flotante para todos. */
+  function floatText(x: number, y: number, text: string, col: string) {
+    G.FX.dmgText(x, y, text, col, true);
+    if (coop && G.Coop.isHost) G.Coop.broadcast(['tx', Math.round(x), Math.round(y), text, col]);
+  }
 
   // ---------------- tienda y favoritos ----------------
 
@@ -292,9 +383,24 @@ export const TD = (() => {
       <div class="row between"><h2>Defensa · tus favoritos</h2><span class="row" style="gap:6px"><button class="btn small ghost" data-a="guide">¿Cómo se juega?</button><button class="btn small ghost" data-a="back">Volver</button></span></div>
       <p class="sub">En la partida puedes comprar cualquier Pokémon de tu colección. Los favoritos (hasta ${TEAM_MAX}) salen primero en la tienda.</p>
       <div class="td-grid"></div>
+      <div class="row td-maps" style="margin-top:10px;gap:6px;flex-wrap:wrap;align-items:center"><b>Mapa:</b></div>
       <div class="row" style="margin-top:12px;gap:8px"><button class="btn gold grow" data-a="go">Empezar</button></div>
     </div>`;
     document.body.appendChild(el);
+    // El mapa: uno de los de td-geom.ts o al azar (se recuerda el último).
+    let mapPick = G.DB.save.tdMap === 'random' || MAPS.some(m => m.id === G.DB.save.tdMap) ? G.DB.save.tdMap : MAPS[0].id;
+    const maps = el.querySelector('.td-maps') as HTMLElement;
+    for (const [id, name] of [...MAPS.map(m => [m.id, m.name]), ['random', 'Al azar']]) {
+      const b = document.createElement('button');
+      b.className = 'btn small' + (id === mapPick ? ' gold' : '');
+      b.dataset.map = id;
+      b.textContent = name;
+      b.onclick = () => {
+        mapPick = id;
+        maps.querySelectorAll<HTMLElement>('[data-map]').forEach(x => x.classList.toggle('gold', x.dataset.map === id));
+      };
+      maps.appendChild(b);
+    }
     const grid = el.querySelector('.td-grid') as HTMLElement;
     const go = el.querySelector('[data-a=go]') as HTMLButtonElement;
     const paint = () => {
@@ -309,7 +415,7 @@ export const TD = (() => {
       const pw = powerOf(c.dex);
       b.title = pw ? pw.name + ': ' + pw.desc : '';
       b.appendChild(G.UI.spriteCanvas(c.dex, 64, 56, { scale: 1 }));
-      b.insertAdjacentHTML('beforeend', `<small>${mon.name}</small>${SUPPORT[c.dex] ? auraChip(SUPPORT[c.dex]) : typeChip(attackType(c.dex))}<small class="gold">${towerCost(mon.rarity)}</small>${c.lent ? '<small class="lent">préstamo</small>' : ''}`);
+      b.insertAdjacentHTML('beforeend', `<small>${mon.name}</small>${SUPPORT[c.dex] ? auraChip(SUPPORT[c.dex]) : typeChip(attackType(c.dex))}<small class="gold">${costOf(c.dex)}</small>${c.lent ? '<small class="lent">préstamo</small>' : ''}`);
       b.onclick = () => {
         if (chosen.includes(c.dex)) chosen = chosen.filter(d => d !== c.dex);
         else if (chosen.length < TEAM_MAX) chosen.push(c.dex);
@@ -323,17 +429,24 @@ export const TD = (() => {
     go.onclick = () => {
       el.remove();
       G.DB.save.tdTeam = chosen.slice();
+      G.DB.save.tdMap = mapPick;
       G.DB.commit();
-      G.Game.start('td', { team: chosen });
+      G.Game.start('td', { team: chosen, map: mapPick === 'random' ? randomMap(Math.random).id : mapPick });
     };
   }
 
   // ---------------- partida ----------------
 
-  function start(opts: { team?: number[] } | null = null) {
+  /**
+   * @param opts  team: favoritos · map: id del mapa (td-geom.ts, MAPS) · coop: la partida en
+   *              grupo que manda el anfitrión al empezar ({ seed, host, members, map })
+   */
+  function start(opts: { team?: number[]; map?: string; coop?: CoopConfig & { map?: string } } | null = null) {
     const save = G.DB.save;
     const mon = G.DEX_BY[save.partner];
     const perks = G.Upgrades.perks(G.DB.upgradesOf(mon.dex));
+    coop = opts && opts.coop ? opts.coop : null;
+    me = coop ? G.Net.uid : 'me';
 
     G.UI.hideAll();
     G.UI.chrome(false);
@@ -349,16 +462,21 @@ export const TD = (() => {
     G.Weather.reset();
     G.Path.clear();
     G.Hazards.clear();
-    G.World.reset(Math.floor(Math.random() * 1e6), CLEAR);
+    // En grupo, el mismo mundo para todos (la semilla del anfitrión).
+    G.World.reset(coop ? coop.seed : Math.floor(Math.random() * 1e6), CLEAR);
     G.World.setBiome(0, true);
 
     const TS = G.World.TS;
-    path = ROUTE.map(([tx, ty]) => ({ x: tx * TS, y: ty * TS, r: 0, level: 1 }));
+    map = mapById(coop ? coop.map : opts && opts.map);
+    path = map.route.map(([tx, ty]) => ({ x: tx * TS, y: ty * TS, r: 0, level: 1 }));
     lens = pathLengths(path);
     bound = 20 * TS;
-    time = 0; lives = START_LIVES; wave = 0; leaked = 0; downT = 0; won = false; fast = false; cleared = 0; tampered = false;
-    money = START_MONEY; heroLevel = 1; reach = 0; hpMul = 1; bossLeft = 0; toSpawn = 0;
-    towers = []; placing = null; selected = null; pendingEvo = null; powers = {};
+    time = 0; lives = START_LIVES; wave = 0; leaked = 0; downT = 0; won = false; flawless = false; fast = false; cleared = 0; tampered = false; hostAway = null;
+    heroLevel = 1; reach = 0; hpMul = 1; bossLeft = 0; toSpawn = 0; leftShown = 0; stateT = 0;
+    // Cada jugador empieza con lo mismo (en solitario, sólo tú).
+    purse = {}; heroLv = {};
+    for (const u of coop ? coop.members.map(m => m.uid) : [me]) { purse[u] = START_MONEY; heroLv[u] = 1; }
+    towers = []; nextTowerId = 1; placing = null; selected = null; pendingEvo = null; powers = {};
     pool = candidates();
     team = cleanTeam(opts && opts.team);
     if (!opts || !Array.isArray(opts.team)) { if (!team.length) team = cleanTeam(save.tdTeam); }
@@ -369,43 +487,87 @@ export const TD = (() => {
 
     pl = new G.Player(mon, perks, !!save.partnerShiny && G.DB.ownsShiny(mon.dex));
     pl.addMove(G.startMoveOf(mon.dex));
+    if (coop) {
+      G.Coop.begin(coop, pl, coopApi);
+      G.Social.setPlaying(true);
+    }
     G.Camera.x = pl.x; G.Camera.y = pl.y; G.Camera.shake = 0;
     G.Sprites.preload([mon.dex], 8000, pl.shiny);
     G.Audio.music(G.BIOME_MUSIC[0]);
 
     Run.state = 'playing';
-    G.Ranking.runStarted('d');
+    // Ranking: el servidor apunta cuándo empieza (en grupo, el anfitrión).
+    if (hosting()) G.Ranking.runStarted(coop ? 'e' : 'd');
     phase = 'break'; phaseT = FIRST_BREAK;
     buildUI();
-    G.Spawner.say('Compra torres en la tienda y plántalas junto al camino', 4, true);
+    G.Spawner.say(coop ? 'Defended juntos: cada uno compra sus torres con sus monedas' : 'Compra torres en la tienda y plántalas junto al camino', 4, true);
   }
 
+  /** Cómo ha ido la partida (lo que el anfitrión manda a todos al acabar). */
+  function summary(dead: boolean) {
+    return { dead, w: cleared, l: Math.max(0, lives), k: pl ? pl.kills : 0, s: Math.floor(time), won, flawless, wave, map: map.id };
+  }
+
+  /** Se acaba la partida (la base cae, se abandona o, en grupo, el anfitrión la termina). */
   function end(dead: boolean) {
     if (Run.state === 'over' || !pl) return;
-    Run.state = 'over';
-    hideUI();
-    G.Audio.music(null);
-    G.Audio.sfx(dead ? 'gameover' : won ? 'legend' : 'back');
-    // Ranking de Defensa: oleadas superadas y, a igualdad, vidas que quedaban.
-    if (!tampered && cleared > 0) {
-      G.Ranking.submitDefense({ waves: cleared, lives: Math.max(0, lives), secs: Math.floor(time), kills: pl.kills, dex: pl.dex, shiny: pl.shiny });
-    }
-    G.RunUI.showOver({
-      dead, time, level: pl.level, kills: pl.kills, bosses: 0, coins: 0, record: false, t1: 0, t10: 0, judge: null,
-      moves: pl.moves, caught: [],
-      breakdown: 'La Defensa todavía no da recompensas de cuenta'
-    }, () => { pl = null; towers = []; G.EnemyMgr.clear(); G.Flow.afterRun(); });
-    document.getElementById('over-title').textContent =
-      dead ? 'La base ha caído · oleada ' + wave : won ? '¡Victoria! · las ' + LAST_WAVE + ' oleadas' : 'Defensa terminada · oleada ' + wave;
+    const d = summary(dead);
+    // En grupo, el anfitrión la acaba para todos (Coop les manda el resumen y ellos llaman a finish).
+    if (coop && G.Coop.isHost) G.Coop.over(d);
+    finish(d);
   }
 
-  function everyone() { return [pl]; }
+  /** Resumen, premios de la cuenta y ranking. `d`: el de summary(), el tuyo o el del anfitrión. */
+  function finish(d: ReturnType<typeof summary>) {
+    if (Run.state === 'over' || !pl) return;
+    Run.state = 'over';
+    // (Si el anfitrión abandona, Coop ya se ha cerrado: quién era el anfitrión lo dice la partida.)
+    const group = !!coop, wasHost = !coop || coop.host === me, members = coop ? coop.members.slice() : [];
+    if (coop) {
+      if (G.Coop.active) G.Coop.end();
+      G.Social.setPlaying(false);
+    }
+    hideUI();
+    G.Audio.music(null);
+    G.Audio.sfx(d.dead && !d.won ? 'gameover' : d.won ? 'legend' : 'back');
+
+    // La cuenta: monedas, estadísticas, misiones y logros (en grupo, cada uno los suyos).
+    const save = G.DB.save;
+    const coins = tampered ? 0 : defenseCoins(d.w, d.k, d.won);
+    save.coins += coins;
+    save.stats.coinsEarned += coins;
+    save.stats.totalKills += d.k;
+    G.Progress.event('tdEnd', { waves: d.w, won: d.won, lives: d.l, group, perfect: d.won && d.flawless });
+    G.Progress.checkAch();
+    G.DB.commit(true);
+
+    // Ranking de Defensa: oleadas superadas y, a igualdad, vidas que quedaban (en grupo lo sube el anfitrión).
+    if (!tampered && d.w > 0) {
+      const mark = { waves: d.w, lives: d.l, secs: d.s, kills: d.k };
+      if (!group) G.Ranking.submitDefense(Object.assign(mark, { dex: pl.dex, shiny: pl.shiny }));
+      else if (wasHost) G.Ranking.submitDefenseGroup(Object.assign(mark, { members: members.map(m => ({ uid: m.uid, dex: m.dex, shiny: m.shiny })) }));
+    }
+
+    G.RunUI.showOver({
+      dead: d.dead, time: d.s, level: pl.level, kills: d.k, bosses: 0, coins, record: false, t1: 0, t10: 0, judge: null,
+      cells: [['Oleadas superadas', d.w], ['Vidas', d.l], ['Derrotados', d.k], ['Tiempo', G.U.mmss(d.s)]],
+      moves: pl.moves, caught: [],
+      breakdown: tampered ? 'Partida tocada desde la consola: sin premio'
+        : `oleadas ${d.w * 10} · derrotados ${Math.floor(d.k / 5)}${d.won ? ' · victoria ' + WIN_COINS : ''}`
+    }, () => { pl = null; towers = []; G.EnemyMgr.clear(); G.Flow.afterRun(); });
+    document.getElementById('over-title').textContent =
+      d.won ? (d.wave > LAST_WAVE ? '¡Victoria! · y en el sin fin, hasta la oleada ' + d.wave : '¡Victoria! · las ' + LAST_WAVE + ' oleadas')
+      : d.dead ? 'La base ha caído · oleada ' + d.wave : 'Defensa terminada · oleada ' + d.wave;
+  }
+
+  function everyone() { return coop && G.Coop.active ? G.Coop.players() : [pl]; }
 
   // ---------------- oleadas ----------------
+  // Sólo las lleva quien simula la partida (en grupo, el anfitrión).
 
   /** Carga antes de tiempo los sprites de la oleada n (si no, salen tarde). */
   function preloadWave(n: number) {
-    if (n > LAST_WAVE) return;
+    if (n > MAX_WAVE) return;
     const w = waveAt(n);
     G.Sprites.preload(w.boss ? [...w.pool, w.boss] : w.pool, 4000);
   }
@@ -417,16 +579,21 @@ export const TD = (() => {
     bossLeft = w.boss ? 1 : 0;
     phase = 'wave';
     G.Audio.sfx('biome');
-    G.Spawner.say('Oleada ' + wave + ' · ' + w.theme, 3, true);
+    announce('Oleada ' + wave + ' · ' + w.theme, 3);
     preloadWave(wave + 1);
+    sendState();
   }
 
-  /** "Siguiente oleada" antes de tiempo: más monedas cuanto antes. */
+  /** "Siguiente oleada" antes de tiempo: más monedas cuanto antes (para todos). */
   function callWave() {
     if (phase !== 'break' || Run.state !== 'playing') return;
-    if (wave > 0) earn(Math.max(0, Math.floor(phaseT)) * 2, pl.x, pl.y - 40);
+    if (guest()) { G.Coop.toHost(['tw']); return; }
+    if (wave > 0) payAll(Math.max(0, Math.floor(phaseT)) * 2, pl.x, pl.y - 40);
     startWave();
   }
+
+  /** Vida de los enemigos en grupo: cuantos más sois (y más torres hay), más aguantan. */
+  const groupHp = () => (coop && G.Coop.active ? 1 + 0.85 * (G.Coop.players().length - 1) : 1);
 
   /** Saca un enemigo de la oleada (los normales primero; el jefe, al final). */
   function spawnEnemy(chief: boolean) {
@@ -436,26 +603,32 @@ export const TD = (() => {
     const kind = !chief ? 'normal' : w.legend ? 'legend' : 'boss';
     // Vida y velocidad: la curva de la oleada, ajustadas un poco con los stats del Pokémon.
     const hpK = G.U.clamp(mon.hp / 95, 0.85, 1.25), spdK = G.U.clamp(mon.spd / 105, 0.85, 1.2);
-    let hp = waveHp(wave) * hpK * hpMul, spd = WALK * (1 + wave * 0.025) * spdK;
+    let hp = waveHp(wave) * hpK * hpMul * groupHp(), spd = WALK * (1 + wave * 0.025) * spdK;
     if (chief) { hp *= bossHpMul(kind === 'legend'); spd *= 0.7; }
     const def = { dex, name: mon.name, behavior: 'chase' as const, hp: Math.round(hp), spd, dmg: 10, xp: 3 + Math.floor(wave / 2) };
     const e = new Walker(def, path[0].x + G.U.rand(-10, 10), path[0].y + G.U.rand(-10, 10), { hp: 1, spd: 1, dmg: 1 });
     e.kind = kind;
     e.wave = wave;
-    if (chief) {
-      // Más grande, para que se vea que es el jefe.
-      const s = kind === 'legend' ? 1.9 : 1.55;
-      e.scale = s;
-      e.anim = new G.Sprites.Animator(dex, s);
-      e.r = G.Sprites.bodyRadius(dex, s);
-      e.bodyH = G.Sprites.bodyHeight(dex, s);
-      G.Spawner.say('¡Llega ' + mon.name + '!', 2.6, true);
-      G.Audio.sfx('legend');
-    }
     G.EnemyMgr.add(e);
+    if (chief) {
+      bigger(e, kind);
+      announce('¡Llega ' + mon.name + '!', 2.6);
+      G.Audio.sfx('legend');
+      if (coop) G.Coop.broadcast(['tb', e.id, kind]);
+    }
   }
 
-  /** Avanza a cada enemigo por el camino; el que llega a la base te quita vidas. */
+  /** Un jefe o legendario se ve más grande (también su copia en los invitados). */
+  function bigger(e: any, kind: string) {
+    const s = kind === 'legend' ? 1.9 : 1.55;
+    e.scale = s;
+    e.anim = new G.Sprites.Animator(e.dex, s);
+    e.r = G.Sprites.bodyRadius(e.dex, s);
+    e.bodyH = G.Sprites.bodyHeight(e.dex, s);
+    e.tdKind = kind;
+  }
+
+  /** Avanza a cada enemigo por el camino; el que llega a la base os quita vidas. */
   function march() {
     const list = G.EnemyMgr.all();
     for (let i = list.length - 1; i >= 0; i--) {
@@ -467,11 +640,13 @@ export const TD = (() => {
       if (e.wp + 1 < path.length) { e.wp++; continue; }
       // Ha llegado a la base: fuera, sin botín ni animación.
       list.splice(i, 1);
+      if (coop && G.Coop.isHost) G.Coop.enemyGone(e, false);
       lives -= leakCost(e.kind === 'boss', e.kind === 'legend'); leaked++;
       G.FX.burst(e.x, e.y - 10, '#ff5f6d', 14, 160);
       G.Camera.kick(0.5);
       G.Audio.sfx('hurt');
-      if (e.chief) G.Spawner.say(e.name + ' ha llegado a la base', 2.4, true);
+      if (e.chief) announce(e.name + ' ha llegado a la base', 2.4);
+      sendState();
     }
   }
 
@@ -484,45 +659,65 @@ export const TD = (() => {
           else { spawnEnemy(true); bossLeft = 0; }
         }
       } else if (!G.EnemyMgr.all().some(e => !e.dead)) {
-        earn(waveBonus(wave), pl.x, pl.y - 40);
+        payAll(waveBonus(wave), pl.x, pl.y - 40);
         cleared = wave;
-        if (wave >= LAST_WAVE) { won = true; G.Spawner.say('¡Has defendido la base!', 3, true); end(false); return; }
-        G.Spawner.say('¡Oleada ' + wave + ' superada!', 2.2, true);
+        if (wave === LAST_WAVE) {
+          // La victoria: cuenta como ganada, y sigue el sin fin hasta que caiga la base o lo dejéis.
+          won = true; flawless = leaked === 0;
+          G.Audio.sfx('legend');
+          announce('¡Habéis defendido la base! Ahora, sin fin: ¿hasta dónde llegáis?', 4);
+        } else announce('¡Oleada ' + wave + ' superada!', 2.2);
+        if (wave >= MAX_WAVE) { end(false); return; }
         phase = 'break'; phaseT = BREAK;
+        sendState();
       }
     } else if ((phaseT -= dt) <= 0) startWave();
   }
 
   // ---------------- monedas ----------------
 
-  function earn(n: number, x: number, y: number) {
+  /** Cobráis todos (por oleada, por adelantarla): cada uno en su cartera. */
+  function payAll(n: number, x: number, y: number) {
     if (!(n > 0)) return;
-    money += n;
+    for (const u of Object.keys(purse)) purse[u] += n;
     G.FX.dmgText(x, y, '+' + n, '#ffd23f');
   }
-  function pay(n: number) {
-    if (!(n >= 0) || money < n) return false;
-    money -= n;
+  /** Cobra `uid` (lo que devuelve una torre vendida). */
+  function earn(uid: string, n: number, x: number, y: number) {
+    if (!(n > 0)) return;
+    purse[uid] = (purse[uid] || 0) + n;
+    if (uid === me) G.FX.dmgText(x, y, '+' + n, '#ffd23f');
+  }
+  /** Paga `uid` si le llega. */
+  function pay(uid: string, n: number) {
+    if (!(n >= 0) || (purse[uid] || 0) < n) return false;
+    purse[uid] -= n;
     return true;
   }
 
   // ---------------- torres ----------------
+  // Lo que pulsas pasa por aquí: en solitario (y si eres el anfitrión) se aplica
+  // en el momento; si eres invitado, se le pide al anfitrión, que lo comprueba,
+  // lo aplica y os lo cuenta a todos (ver la cabecera y "cooperativo", más abajo).
 
   /** Un Pokémon como torre (un G.Player que no lee el mando: sólo apunta y ataca). */
-  function makeTower(dex: number) {
-    const t = new G.Player(G.DEX_BY[dex], {}, G.DB.ownsShiny(dex));
+  function makeTower(dex: number, shiny = G.DB.ownsShiny(dex)) {
+    const t = new G.Player(G.DEX_BY[dex], {}, shiny);
     t.frozen = true;
     t.addMove(G.startMoveOf(dex));
     return t;
   }
-  const costOf = (dex: number) => towerCost(G.DEX_BY[dex].rarity);
+  const costOf = (dex: number) => costFor(dex, G.DEX_BY[dex].rarity);
   const inPool = (dex: number) => pool.some(c => c.dex === dex);
+  const towerById = (id: number) => towers.find(t => t.id === id) || null;
+  /** ¿Es tuya? (sólo su dueño la mejora, la vende o cambia a quién ataca) */
+  const mine = (t: Tower) => t.owner === me;
 
   /** Empieza a colocar una torre de la tienda (si te llega el dinero): sale una vista previa con su alcance. */
   function startPlacing(dex: number) {
     if (!inPool(dex) || Run.state !== 'playing') return;
     if (placing && placing.dex === dex) { cancelPlacing(); return; }      // pulsarla otra vez la suelta
-    if (money < costOf(dex)) { G.Spawner.say('Te faltan monedas', 1.4, true); G.Audio.sfx('back'); return; }
+    if (cash() < costOf(dex)) { G.Spawner.say('Te faltan monedas', 1.4, true); G.Audio.sfx('back'); return; }
     const preview = makeTower(dex);
     placing = { dex, preview, range: SUPPORT[dex] ? auraRadius(1) : rangeOf(preview) };
     selected = null; pendingEvo = null;
@@ -541,36 +736,67 @@ export const TD = (() => {
     if (!placing || Run.state !== 'playing') return;
     const err = whyNot(x, y);
     if (err) { G.Spawner.say(err, 1.6, true); G.Audio.sfx('back'); return; }
-    const dex = placing.dex, cost = costOf(dex);
-    if (!pay(cost)) { G.Spawner.say('Te faltan monedas', 1.4, true); cancelPlacing(); return; }
+    const dex = placing.dex, shiny = !!placing.preview.shiny;
+    if (cash() < costOf(dex)) { G.Spawner.say('Te faltan monedas', 1.4, true); cancelPlacing(); return; }
     placing = null;
-    const p = makeTower(dex);
+    if (guest()) {
+      // El anfitrión la planta (si aún se puede) y os la manda a todos.
+      G.Coop.toHost(['tp', dex, Math.round(x), Math.round(y), shiny ? 1 : 0]);
+      wantSelect = { x, y };
+      G.Audio.sfx('confirm');
+      refreshUI();
+      return;
+    }
+    const t = plant(me, dex, x, y, shiny);
+    if (t) selected = t;              // queda seleccionada: se ve su alcance y cómo mejorarla
+    refreshUI();
+  }
+  /** Invitado: la torre que has pedido plantar; al llegar, se selecciona. */
+  let wantSelect: { x: number; y: number } | null = null;
+
+  /** Planta una torre de `owner` si el sitio vale y le llega el dinero. → la torre, o null */
+  function plant(owner: string, dex: number, x: number, y: number, shiny: boolean): Tower | null {
+    if (!G.DEX_BY[dex] || !G.startMoveOf(dex) || !Number.isFinite(x) || !Number.isFinite(y)) return null;
+    if (whyNot(x, y)) return null;
+    const cost = costOf(dex);
+    if (!pay(owner, cost)) { if (owner === me) G.Spawner.say('Te faltan monedas', 1.4, true); return null; }
+    const p = makeTower(dex, shiny);
     p.x = x; p.y = y;
-    const t: Tower = { p, dex, level: 1, base: cost, spent: cost, mode: 'first', atk: p.atkMul, buff: noBuff() };
+    const t: Tower = { id: nextTowerId++, owner, p, dex, shiny, level: 1, base: cost, spent: cost, mode: 'first', atk: p.atkMul, buff: noBuff() };
     towers.push(t);
     G.FX.ring(x, y, 8, 110, G.U.TYPE_COLOR[G.DEX_BY[dex].types[0]], 0.6, 5);
-    G.Audio.sfx('confirm');
-    selected = t;                 // queda seleccionada: se ve su alcance y cómo mejorarla
-    refreshUI();
+    if (owner === me) G.Audio.sfx('confirm');
+    sendTower(t);
+    return t;
   }
 
   /** Sube un nivel la torre: más ataque y, en los niveles de evolución, evoluciona. */
   function upgrade(t: Tower) {
+    if (guest()) { G.Coop.toHost(['tu', t.id]); return; }
     const c = upgradeCost(t.base, t.level);
-    if (c == null || pendingEvo || !pay(c)) return;
+    if (c == null || evoOf(t) || !pay(t.owner, c)) return;
     t.spent += c;
     t.level++;
     levelMove(t.p);
     t.atk *= 1.12;
     G.FX.ring(t.p.x, t.p.y, 8, 90, G.U.TYPE_COLOR[G.DEX_BY[t.dex].types[0]], 0.6, 5);
-    G.Audio.sfx('levelup');
+    if (mine(t)) G.Audio.sfx('levelup');
     if (evolvesAt(t.level)) {
       const options = evolutionsOf(t.dex);
       if (options.length === 1) evolve(t, options[0]);
-      else if (options.length > 1) pendingEvo = { tower: t, options };
+      else if (options.length > 1) {
+        // Elige su dueño: tú aquí; un invitado en su pantalla (y te manda la elegida).
+        evoWait.set(t.id, options);
+        if (mine(t)) pendingEvo = { tower: t, options };
+        else G.Coop.broadcast(['tv', t.id, options]);
+      }
     }
+    sendTower(t);
     refreshUI();
   }
+  /** Anfitrión: evoluciones por elegir de cada torre (id -> opciones). */
+  const evoWait = new Map<number, number[]>();
+  const evoOf = (t: Tower) => evoWait.get(t.id) || null;
 
   /** Sube un nivel el movimiento activo (hasta el 5) y un poco el ataque. */
   function levelMove(p) {
@@ -585,49 +811,80 @@ export const TD = (() => {
     return ((E && E[dex]) || []).filter(d => G.DEX_BY[d]);
   }
 
+  /** Eliges en qué evoluciona una torre tuya. */
+  function chooseEvo(t: Tower, to: number) {
+    pendingEvo = null;
+    if (guest()) { G.Coop.toHost(['te', t.id, to]); refreshUI(); return; }
+    const opts = evoOf(t);
+    if (opts && opts.includes(to)) evolve(t, to);
+  }
+
   /** La torre pasa a ser `to`, con su nivel, su posición y lo gastado. */
   function evolve(t: Tower, to: number) {
     const from = G.DEX_BY[t.dex].name;
     const old = t.p;
-    const p = makeTower(to);
+    // El shiny de la evolución: el tuyo, si lo tienes; el de un compañero, si su torre ya lo era.
+    const p = makeTower(to, mine(t) ? G.DB.ownsShiny(to) : t.shiny);
     p.x = old.x; p.y = old.y;
     p.atkMul = old.atkMul;
     for (let l = 1; l < t.level; l++) { const m = p.activeMove(); if (m && m.lvl < 5) G.Moves.levelUp(m); }
     G.Projectiles.clearOrbs(old);
-    t.p = p; t.dex = to;
-    pendingEvo = null;
+    t.p = p; t.dex = to; t.shiny = !!p.shiny;
+    evoWait.delete(t.id);
+    if (pendingEvo && pendingEvo.tower === t) pendingEvo = null;
     G.Sprites.preload([to], 4000, p.shiny);
+    evolveFx(p);
+    announce('¡' + from + ' ha evolucionado a ' + G.DEX_BY[to].name + '!', 2.8);
+    sendTower(t);
+    refreshUI();
+  }
+  function evolveFx(p) {
     G.FX.ring(p.x, p.y, 10, 140, '#ffffff', 0.8, 6);
     G.FX.burst(p.x, p.y - 20, '#ffffff', 30, 200);
     G.Audio.sfx('legend');
-    G.Spawner.say('¡' + from + ' ha evolucionado a ' + G.DEX_BY[to].name + '!', 2.8, true);
-    refreshUI();
   }
 
   function sell(t: Tower) {
+    if (guest()) { G.Coop.toHost(['ts', t.id]); return; }
     const i = towers.indexOf(t);
-    if (i < 0 || (pendingEvo && pendingEvo.tower === t)) return;
+    if (i < 0 || evoOf(t)) return;
     towers.splice(i, 1);
-    earn(sellValue(t.spent), t.p.x, t.p.y - 30);
+    earn(t.owner, sellValue(t.spent), t.p.x, t.p.y - 30);
     G.Projectiles.clearOrbs(t.p);
     if (selected === t) selected = null;
-    G.Audio.sfx('coin');
+    if (mine(t)) G.Audio.sfx('coin');
+    if (coop) G.Coop.broadcast(['tr', t.id]);
     refreshUI();
   }
 
   function cycleMode(t: Tower) {
-    t.mode = TARGET_MODES[(TARGET_MODES.indexOf(t.mode) + 1) % TARGET_MODES.length];
+    const next = TARGET_MODES[(TARGET_MODES.indexOf(t.mode) + 1) % TARGET_MODES.length];
     G.Audio.sfx('confirm');
+    if (guest()) { G.Coop.toHost(['tm', t.id, next]); return; }
+    t.mode = next;
+    sendTower(t);
     refreshUI();
   }
 
   /** Mejora del ataque del héroe con monedas (su movimiento activo sube de nivel). */
   const HERO_BASE = 100;
   function upgradeHero() {
-    const c = upgradeCost(HERO_BASE, heroLevel);
-    if (c == null || !pay(c)) return;
-    heroLevel++;
-    levelMove(pl);
+    if (guest()) { G.Coop.toHost(['th']); return; }
+    heroUp(me);
+  }
+  /** Anfitrión: el héroe de `uid` sube un nivel si le llega el dinero. */
+  function heroUp(uid: string) {
+    const lv = heroLv[uid] || 1;
+    const c = upgradeCost(HERO_BASE, lv);
+    if (c == null || !pay(uid, c)) return;
+    heroLv[uid] = lv + 1;
+    if (uid === me) heroGot(lv + 1);
+    else G.Coop.broadcast(['th', uid, lv + 1]);
+    refreshUI();
+  }
+  /** Tu héroe llega al nivel de ataque `lv`. */
+  function heroGot(lv: number) {
+    while (heroLevel < Math.min(lv, MAX_LEVEL)) { heroLevel++; levelMove(pl); }
     G.FX.ring(pl.x, pl.y, 8, 90, '#ffd23f', 0.6, 5);
     G.Audio.sfx('levelup');
     refreshUI();
@@ -779,12 +1036,20 @@ export const TD = (() => {
 
   // ---------------- recogida ----------------
 
+  /** @param who  quien lo ha cogido (en grupo puede ser un compañero) */
   function onCollect(p, who = pl) {
-    if (p.kind === 'xp' || p.kind === 'xpBig') { G.Audio.sfx('xp'); pl.gainXp(p.value); return; }
-    if (p.kind === 'coin') { G.Audio.sfx('coin'); earn(p.value, who.x, who.y - who.bodyH - 6); return; }
+    const own = who === pl;
+    // Invitado: son copias de los objetos del anfitrión; el efecto lo decide él.
+    if (guest()) { if (own) G.Audio.sfx(p.kind === 'coin' ? 'coin' : p.kind === 'heal' ? 'heal' : 'xp'); return; }
+    if (coop && G.Coop.active) G.Coop.collected(p, who);
+    if (p.kind === 'xp' || p.kind === 'xpBig') { if (own) { G.Audio.sfx('xp'); pl.gainXp(p.value); } return; }
+    if (p.kind === 'coin') {
+      if (own) G.Audio.sfx('coin');
+      earn(own ? me : who.uid, p.value, who.x, who.y - who.bodyH - 6);
+      return;
+    }
     if (p.kind === 'heal') {
-      G.Audio.sfx('heal');
-      pl.heal(pl.maxHp * 0.3);
+      if (own) { G.Audio.sfx('heal'); pl.heal(pl.maxHp * 0.3); }
       G.FX.ring(who.x, who.y, 6, 60, '#5fe08a', 0.4, 3);
     }
   }
@@ -793,16 +1058,17 @@ export const TD = (() => {
 
   let shownMoney = -1;
   function update(dt: number) {
-    // ×2: dos pasos por fotograma.
-    const n = fast ? 2 : 1;
-    for (let i = 0; i < n && Run.state === 'playing'; i++) step(dt);
-    if (money !== shownMoney) refreshUI();
+    if (guest()) { if (Run.state === 'playing') stepGuest(dt); }
+    else {
+      // ×2: dos pasos por fotograma (en grupo lo decide el anfitrión).
+      const n = fast ? 2 : 1;
+      for (let i = 0; i < n && Run.state === 'playing'; i++) step(dt);
+    }
+    if (cash() !== shownMoney) refreshUI();
   }
 
-  function step(dt: number) {
-    time += dt;
-    for (const p of path) p.level = pl.level;
-
+  /** Tu héroe: se levanta solo al caer y no sale del claro. Y los compañeros (copias). */
+  function heroStep(dt: number) {
     // Héroe caído: se levanta solo al rato (la base aguanta mientras con las torres).
     if (pl.dead) {
       downT += dt;
@@ -812,13 +1078,21 @@ export const TD = (() => {
     // El mapa es el claro: el héroe no se va más allá.
     const far = Math.hypot(pl.x, pl.y);
     if (far > bound) { pl.x *= bound / far; pl.y *= bound / far; }
+    if (coop && G.Coop.active) for (const p of G.Coop.puppets()) { p.netUpdate(dt); G.Combat.ghostOrbit(p, dt, time); }
     G.Camera.follow(pl.x, pl.y, dt);
     G.World.update(dt, G.Camera);
+  }
+
+  /** Un paso de la partida entera (en solitario, o el anfitrión). */
+  function step(dt: number) {
+    time += dt;
+    for (const p of path) p.level = pl.level;
+    heroStep(dt);
 
     tickPhase(dt);
     if (Run.state !== 'playing') return;
     G.Spawner.tickBanner(dt);
-    G.EnemyMgr.update(dt, [pl]);
+    G.EnemyMgr.update(dt, everyone());
     G.EnemyMgr.rebuildGrid();
     march();
     trackEnemies(dt);
@@ -840,20 +1114,204 @@ export const TD = (() => {
       const m = p.activeMove(), was = m && m.castAt;
       // Sin nadie a su alcance no ataca (las de área se lanzaban solas). Las órbitas sí: giran siempre.
       if (tg || (m && m.kind === 'orbit')) G.Combat.tick(dt, p, time);
-      if (m && m.castAt !== was) shots.set(p, (shots.get(p) || 0) + 1);
+      if (m && m.castAt !== was) {
+        shots.set(p, (shots.get(p) || 0) + 1);
+        // Los invitados lo repiten sin daño.
+        if (coop) G.Coop.broadcast(['tc', t.id, m.id, m.lvl, Math.round(p.aim * 100) / 100, m.evolved ? 1 : 0]);
+      }
     }
     critShots();
+    G.Projectiles.update(dt, pl, G.EnemyMgr.all());
+    G.Combat.resolve(dt, pl, time);
+    G.Combat.updateFields(dt);
+    G.Pickups.update(dt, everyone(), onCollect);
+    G.Hazards.update(dt);
+    G.FX.update(dt);
+
+    if (coop && (stateT -= dt) <= 0) sendState();
+    if (lives <= 0) end(true);
+  }
+
+  /**
+   * Un paso en el invitado: tu héroe (sus golpes van al anfitrión), las copias de los
+   * enemigos y de las torres (sus ataques llegan como 'tc'), y la cuenta atrás del descanso
+   * (el anfitrión la corrige con cada 'tg').
+   */
+  function stepGuest(dt: number) {
+    time += dt;
+    heroStep(dt);
+    G.Spawner.tickBanner(dt);
+    G.EnemyMgr.update(dt, everyone());
+    G.EnemyMgr.rebuildGrid();
+    trackEnemies(dt);
+    if (placing && !ghostByPointer) { ghost.x = pl.x; ghost.y = pl.y; }
+    aimAhead(pl);
+    G.Combat.tick(dt, pl, time);
+    applyAuras();
+    for (const t of towers) {
+      t.p.update(dt);
+      const m = t.p.activeMove();
+      if (m && m.kind === 'orbit') G.Combat.ghostOrbit(t.p, dt, time);
+    }
     G.Projectiles.update(dt, pl, G.EnemyMgr.all());
     G.Combat.resolve(dt, pl, time);
     G.Combat.updateFields(dt);
     G.Pickups.update(dt, [pl], onCollect);
     G.Hazards.update(dt);
     G.FX.update(dt);
-
-    if (lives <= 0) end(true);
+    if (phase === 'break') phaseT = Math.max(0, phaseT - dt);
   }
 
   function idle(dt: number) { G.FX.update(dt * 0.25); pl.anim.update(dt * 0.25); }
+
+  // ---------------- cooperativo ----------------
+  // Ver la cabecera: qué manda cada uno y los mensajes.
+
+  /** Anfitrión: una torre para los invitados (nueva o cambiada). */
+  const towerEv = (t: Tower) => ['tt', t.id, t.owner, t.dex, Math.round(t.p.x), Math.round(t.p.y), t.level, t.mode, t.shiny ? 1 : 0, t.base, t.spent];
+  function sendTower(t: Tower) { if (coop && G.Coop.isHost) G.Coop.broadcast(towerEv(t)); }
+  /** Anfitrión: vidas, oleada, cuenta atrás, monedas de cada uno... */
+  const stateEv = () => ['tg', lives, wave, phase === 'wave' ? 1 : 0, Math.round(phaseT * 10) / 10,
+                         toSpawn + bossLeft + G.EnemyMgr.all().filter(e => !e.dead).length,
+                         fast ? 1 : 0, cleared, won ? 1 : 0, { ...purse }, leaked, pl.kills];
+  function sendState() {
+    if (!coop || !G.Coop.isHost) return;
+    stateT = 0.25;
+    G.Coop.broadcast(stateEv());
+  }
+
+  /** Anfitrión: lo que pide un invitado. Se comprueba aquí (que sea suya, que le llegue...). */
+  function onGuestEvent(from: string, ev: any[]) {
+    if (Run.state !== 'playing' || !(from in purse)) return;
+    const t = typeof ev[1] === 'number' ? towerById(ev[1]) : null;
+    const his = !!t && t.owner === from;
+    switch (ev[0]) {
+      case 'tp': {
+        const x = +ev[2], y = +ev[3];
+        const why = Number.isFinite(x) && Number.isFinite(y) ? whyNot(x, y) : 'Ahí no';
+        if (why) { G.Coop.broadcast(['tn', from, why]); break; }
+        if (!plant(from, ev[1] | 0, x, y, !!ev[4])) G.Coop.broadcast(['tn', from, 'Te faltan monedas']);
+        break;
+      }
+      case 'tu': if (his) upgrade(t!); break;
+      case 'ts': if (his) sell(t!); break;
+      case 'tm': if (his && TARGET_MODES.includes(ev[2])) { t!.mode = ev[2]; sendTower(t!); refreshUI(); } break;
+      case 'te': if (his) { const o = evoOf(t!); if (o && o.includes(ev[2])) evolve(t!, ev[2]); } break;
+      case 'th': heroUp(from); break;
+      case 'tw': callWave(); break;
+    }
+  }
+
+  /** Invitado: lo que cuenta el anfitrión. */
+  function onHostEvent(ev: any[]) {
+    switch (ev[0]) {
+      case 'tt': upsertTower(ev); break;
+      case 'tr': dropTower(ev[1]); break;
+      case 'tz': for (const t of towers.slice()) dropTower(t.id); break;
+      case 'tc': {
+        const t = towerById(ev[1]);
+        if (t) { G.Combat.ghostCast(t.p, ev[2], ev[3], ev[4], ev[5]); shots.set(t.p, (shots.get(t.p) || 0) + 1); }
+        break;
+      }
+      case 'tv': {
+        const t = towerById(ev[1]);
+        if (t && mine(t) && Array.isArray(ev[2])) { pendingEvo = { tower: t, options: ev[2] }; selected = null; refreshUI(); }
+        break;
+      }
+      case 'tg': {
+        const was = wave;
+        lives = ev[1]; wave = ev[2]; phase = ev[3] ? 'wave' : 'break'; phaseT = ev[4]; leftShown = ev[5];
+        fast = !!ev[6]; cleared = ev[7]; won = !!ev[8]; purse = ev[9] || {}; leaked = ev[10]; pl.kills = ev[11] || 0;
+        if (wave !== was) preloadWave(wave + 1);
+        break;
+      }
+      case 'tb': { const e = G.EnemyMgr.get(ev[1]); if (e) bigger(e, ev[2]); break; }
+      case 'th': if (ev[1] === me) heroGot(ev[2]); break;
+      case 'tn': if (ev[1] === me) { G.Spawner.say(ev[2], 1.6, true); G.Audio.sfx('back'); wantSelect = null; } break;
+      case 'tx': G.FX.dmgText(ev[1], ev[2], ev[3], ev[4], true); break;
+    }
+  }
+
+  /** Invitado: una torre nueva o que ha cambiado (nivel, evolución, dueño, modo). */
+  function upsertTower(a: any[]) {
+    const [, id, owner, dex, x, y, level, mode, shiny, base, spent] = a;
+    if (!G.DEX_BY[dex]) return;
+    let t = towerById(id);
+    if (!t) {
+      const p = makeTower(dex, !!shiny);
+      p.x = x; p.y = y;
+      t = { id, owner, p, dex, shiny: !!shiny, level: 1, base, spent, mode, atk: p.atkMul, buff: noBuff() };
+      towers.push(t);
+      G.Sprites.preload([dex], 4000, p.shiny);
+      G.FX.ring(x, y, 8, 110, G.U.TYPE_COLOR[G.DEX_BY[dex].types[0]], 0.6, 5);
+      // La que acabas de pedir: queda seleccionada, como en solitario.
+      if (owner === me && wantSelect && G.U.dist2(x, y, wantSelect.x, wantSelect.y) < 4) { selected = t; wantSelect = null; }
+    } else if (t.dex !== dex) {
+      // Ha evolucionado.
+      const p = makeTower(dex, !!shiny);
+      p.x = t.p.x; p.y = t.p.y;
+      G.Projectiles.clearOrbs(t.p);
+      t.p = p; t.dex = dex; t.level = 1; t.atk = p.atkMul;
+      G.Sprites.preload([dex], 4000, p.shiny);
+      evolveFx(p);
+      if (pendingEvo && pendingEvo.tower === t) pendingEvo = null;
+    } else if (level > t.level) G.FX.ring(t.p.x, t.p.y, 8, 90, G.U.TYPE_COLOR[G.DEX_BY[dex].types[0]], 0.6, 5);
+    while (t.level < level) { t.level++; levelMove(t.p); t.atk *= 1.12; }
+    t.owner = owner; t.mode = mode; t.base = base; t.spent = spent; t.shiny = !!shiny;
+    refreshUI();
+  }
+  function dropTower(id: number) {
+    const t = towerById(id);
+    if (!t) return;
+    towers.splice(towers.indexOf(t), 1);
+    G.Projectiles.clearOrbs(t.p);
+    if (selected === t) selected = null;
+    if (pendingEvo && pendingEvo.tower === t) pendingEvo = null;
+    refreshUI();
+  }
+
+  /** Anfitrión: lo que necesita un invitado que vuelve tras un corte (va detrás de los enemigos). */
+  function resyncFor(u: string): any[][] {
+    const evs: any[][] = [['tz']];
+    for (const t of towers) evs.push(towerEv(t));
+    for (const e of G.EnemyMgr.all()) if (!e.dead && e instanceof Walker && e.chief) evs.push(['tb', e.id, e.kind]);
+    for (const t of towers) { const o = evoOf(t); if (o && t.owner === u) evs.push(['tv', t.id, o]); }
+    if ((heroLv[u] || 1) > 1) evs.push(['th', u, heroLv[u]]);
+    evs.push(stateEv());
+    return evs;
+  }
+
+  /** Lo que el cooperativo (net/coop.ts) necesita de este modo. */
+  const coopApi = {
+    team: () => ({ time, level: pl.level, xp: 0, xpNext: 1, kills: pl.kills, bosses: 0, coins: 0, t1: 0, t10: 0 }),
+    summary: () => summary(false),
+    // Invitado: el reloj del anfitrión.
+    syncTeam(t: any) { if (Math.abs(t.time - time) > 0.4) time = t.time; },
+    // (Sin cartas de nivel, ni objetos, ni shinies en la Defensa.)
+    levelStart() {}, waiting() {}, resume() {}, shiny() {}, item() {},
+    // Invitado: el anfitrión no responde; mientras, los enemigos están parados (los mueve él).
+    away(name: string | null) { hostAway = name; hudKey = ''; },
+    over(d: any) {
+      if (d && d.why === 'host') G.UI.toast('El anfitrión ha terminado la partida', 3000);
+      finish(d && typeof d.w === 'number' ? d : summary(false));
+    },
+    lost(msg: string) { G.UI.toast(msg, 3000); finish(summary(false)); },
+    /** Anfitrión: un compañero se ha ido para siempre; sus torres pasan a ser tuyas (siguen defendiendo). */
+    mateLeft(m: any) {
+      let n = 0;
+      for (const t of towers) {
+        if (t.owner !== m.uid) continue;
+        t.owner = me; n++;
+        const o = evoOf(t);
+        if (o && !pendingEvo) pendingEvo = { tower: t, options: o };
+        sendTower(t);
+      }
+      if (n) announce('Las torres de ' + m.name + ' pasan al anfitrión', 3);
+      refreshUI();
+    },
+    onEvent(from: string, ev: any[]) { if (G.Coop.isHost) onGuestEvent(from, ev); else onHostEvent(ev); },
+    resync: resyncFor,
+  };
 
   // ---------------- teclado ----------------
 
@@ -874,7 +1332,14 @@ export const TD = (() => {
     if (G.Input.tap('keye') || G.Input.tap('tab')) pl.cycle(1);
   }
 
-  function toggleFast() { fast = !fast; G.Audio.sfx('confirm'); hudKey = ''; }
+  /** ×1 / ×2 (en grupo, sólo el anfitrión: la partida va a su ritmo). */
+  function toggleFast() {
+    if (guest()) return;
+    fast = !fast; G.Audio.sfx('confirm'); hudKey = '';
+    sendState();
+  }
+  /** Tras la victoria (en el sin fin): terminar y cobrar. En grupo la termina el anfitrión. */
+  function finishWon() { if (won && hosting() && Run.state === 'playing') end(false); }
 
   // ---------------- interfaz ----------------
   // Arriba: oleada, vidas y monedas. Izquierda: la tienda. Derecha: la torre
@@ -901,6 +1366,8 @@ export const TD = (() => {
       #td-hud .td-wave { max-width: 260px; text-align: center; line-height: 1.15; }
       #td-hud .td-wave b { display: block; font-size: 15px; }
       #td-hud .td-wave small { color: var(--muted); font-size: 12px; }
+      #td-hud .td-team { display: flex; flex-direction: column; font-size: 12px; line-height: 1.2; }
+      #td-hud .td-team b { color: var(--gold); }
       @keyframes td-bump { 0% { transform: scale(1); } 40% { transform: scale(1.35); } 100% { transform: scale(1); } }
       #td-shop { position: fixed; left: 8px; top: 96px; z-index: 30; width: 214px; padding: 8px; display: flex; flex-direction: column; gap: 6px; max-height: calc(100vh - 150px); }
       #td-shop h3 { margin: 0; font-size: 16px; display: flex; justify-content: space-between; align-items: center; }
@@ -954,9 +1421,12 @@ export const TD = (() => {
       <div class="td-stat td-money"><b data-k="money"></b><small>Monedas</small></div>
       <div class="td-wave"><b data-k="wave"></b><small data-k="hint"></small></div>
       <button class="btn small gold" data-a="next"></button>
-      <button class="btn small" data-a="fast" title="Velocidad (F)"></button>`;
+      <button class="btn small" data-a="fast" title="Velocidad (F)"></button>
+      <button class="btn small" data-a="won" title="Terminar y cobrar el premio">Terminar</button>
+      <div class="td-team" data-k="team"></div>`;
     (hud.querySelector('[data-a=next]') as HTMLElement).onclick = () => callWave();
     (hud.querySelector('[data-a=fast]') as HTMLElement).onclick = () => toggleFast();
+    (hud.querySelector('[data-a=won]') as HTMLElement).onclick = () => finishWon();
 
     shop = document.createElement('div');
     shop.id = 'td-shop';
@@ -1038,6 +1508,7 @@ export const TD = (() => {
 
   /** Vuelve a pintar la tienda (qué se puede pagar), el panel y el marcador de monedas. */
   function refreshUI() {
+    const money = cash();
     const gained = shownMoney >= 0 && money > shownMoney;
     shownMoney = money;
     if (!shop || !panel || !hud) return;
@@ -1056,6 +1527,7 @@ export const TD = (() => {
   /** Panel de la derecha: elegir evolución > torre seleccionada > héroe > nada. */
   function paintPanel() {
     if (!panel) return;
+    const money = cash();
     if (pendingEvo) {
       const t = pendingEvo.tower;
       panel.style.display = '';
@@ -1065,7 +1537,7 @@ export const TD = (() => {
         b.className = 'btn small gold';
         const r = powerOf(d, t.level);
         b.innerHTML = `${G.DEX_BY[d].name} ${SUPPORT[d] ? auraChip(SUPPORT[d]) : typeChip(attackType(d))}${r ? ' · ' + r.name : ''}`;
-        b.onclick = () => evolve(t, d);
+        b.onclick = () => chooseEvo(t, d);
         panel.appendChild(b);
       }
       return;
@@ -1088,21 +1560,26 @@ export const TD = (() => {
       const at = attackType(t.dex), r = powerOf(t.dex, t.level), k = SUPPORT[t.dex];
       const evo = evolutionsOf(t.dex);
       const nextEvo = evo.length && t.level < MAX_LEVEL && evolvesAt(t.level + 1);
+      // En grupo: sólo su dueño la mejora, la vende o cambia a quién ataca.
+      const own = mine(t), col = colorOf(t.owner);
       // Las auras que recibe, en palabras.
       const got = AURA_KINDS.filter(a => t.buff[a] > 0).map(a => '+' + Math.round(t.buff[a] * 100) + '% ' + AURAS[a].what);
       panel.innerHTML = `<h3>${G.DEX_BY[t.dex].name}</h3>
+        ${coop ? `<p>${own ? 'Es tuya' : `Dueño: <b translate="no" style="color:${col || 'inherit'}">${esc(nameOf(t.owner))}</b>`}</p>` : ''}
         <p>${k ? auraChip(k) : typeChip(at)} Nivel ${t.level}/${MAX_LEVEL}${k ? ' · radio ' + auraRadius(t.level) : (m ? ' · ' + m.name : '') + ' · alcance ' + reachWord(rangeOf(t.p))}</p>
         ${r ? `<p class="role"><b>${r.name}:</b> ${r.desc}</p>` : ''}
         ${k && t.level < MAX_LEVEL ? `<p>Al mejorarlo: ${auraText(k, t.level + 1)}</p>` : ''}
         ${got.length ? `<p class="role" style="color:var(--gold)">Reforzada: ${got.join(', ')}</p>` : ''}
-        ${nextEvo ? `<p class="gold">La próxima mejora lo hace evolucionar${evo.length > 1 ? ' (eliges en qué)' : ' a ' + G.DEX_BY[evo[0]].name}</p>` : ''}
-        <button class="btn small gold" data-a="up"${c == null || money < c ? ' disabled' : ''}>${c == null ? 'Al máximo' : 'Mejorar · ' + c}</button>
+        ${own && nextEvo ? `<p class="gold">La próxima mejora lo hace evolucionar${evo.length > 1 ? ' (eliges en qué)' : ' a ' + G.DEX_BY[evo[0]].name}</p>` : ''}
+        ${own ? `<button class="btn small gold" data-a="up"${c == null || money < c ? ' disabled' : ''}>${c == null ? 'Al máximo' : 'Mejorar · ' + c}</button>
         ${k ? '' : `<button class="btn small" data-a="mode">Ataca a: ${TARGET_NAME[t.mode]}</button>`}
-        <button class="btn small" data-a="sell">Vender · +${sellValue(t.spent)}</button>
+        <button class="btn small" data-a="sell">Vender · +${sellValue(t.spent)}</button>` : (k ? '' : `<p>Ataca a: ${TARGET_NAME[t.mode]}</p>`)}
         <button class="btn small ghost" data-a="close">Cerrar</button>`;
-      (panel.querySelector('[data-a=up]') as HTMLElement).onclick = () => upgrade(t);
-      if (!k) (panel.querySelector('[data-a=mode]') as HTMLElement).onclick = () => cycleMode(t);
-      (panel.querySelector('[data-a=sell]') as HTMLElement).onclick = () => sell(t);
+      if (own) {
+        (panel.querySelector('[data-a=up]') as HTMLElement).onclick = () => upgrade(t);
+        if (!k) (panel.querySelector('[data-a=mode]') as HTMLElement).onclick = () => cycleMode(t);
+        (panel.querySelector('[data-a=sell]') as HTMLElement).onclick = () => sell(t);
+      }
     }
     (panel.querySelector('[data-a=close]') as HTMLElement).onclick = () => { selected = null; refreshUI(); };
   }
@@ -1111,11 +1588,17 @@ export const TD = (() => {
   let hudKey = '', tipKey = '';
   function paintHud() {
     if (!hud || !tip) return;
-    const left = toSpawn + bossLeft + G.EnemyMgr.all().filter(e => !e.dead).length;
+    // En el invitado, los que quedan los cuenta el anfitrión.
+    const left = guest() ? leftShown : toSpawn + bossLeft + G.EnemyMgr.all().filter(e => !e.dead).length;
     const next = waveAt(wave + 1), cur = waveAt(Math.max(1, wave));
-    const title = phase === 'wave' ? `Oleada ${wave}/${LAST_WAVE} · ${cur.theme}` : `Oleada ${wave + 1}/${LAST_WAVE} en ${Math.max(1, Math.ceil(phaseT))} s · ${next.theme}`;
+    // Hasta la victoria, "oleada n/30"; en el sin fin, sólo el número.
+    const of = (n: number) => n > LAST_WAVE ? String(n) : n + '/' + LAST_WAVE;
+    const title = guest() && hostAway ? `Esperando a ${hostAway}…`
+      : phase === 'wave' ? `Oleada ${of(wave)} · ${cur.theme}` : `Oleada ${of(wave + 1)} en ${Math.max(1, Math.ceil(phaseT))} s · ${next.theme}`;
     const hint = phase === 'wave' ? `Quedan ${left} · ${cur.hint}` : next.hint;
-    const key = [lives, title, hint, phase, wave, fast].join('|');
+    // En grupo, las monedas de cada compañero (con su color).
+    const mates = coop ? coop.members.filter(m => m.uid !== me).map(m => m.uid + ':' + (purse[m.uid] || 0)).join(',') : '';
+    const key = [lives, title, hint, phase, wave, fast, won, mates].join('|');
     if (key !== hudKey) {
       hudKey = key;
       (hud.querySelector('[data-k=lives]') as HTMLElement).textContent = String(Math.max(0, lives));
@@ -1125,7 +1608,17 @@ export const TD = (() => {
       const nb = hud.querySelector('[data-a=next]') as HTMLElement;
       nb.style.display = phase === 'break' ? '' : 'none';
       nb.textContent = wave === 0 ? '¡Empezar! (N)' : 'Ya (N)';
-      (hud.querySelector('[data-a=fast]') as HTMLElement).textContent = fast ? '×2' : '×1';
+      const fb = hud.querySelector('[data-a=fast]') as HTMLButtonElement;
+      fb.textContent = fast ? '×2' : '×1';
+      fb.disabled = guest();
+      fb.title = guest() ? 'La velocidad la elige el anfitrión' : 'Velocidad (F)';
+      (hud.querySelector('[data-a=won]') as HTMLElement).style.display = won && hosting() ? '' : 'none';
+      const tm = hud.querySelector('[data-k=team]') as HTMLElement;
+      tm.style.display = coop ? '' : 'none';
+      if (coop) {
+        tm.innerHTML = coop.members.filter(m => m.uid !== me).map(m =>
+          `<span translate="no" style="color:${colorOf(m.uid)}">${esc(m.name)} <b>${purse[m.uid] || 0}</b></span>`).join('');
+      }
     }
     // Abajo: qué estás colocando, y si el sitio vale.
     const err = placing ? whyNot(ghost.x, ghost.y) : '';
@@ -1197,6 +1690,13 @@ export const TD = (() => {
     }
     // Las auras de los apoyos, siempre a la vista (flojito), y bajo cada torre reforzada, sus colores.
     for (const t of towers) {
+      // En grupo, de quién es: un anillo de su color.
+      const oc = colorOf(t.owner);
+      if (oc) {
+        ctx.globalAlpha = 0.6; ctx.strokeStyle = oc; ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.ellipse(t.p.x, t.p.y + 2, 17, 7, 0, 0, 6.2832); ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
       const k = SUPPORT[t.dex];
       if (k) {
         ctx.globalAlpha = 0.5; ctx.strokeStyle = AURAS[k].color; ctx.lineWidth = 2; ctx.setLineDash([4, 8]);
@@ -1224,6 +1724,13 @@ export const TD = (() => {
   /** Las torres (y la que se está colocando, medio transparente) se ordenan por Y con el resto de la escena. */
   function drawables() {
     const out: { y: number; draw(ctx: CanvasRenderingContext2D): void }[] = towers.map(t => t.p);
+    // Invitado: lo que le pasa a cada enemigo (congelado, paralizado...) lo cuenta el anfitrión en su estado.
+    if (guest()) {
+      for (const e of G.EnemyMgr.all()) {
+        const bits = e.remote && !e.dead && e.net ? e.net.st >> 3 : 0;
+        if (bits) out.push({ y: e.y + 0.5, draw: (ctx: CanvasRenderingContext2D) => drawStatus(ctx, e, bits) });
+      }
+    }
     if (placing) {
       const p = placing.preview;
       p.x = ghost.x; p.y = ghost.y;
@@ -1255,7 +1762,7 @@ export const TD = (() => {
     ctx.save();
     ctx.scale(G.Camera.scale, G.Camera.scale);
     G.Camera.apply(ctx);
-    v.drawScene(G.Camera, [pl]);
+    v.drawScene(G.Camera, coop && G.Coop.active ? [pl, ...G.Coop.puppets()] : [pl]);
     G.Projectiles.draw(ctx);
     G.Combat.drawAirFields(ctx);
     G.FX.draw(ctx);
@@ -1269,25 +1776,35 @@ export const TD = (() => {
   return {
     id: 'td',
     start, update, idle, keysModal, keysPlay, drawables, drawGround, render, everyone,
-    quit() { end(false); },
+    /** Abandonar: en grupo, sales tú (si eres el anfitrión, se acaba para todos). Lo conseguido se cobra. */
+    quit() {
+      if (coop && G.Coop.active) G.Coop.leave();
+      end(false);
+    },
     /** El menú abre aquí la elección de favoritos antes de empezar. */
     openTeam,
     // ---- para las pruebas ----
     debugBuy(dex: number) { startPlacing(dex); },
     debugPlace(x: number, y: number) { tryPlace(x, y); },
     debugUpgrade(i: number) { if (towers[i]) upgrade(towers[i]); },
-    debugEvolve(to: number) { if (pendingEvo && pendingEvo.options.includes(to)) evolve(pendingEvo.tower, to); },
+    debugEvolve(to: number) { if (pendingEvo && pendingEvo.options.includes(to)) chooseEvo(pendingEvo.tower, to); },
+    debugSelect(i: number) { selected = towers[i] || null; refreshUI(); },
+    debugCycleMode(i: number) { if (towers[i]) cycleMode(towers[i]); },
+    debugHero() { upgradeHero(); },
+    debugLives(n: number) { if (hosting()) { lives = n; tampered = true; sendState(); } },
+    debugWin() { if (hosting()) { wave = LAST_WAVE; phase = 'wave'; toSpawn = 0; bossLeft = 0; G.EnemyMgr.clear(); tampered = true; } },
+    finishWon,
     debugSell(i: number) { if (towers[i]) sell(towers[i]); },
     debugMode(i: number, mode: TargetMode) { if (towers[i] && TARGET_MODES.includes(mode)) towers[i].mode = mode; },
     debugCallWave() { callWave(); },
-    debugFast(on: boolean) { fast = !!on; },
+    debugFast(on: boolean) { if (hosting()) { fast = !!on; sendState(); } },
     debugHpMul(k: number) { hpMul = k > 0 ? k : 1; if (hpMul !== 1) tampered = true; },
     canPlace(x: number, y: number) { return !whyNot(x, y); },
     get route() { return path.map(p => ({ x: p.x, y: p.y })); },
     get placing() { return placing ? { dex: placing.dex, x: ghost.x, y: ghost.y } : null; },
     get info() {
       return {
-        wave, lives, leaked, phase, money, reach: Math.round(reach * 100) / 100, team: team.slice(), shop: pool.map(c => c.dex), heroLevel, won,
+        wave, lives, leaked, phase, money: cash(), reach: Math.round(reach * 100) / 100, team: team.slice(), shop: pool.map(c => c.dex), heroLevel, won,
         evo: pendingEvo ? pendingEvo.options.slice() : null,
         selected: selected === 'hero' ? 'hero' : selected ? towers.indexOf(selected) : null,
         powers: { ...powers },
@@ -1295,11 +1812,22 @@ export const TD = (() => {
         towers: towers.map(t => ({ dex: t.dex, level: t.level, spent: t.spent, mode: t.mode, support: SUPPORT[t.dex] || null, buff: { ...t.buff }, x: t.p.x, y: t.p.y, shots: shots.get(t.p) || 0 }))
       };
     },
+    /** Lo del grupo y lo nuevo (mapa, sin fin), aparte de `info` para no cambiar las pruebas grabadas. */
+    get net() {
+      return {
+        coop: !!coop, host: hosting(), me, map: map.id, purse: { ...purse }, cleared, won, flawless, fast, heroLv: { ...heroLv },
+        left: guest() ? leftShown : toSpawn + bossLeft + G.EnemyMgr.all().filter(e => !e.dead).length,
+        towers: towers.map(t => ({ id: t.id, owner: t.owner, dex: t.dex, level: t.level, mode: t.mode, x: Math.round(t.p.x), y: Math.round(t.p.y), shots: shots.get(t.p) || 0 })),
+        evo: pendingEvo ? { id: pendingEvo.tower.id, options: pendingEvo.options.slice() } : null,
+      };
+    },
     get player() { return pl; }, get time() { return time; }
   } satisfies GameMode & Record<string, unknown>;
 })();
 G.TD = TD;
+/** Los mapas de la Defensa (los elige también el anfitrión en la sala, ui/social-ui.ts). */
+G.TD_MAPS = MAPS;
 
 declare module '../g' {
-  interface Registry { TD: typeof TD }
+  interface Registry { TD: typeof TD; TD_MAPS: typeof MAPS }
 }

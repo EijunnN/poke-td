@@ -1,6 +1,6 @@
 import { G } from '../g';
-import { ROLES, AURAS, AURA_KINDS, SUPPORT, auraStrength, START_MONEY, REFUND, EVOLVE_AT, MAX_LEVEL, type AuraKind } from '../modes/td-geom';
-import { WAVES, START_LIVES, leakCost } from '../modes/td-waves';
+import { ROLES, AURAS, AURA_KINDS, SUPPORT, MAPS, auraStrength, START_MONEY, REFUND, EVOLVE_AT, MAX_LEVEL, type AuraKind } from '../modes/td-geom';
+import { WAVES, START_LIVES, MAX_WAVE, WIN_COINS, leakCost } from '../modes/td-waves';
 /* ============ guide-ui.ts — "Cómo se juega" ============
  * Guía para los jugadores dentro del juego: lo básico, la Supervivencia, la
  * Defensa y preguntas frecuentes. Se abre desde la barra de arriba, desde
@@ -112,8 +112,26 @@ export const GuideUI = (() => {
     return h('El objetivo', 'The goal')
       + `<p>${T(`Los enemigos siguen el camino hasta tu base. Aguanta las <b>${WAVES.length} oleadas</b>. Empiezas con <b>${START_LIVES} vidas</b>: cada enemigo que llega quita ${leakCost(false, false)}, un jefe ${leakCost(true, false)} y un legendario ${leakCost(true, true)}.`,
                `Enemies follow the path to your base. Survive all <b>${WAVES.length} waves</b>. You start with <b>${START_LIVES} lives</b>: each enemy that gets through takes ${leakCost(false, false)}, a boss ${leakCost(true, false)} and a legendary ${leakCost(true, true)}.`)}</p>`
-      + `<p>${T('En el ranking (pestaña Defensa) cuentan las oleadas que superas y, a igualdad, las vidas que te quedan.',
-               'On the leaderboard (Defense tab) what counts is the waves you clear and, on a tie, the lives you have left.')}</p>`
+      + `<p>${T(`Si superas la ${WAVES.length}, has ganado, pero no se acaba: sigue el modo <b>sin fin</b>, con las mismas oleadas cada vez más duras, hasta que caiga la base o pulses <b>Terminar</b>.`,
+               `If you clear wave ${WAVES.length} you have won, but it does not end: <b>endless</b> mode follows, with the same waves getting harder each time, until the base falls or you press <b>Finish</b>.`)}</p>`
+      + `<p>${T(`Hay ${MAPS.length} mapas (${MAPS.map(m => m.name).join(', ')}), con caminos de longitud parecida; antes de empezar eliges uno o al azar.`,
+               `There are ${MAPS.length} maps (${MAPS.map(m => m.en).join(', ')}), with paths of similar length; before starting you pick one or a random one.`)}</p>`
+      + h('Premios y ranking', 'Rewards and leaderboard')
+      + `<p>${T(`Al acabar cobras Pokémonedas para tu cuenta: 10 por oleada superada, 1 por cada 5 enemigos derrotados y ${WIN_COINS} más si ganas. También cuentan las misiones (como «Supera 15 oleadas en una partida de Defensa») y los logros de la categoría Defensa.`,
+               `When the game ends you earn Pokécoins for your account: 10 per wave cleared, 1 for every 5 enemies defeated and ${WIN_COINS} more if you win. Missions (such as “Clear 15 waves in a Defense game”) and the achievements in the Defense category count too.`)}</p>`
+      + `<p>${T(`En el ranking (pestañas Defensa y Defensa en grupo) cuentan las oleadas que superas (hasta la ${MAX_WAVE}) y, a igualdad, las vidas que te quedan.`,
+               `On the leaderboard (Defense and Group Defense tabs) what counts is the waves you clear (up to ${MAX_WAVE}) and, on a tie, the lives you have left.`)}</p>`
+      + h('En grupo', 'With friends')
+      + ul([
+        ['Crea una sala desde Amigos, invita a tus amigos (hasta 4) y, como anfitrión, elige <b>Defensa</b> y el mapa antes de empezar.',
+         'Create a room from Friends, invite your friends (up to 4) and, as the host, choose <b>Defense</b> and the map before starting.'],
+        ['Las <b>vidas</b> son de todos; las <b>monedas</b>, de cada uno. Por cada enemigo y cada oleada cobráis todos lo mismo, y los enemigos tienen más vida cuantos más sois.',
+         '<b>Lives</b> are shared; <b>coins</b> belong to each player. Everyone earns the same for each enemy and each wave, and enemies have more HP the more of you there are.'],
+        ['Cada torre es de quien la compra (el anillo de su color): sólo él la mejora, la vende o elige a quién ataca. Las de un compañero que se va pasan al anfitrión.',
+         'Each tower belongs to whoever bought it (the ring in their colour): only they can upgrade it, sell it or choose who it attacks. The towers of a player who leaves go to the host.'],
+        ['Cualquiera puede adelantar la oleada; la velocidad (×1/×2) la elige el anfitrión. Si el anfitrión se va, la partida acaba para todos (cada uno cobra lo suyo).',
+         'Anyone can call the next wave early; the host chooses the speed (×1/×2). If the host leaves, the game ends for everyone (each player still gets their reward).'],
+      ])
       + h('Paso a paso', 'Step by step')
       + `<ol>${[
         ['Antes de empezar eliges hasta 6 <b>favoritos</b>: salen los primeros en la tienda. Puedes comprar cualquier Pokémon de tu colección.',
@@ -173,8 +191,11 @@ export const GuideUI = (() => {
        `${G.DEX.length} Pokémon de las 9 regiones, todos jugables como compañero y como torre.`,
        `${G.DEX.length} Pokémon from all 9 regions, all playable as a partner and as a tower.`],
       ['¿La Defensa da recompensas?', 'Does Defense give rewards?',
-       'Todavía no: está en pruebas. Lo que ganas en ella (monedas y nivel) es sólo para esa partida.',
-       'Not yet: it is in testing. What you earn there (coins and levels) only lasts for that game.'],
+       'Sí: Pokémonedas para tu cuenta según las oleadas que superes y los enemigos que caigan (más si ganas), y cuenta para misiones, logros y su propio ranking. Las monedas de la tienda son sólo para esa partida.',
+       'Yes: Pokécoins for your account depending on the waves you clear and the enemies defeated (more if you win), and it counts for missions, achievements and its own leaderboard. Shop coins only last for that game.'],
+      ['¿Puedo jugar la Defensa con amigos?', 'Can I play Defense with friends?',
+       'Sí, hasta 4: desde una sala, el anfitrión elige Defensa. Cada uno compra sus torres con sus monedas y las vidas son de todos.',
+       'Yes, up to 4: from a room, the host chooses Defense. Each player buys their own towers with their own coins, and lives are shared.'],
       ['¿Es un juego oficial de Pokémon?', 'Is it an official Pokémon game?',
        'No. Es un proyecto de fans, gratuito y sin ánimo de lucro, sin relación con Nintendo, GAME FREAK ni The Pokémon Company.',
        'No. It is a free, non-profit fan project, not affiliated with Nintendo, GAME FREAK or The Pokémon Company.'],

@@ -5,6 +5,9 @@
  *
  *   node tools/td-balance.ts                  semilla 4242
  *   node tools/td-balance.ts --seed 7 --seed 8
+ *   node tools/td-balance.ts --support        también compra Pokémon de apoyo (Scyther, Togepi, Meowth)
+ *   node tools/td-balance.ts --map espiral    en otro mapa (td-geom.ts, MAPS; por defecto, valle)
+ * En cada oleada, las torres con un * reciben el aura de algún apoyo.
  *
  * No es una prueba (no falla): es una herramienta para mirar. Tarda un par de
  * minutos por semilla.
@@ -22,9 +25,11 @@ const seeds = process.argv.flatMap((a, i) => a === '--seed' ? [+process.argv[i +
 if (!seeds.length) seeds.push(4242);
 /** --hp 1,2,4: repite con la vida de los enemigos multiplicada (para ver dónde empieza a costar). */
 const hpMuls = (process.argv.includes('--hp') ? process.argv[process.argv.indexOf('--hp') + 1] : '1').split(',').map(Number);
+const support = process.argv.includes('--support');
+const mapId = process.argv.includes('--map') ? process.argv[process.argv.indexOf('--map') + 1] : 'valle';
 
 /** Dentro de la página: juega hasta ganar o perder y devuelve una línea por oleada. */
-async function play(seed: number, hpMul: number) {
+async function play(seed: number, hpMul: number, support: boolean, mapId: string) {
   const h = window.__h;
   h.freeze();
   if (G.Game.state !== 'ui') { G.Game.quit(); G.Game.toUI(); }
@@ -33,9 +38,10 @@ async function play(seed: number, hpMul: number) {
   G.DB.playAsGuest();
   G.DB.save.partner = 25;
   // Una colección variada: un poco de cada tipo.
-  const team = [4, 7, 1, 92, 66, 74, 81, 63, 147, 220];
+  // Con --support, cada cuatro compras una es de apoyo (las auras: más daño, más velocidad, más monedas).
+  const team = support ? [4, 7, 123, 1, 92, 175, 66, 74, 52, 81, 63, 147, 220] : [4, 7, 1, 92, 66, 74, 81, 63, 147, 220];
   for (const d of [25, ...team]) G.DB.grant(d, 'starter');
-  G.Game.start('td', { team: team.slice(0, 6) });
+  G.Game.start('td', { team: team.slice(0, 6), map: mapId });
   G.TD.debugFast(true);
   G.TD.debugHpMul(hpMul);
 
@@ -48,6 +54,8 @@ async function play(seed: number, hpMul: number) {
   const rows: any[] = [];
   let lastWave = 0, buy = 0;
   for (let f = 0; f < 200000 && G.Game.state === 'playing'; f++) {
+    // Ganada: se termina (si no, seguiría el sin fin).
+    if (G.TD.net.won) { G.TD.finishWon(); break; }
     await null;
     const p = G.Game.player;
     if (p && p.hp < p.maxHp * 0.3) p.hp = p.maxHp;
@@ -62,19 +70,29 @@ async function play(seed: number, hpMul: number) {
       }
     }
     if (G.TD.placing) {
-      const spot = spots.find(s => G.TD.canPlace(s.x, s.y));
+      // Un apoyo va donde su aura alcanza a más torres (como lo pondría alguien que sabe); el resto, en las esquinas.
+      let spot = spots.find(s => G.TD.canPlace(s.x, s.y));
+      if (info.towers.length && [123, 175, 52].includes(G.TD.placing.dex)) {
+        let best = -1;
+        for (let x = -620; x <= 620; x += 20) for (let y = -620; y <= 620; y += 20) {
+          if (!G.TD.canPlace(x, y)) continue;
+          const n = info.towers.filter((t: any) => !t.support && Math.hypot(t.x - x, t.y - y) < 170).length;
+          if (n > best) { best = n; spot = { x, y }; }
+        }
+      }
       if (spot) { G.TD.debugPlace(spot.x, spot.y); buy++; }
       else G.TD.debugBuy(G.TD.placing.dex);        // no queda sitio: la suelta
     }
     if (info.wave !== lastWave && info.phase === 'wave') lastWave = info.wave;
     if (info.phase === 'break' && rows.length < info.wave) {
       rows.push({ wave: info.wave, lives: info.lives, reach: info.reach, leaked: info.leaked, money: info.money,
-        towers: info.towers.map((t: any) => G.DEX_BY[t.dex].name + ' ' + t.level).join(', ') });
+        towers: info.towers.map((t: any) => G.DEX_BY[t.dex].name + ' ' + t.level + (t.buff.dmg || t.buff.haste ? '*' : '')).join(', ') });
     }
     h.frame();
   }
   const info = G.TD.info;
-  rows.push({ end: G.Game.state, wave: info.wave, lives: info.lives, won: info.won, time: Math.round(G.Game.st.time), powers: info.powers });
+  rows.push({ end: G.Game.state, wave: info.wave, lives: info.lives, won: info.won, time: Math.round(G.Game.st.time), powers: info.powers,
+              towers: info.towers.map((t: any) => G.DEX_BY[t.dex].name + ' ' + t.level).join(', ') });
   if (G.Game.state === 'playing') G.Game.quit();
   return rows;
 }
@@ -94,8 +112,8 @@ async function main() {
   for (const hpMul of hpMuls) for (const seed of seeds) {
     await page.waitForLoadState('networkidle');
     const t0 = Date.now();
-    const rows = await page.evaluate(`(${play})(${seed}, ${hpMul})`) as any[];
-    console.log(`\n== semilla ${seed}, vida ×${hpMul} (${Math.round((Date.now() - t0) / 1000)} s) ==`);
+    const rows = await page.evaluate(`(${play})(${seed}, ${hpMul}, ${support}, ${JSON.stringify(mapId)})`) as any[];
+    console.log(`\n== semilla ${seed}, vida ×${hpMul}, mapa ${mapId}${support ? ', con apoyos' : ''} (${Math.round((Date.now() - t0) / 1000)} s) ==`);
     for (const r of rows) console.log(r.end ? JSON.stringify(r) : `oleada ${String(r.wave).padStart(2)} · vidas ${String(r.lives).padStart(2)} · llega al ${String(Math.round(r.reach * 100)).padStart(3)}% · monedas ${String(r.money).padStart(4)} · ${r.towers}`);
   }
   await browser.close();

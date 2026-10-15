@@ -19,6 +19,21 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { d: '2026-10-14', title: ['Defensa en grupo', 'Group Defense'], new: [
+    ['Defensa en grupo, de 2 a 4: desde una sala, el anfitrión elige Defensa y el mapa. Las vidas son de todos y las monedas de cada uno; cada torre es de quien la compra.',
+     'Group Defense, for 2 to 4 players: from a room, the host chooses Defense and the map. Lives are shared and coins are each player\'s own; each tower belongs to whoever buys it.'],
+    ['Tres mapas para la Defensa: Valle, Zigzag y Espiral (o uno al azar).',
+     'Three maps for Defense: Valley, Zigzag and Spiral (or a random one).'],
+    ['Tras ganar las 30 oleadas sigue el modo sin fin: ¿hasta dónde llegas?',
+     'After winning all 30 waves, endless mode follows: how far can you go?'],
+    ['La Defensa da Pokémonedas al acabar (por oleadas, derrotados y victoria), tiene misiones y logros propios, y ranking en solitario y en grupo.',
+     'Defense gives Pokécoins when it ends (for waves, defeated enemies and winning), has its own missions and achievements, and solo and group leaderboards.']
+  ], chg: [
+    ['La Defensa se puede jugar entera en inglés.', 'Defense can be played fully in English.'],
+    ['Los Pokémon de apoyo cuestan siempre 90 monedas, y sus auras son más fuertes y llegan más lejos: antes no compensaban.',
+     'Support Pokémon always cost 90 coins, and their auras are stronger and reach further: before, they were not worth it.'],
+    ['El resumen de la Defensa enseña oleadas superadas y vidas.', 'The Defense summary shows waves cleared and lives.']
+  ] },
   { d: '2026-10-14', title: ['Servidores nuevos', 'New servers'], new: [
     ['Puedes cambiar tu contraseña en Ajustes → Cuenta. Si la olvidas, el administrador te pone una temporal.',
      'You can change your password in Settings → Account. If you forget it, the administrator gives you a temporary one.'],
@@ -45,8 +60,8 @@ export const CHANGELOG: ChangelogEntry[] = [
      'Each type has its power: Ice freezes, Fire burns, Electric paralyzes, Psychic confuses, Water drags back, Dark finishes off... and the type chart rules (Ground does nothing to a flyer).'],
     ['Pokémon de apoyo: no atacan, refuerzan a las torres cercanas. Scyther (Danza Espada, +daño), Togekiss (Viento Afín, +velocidad), Lucario y Absol (Foco Energía, +crítico), Meowth (Día de Pago, +monedas) y Noctowl (Vista Lince, +alcance). Dos auras iguales no se suman.',
      'Support Pokémon: they do not attack, they boost nearby towers. Scyther (Swords Dance, +damage), Togekiss (Tailwind, +speed), Lucario and Absol (Focus Energy, +crits), Meowth (Pay Day, +coins) and Noctowl (Keen Eye, +range). Two auras of the same kind do not stack.'],
-    ['Al colocar una torre se ve su alcance, lo que no se puede ocupar y por qué. Todavía no da recompensas.',
-     'When placing a tower you see its range, where you cannot build and why. It gives no rewards yet.'],
+    ['Al colocar una torre se ve su alcance, lo que no se puede ocupar y por qué.',
+     'When placing a tower you see its range, where you cannot build and why.'],
     ['Ranking de Defensa: en la pantalla del ranking, la pestaña Defensa ordena por oleadas superadas y, a igualdad, por las vidas que te quedaban.',
      'Defense leaderboard: in the leaderboard screen, the Defense tab ranks by waves cleared and, on a tie, by the lives you had left.']
   ] },

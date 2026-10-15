@@ -6,6 +6,7 @@ import { G } from './g';
 import './core/util';
 import './core/i18n';
 import './data/lang-en';
+import './data/lang-en-td';
 import './core/settings';
 import './data/music';
 import './data/pokedex';

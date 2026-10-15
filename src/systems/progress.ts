@@ -10,11 +10,13 @@ import { G } from '../g';
  *   runEnd    { time, level, coins, types, group }
  *   judge     llegas a la Sentencia de Arceus (minuto 30)
  *   judgeEnd  { time, bosses }  aguantado ante Arceus (al acabar la partida)
+ *   tdEnd     { waves, won, lives, group }  fin de una partida de Defensa (modes/td.ts)
  *   missionDone { daily }   (lo lanza claim)
  *
  * y esto actualiza en la partida guardada:
  *   stats.bossesTotal · riftWins · evolutions · missionsDone · groupRuns
  *   stats.judged · judgeTime (mejor tiempo ante Arceus) · judgeBosses (mejor nº de jefes)
+ *   stats.tdRuns · tdBestWave · tdWins · tdGroupWins · tdPerfect (Defensa)
  *   legends{dex} · arenas{tipo} · itemsFound{id} · evoMoves{id} · ach{id}
  *   missions { day, daily[], rerolled, week, weekly[] }
  *
@@ -166,6 +168,16 @@ export const Progress = (() => {
       case 'judgeEnd':
         S.judgeTime = Math.max(S.judgeTime || 0, Math.floor(d.time));
         S.judgeBosses = Math.max(S.judgeBosses || 0, d.bosses);
+        break;
+      case 'tdEnd':
+        S.tdRuns = (S.tdRuns || 0) + 1;
+        S.tdBestWave = Math.max(S.tdBestWave || 0, d.waves | 0);
+        if (d.group) S.groupRuns = (S.groupRuns || 0) + 1;
+        if (d.won) {
+          S.tdWins = (S.tdWins || 0) + 1;
+          if (d.group) S.tdGroupWins = (S.tdGroupWins || 0) + 1;
+          if (d.perfect) S.tdPerfect = (S.tdPerfect || 0) + 1;
+        }
         break;
     }
     advance(s.missions.daily, kind, d);

@@ -5,11 +5,12 @@
  * Jugadores
  *   POST   /api/ranking/start   { mode }                        -> { ok }
  *          El servidor apunta la hora a la que empieza la partida (en grupo, la
- *          del anfitrión). mode: 's' solitario · 'g' grupo · 'd' Defensa (tower defense).
+ *          del anfitrión). mode: 's' solitario · 'g' grupo · 'd' Defensa (tower defense) · 'e' Defensa en grupo.
  *   POST   /api/ranking/submit  { mode:'s', t, lv, kills, dex, shiny }
  *                               { mode:'g', t, lv, kills, members:[{ uid, dex, shiny }] }
  *                                                               -> { ok, better:['d','w','m','a'] }
  *                               { mode:'d', waves, lives, secs, kills, dex, shiny }   (Defensa)
+ *                               { mode:'e', waves, lives, secs, kills, members:[{ uid, dex, shiny }] }   (Defensa en grupo)
  *          Sube la marca a cada tabla donde mejora (sólo mejora, nunca empeora):
  *          las de hoy, semana, mes e histórico, y la del histórico de cada Pokémon.
  *          `better` son los periodos (no el de Pokémon) donde ha mejorado. En
@@ -53,9 +54,10 @@
  * orden numérico unidos con '_'. Los periodos se cuentan en hora de Europe/Madrid.
  * Orden: más tiempo primero; a igualdad, quien llegó antes; a igualdad, por id.
  *
- * Defensa ('d', sólo solitario y sin tablas por Pokémon): la columna `t` no es
- * tiempo sino la puntuación oleadas·100 + vidas (src/modes/td-waves.ts,
- * defenseScore), y `lv` son las oleadas superadas. El mismo orden sirve.
+ * Defensa ('d' solitario, 'e' en grupo; sin tablas por Pokémon): la columna `t` no
+ * es tiempo sino la puntuación oleadas·100 + vidas (src/modes/td-waves.ts,
+ * defenseScore), y `lv` son las oleadas superadas. El mismo orden sirve. El equipo
+ * de 'e' se comprueba igual que el de 'g'.
  *
  * Anti-trampas (portado de las reglas de Firestore del original, validEntry; ver el historial de git):
  *   - hay que haber avisado con /start, y ese aviso se gasta con la marca (una
@@ -65,7 +67,7 @@
  *   - Pokémon entero entre 1 y 2000
  *   - la cuenta (y en grupo, ningún miembro) no puede estar marcada
  *   - grupo de 2 a 4 cuentas distintas y existentes, con el anfitrión dentro
- *   - Defensa: de 1 a 30 oleadas y de 0 a 30 vidas; los segundos de partida, al menos
+ *   - Defensa: de 1 a 99 oleadas (tras la 30 sigue el sin fin) y de 0 a 30 vidas; los segundos de partida, al menos
  *     lo que tardan en salir los enemigos de esas oleadas y no más que el doble del
  *     tiempo real desde /start (se puede jugar a ×2) + 30 s; derrotados, no más de
  *     los que salen hasta la oleada siguiente
@@ -76,7 +78,7 @@
  */
 import type { Db } from './db';
 import { fail, json, limiter, readBody, type Module } from './http';
-import { LAST_WAVE, START_LIVES, defenseScore, maxDefenseKills, minDefenseTime } from '../src/modes/td-waves';
+import { MAX_WAVE, START_LIVES, defenseScore, maxDefenseKills, minDefenseTime } from '../src/modes/td-waves';
 
 export interface RankingOptions {
   /** Nombres de las cuentas admin; si falta, ADMIN_USERS. */
@@ -105,9 +107,13 @@ const MAX_T = 3600;
 const GRACE_S = 30;
 const MAX_DEX = 2000;
 const MAX_TEAM = 4;
-/** Los modos: solitario, grupo y Defensa. */
-type Mode = 's' | 'g' | 'd';
-const isMode = (m: unknown): m is Mode => m === 's' || m === 'g' || m === 'd';
+/** Los modos: solitario, grupo, Defensa y Defensa en grupo. */
+type Mode = 's' | 'g' | 'd' | 'e';
+const isMode = (m: unknown): m is Mode => m === 's' || m === 'g' || m === 'd' || m === 'e';
+/** ¿Marca de Defensa (puntuación en vez de tiempo, sin tablas por Pokémon)? */
+const isDefense = (m: string) => m === 'd' || m === 'e';
+/** ¿Marca de un equipo? */
+const isGroup = (m: string) => m === 'g' || m === 'e';
 /** Una partida de Defensa no dura más de esto (en segundos de partida). */
 const MAX_DEFENSE_S = 3 * 3600;
 
@@ -136,11 +142,11 @@ export function periodIds(date = new Date()): Record<Period, string> {
 }
 
 /** Una tabla válida: modo, periodo y (sólo en el histórico) Pokémon. */
-const BOARD_RE = /^([sgd])_(d\d{8}|w\d{4}-\d{2}|m\d{6}|all2)(?:_p([1-9]\d{0,3}))?$/;
+const BOARD_RE = /^([sgde])_(d\d{8}|w\d{4}-\d{2}|m\d{6}|all2)(?:_p([1-9]\d{0,3}))?$/;
 function validBoard(b: unknown): b is string {
   if (typeof b !== 'string' || b.length > 40) return false;
   const m = BOARD_RE.exec(b);
-  return !!m && (!m[3] || (m[1] !== 'd' && m[2] === ALL && +m[3] <= MAX_DEX));
+  return !!m && (!m[3] || (!isDefense(m[1]) && m[2] === ALL && +m[3] <= MAX_DEX));
 }
 /** El id de una marca: un uid o varios (equipo) unidos con '_'. */
 const ENTRY_RE = /^[1-9]\d{0,12}(?:_[1-9]\d{0,12}){0,3}$/;
@@ -260,8 +266,8 @@ export function createRanking(db: Db, opts: RankingOptions = {}): Module {
     countMine: raw.query<{ n: number }, [number]>('SELECT COUNT(*) AS n FROM ranking_members WHERE user_id = ?'),
     // Las de Defensa no: su `t` es una puntuación, no un tiempo.
     purgeCount: raw.query<{ rows: number; boards: number }, [number]>(
-      "SELECT COUNT(*) AS rows, COUNT(DISTINCT board) AS boards FROM ranking_entries WHERE t > ? AND board NOT LIKE 'd!_%' ESCAPE '!'"),
-    purge: raw.query<unknown, [number]>("DELETE FROM ranking_entries WHERE t > ? AND board NOT LIKE 'd!_%' ESCAPE '!'"),
+      "SELECT COUNT(*) AS rows, COUNT(DISTINCT board) AS boards FROM ranking_entries WHERE t > ? AND board NOT LIKE 'd!_%' ESCAPE '!' AND board NOT LIKE 'e!_%' ESCAPE '!'"),
+    purge: raw.query<unknown, [number]>("DELETE FROM ranking_entries WHERE t > ? AND board NOT LIKE 'd!_%' ESCAPE '!' AND board NOT LIKE 'e!_%' ESCAPE '!'"),
     reports: raw.query<{ id: number; board: string; entry: string; names: string; t: number; at: number }, []>(
       'SELECT id, board, entry, names, t, at FROM ranking_reports ORDER BY at DESC, id DESC LIMIT 400'),
     delReport: raw.query<unknown, [number]>('DELETE FROM ranking_reports WHERE id = ?'),
@@ -309,7 +315,7 @@ export function createRanking(db: Db, opts: RankingOptions = {}): Module {
     if (typeof period !== 'string' || !(PERIODS as readonly string[]).includes(period)) return null;
     let b = mode + '_' + periodIds(new Date(now()))[period as Period];
     // El filtro por Pokémon sólo existe en el histórico (en los demás periodos no cuenta); en Defensa, en ninguno.
-    if (dex !== undefined && dex !== null && dex !== '' && period === 'a' && mode !== 'd') {
+    if (dex !== undefined && dex !== null && dex !== '' && period === 'a' && !isDefense(mode)) {
       const n = typeof dex === 'string' && /^[1-9]\d{0,3}$/.test(dex) ? +dex : NaN;
       if (!(n >= 1 && n <= MAX_DEX)) return null;
       b += '_p' + n;
@@ -336,9 +342,9 @@ export function createRanking(db: Db, opts: RankingOptions = {}): Module {
     let t: number, lv: number, kills: number;
     /** Los segundos que tienen que haber pasado de verdad desde /start. */
     let realS: number;
-    if (mode === 'd') {
+    if (isDefense(mode)) {
       const { waves, lives, secs } = b;
-      if (!isInt(waves) || waves < 1 || waves > LAST_WAVE) return fail(400, 'Oleadas no válidas.');
+      if (!isInt(waves) || waves < 1 || waves > MAX_WAVE) return fail(400, 'Oleadas no válidas.');
       if (!isInt(lives) || lives < 0 || lives > START_LIVES) return fail(400, 'Vidas no válidas.');
       // Hay que esperar a que salgan los enemigos; a ×2, eso pasa en la mitad de tiempo real.
       if (!isInt(secs) || secs < Math.floor(minDefenseTime(waves) * 0.9) || secs > MAX_DEFENSE_S) return fail(400, 'Tiempo no válido.');
@@ -354,7 +360,7 @@ export function createRanking(db: Db, opts: RankingOptions = {}): Module {
 
     // Quién forma la marca y con qué Pokémon.
     let team: { uid: number; dex: number; shiny: boolean }[];
-    if (mode !== 'g') {
+    if (!isGroup(mode)) {
       if (!isInt(b.dex) || b.dex < 1 || b.dex > MAX_DEX) return fail(400, 'Pokémon no válido.');
       team = [{ uid, dex: b.dex, shiny: b.shiny === true }];
     } else {
@@ -387,7 +393,7 @@ export function createRanking(db: Db, opts: RankingOptions = {}): Module {
     const id = team.map(m => m.uid).join('_');
     const ids = periodIds(new Date(now()));
     const boards: [string, Period | 'p'][] = PERIODS.map(p => [mode + '_' + ids[p], p]);
-    if (mode !== 'd') for (const d of new Set(team.map(m => m.dex))) boards.push([mode + '_' + ALL + '_p' + d, 'p']);
+    if (!isDefense(mode)) for (const d of new Set(team.map(m => m.dex))) boards.push([mode + '_' + ALL + '_p' + d, 'p']);
 
     const at = now();
     const better: string[] = [];

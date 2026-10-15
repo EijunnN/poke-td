@@ -9,7 +9,7 @@ import type { Reward } from './missions';
  * Además hay un logro por CADA legendario: vencerle en una grieta.
  */
 /** Categorías de logros (ver CATS). */
-export type AchCat = 'coleccion' | 'supervivencia' | 'combate' | 'grietas' | 'legendarios' | 'otros';
+export type AchCat = 'coleccion' | 'supervivencia' | 'defensa' | 'combate' | 'grietas' | 'legendarios' | 'otros';
 
 /** Un logro (ver cabecera). `dex` sólo en los de un legendario concreto. */
 export interface AchDef {
@@ -32,7 +32,7 @@ export const AchDefs = (() => {
   const st = k => s => (s.stats && s.stats[k]) || 0;
   const count = k => s => Object.keys(s[k] || {}).length;
 
-  const CATS = [['coleccion', 'Colección'], ['supervivencia', 'Supervivencia'], ['combate', 'Combate'],
+  const CATS = [['coleccion', 'Colección'], ['supervivencia', 'Supervivencia'], ['defensa', 'Defensa'], ['combate', 'Combate'],
                 ['grietas', 'Grietas'], ['legendarios', 'Legendarios'], ['otros', 'Misiones y más']];
 
   const LIST: AchDef[] = [
@@ -61,6 +61,13 @@ export const AchDefs = (() => {
     { id: 'judge60', cat: 'supervivencia', tier: 3, name: 'Ante el Creador', desc: 'Aguanta 1 minuto ante Arceus.', value: st('judgeTime'), goal: 60, reward: { t10: 2 }, title: 'Elegido de Arceus' },
     { id: 'judgeBoss', cat: 'supervivencia', tier: 3, name: 'Desafío divino', desc: 'Derrota a 3 legendarios ante Arceus en una partida.', value: st('judgeBosses'), goal: 3, reward: { t10: 2 } },
     { id: 'runs50', cat: 'supervivencia', tier: 2, name: 'Explorador', desc: 'Juega 50 runs.', value: st('runs'), goal: 50, reward: { t10: 1 }, title: 'Explorador' },
+
+    // ---------- defensa (modes/td.ts) ----------
+    { id: 'tdWave10', cat: 'defensa', tier: 1, name: 'Primera línea', desc: 'Supera 10 oleadas en una partida de Defensa.', value: st('tdBestWave'), goal: 10, reward: { t1: 3 } },
+    { id: 'tdWin', cat: 'defensa', tier: 2, name: 'Defensor', desc: 'Gana una partida de Defensa (las 30 oleadas).', value: st('tdWins'), goal: 1, reward: { t10: 1 }, title: 'Defensor' },
+    { id: 'tdPerfect', cat: 'defensa', tier: 3, name: 'Muralla', desc: 'Gana una partida de Defensa sin perder ninguna vida.', value: st('tdPerfect'), goal: 1, reward: { t10: 2 }, title: 'Muralla' },
+    { id: 'tdEndless40', cat: 'defensa', tier: 3, name: 'Sin fin', desc: 'Supera la oleada 40 (en el modo sin fin).', value: st('tdBestWave'), goal: 40, reward: { t10: 2 } },
+    { id: 'tdGroupWin', cat: 'defensa', tier: 2, name: 'Fortaleza', desc: 'Gana una partida de Defensa en grupo.', value: st('tdGroupWins'), goal: 1, reward: { t10: 1 }, title: 'Guardián' },
 
     // ---------- combate ----------
     { id: 'kills1k', cat: 'combate', tier: 1, name: 'Primeros combates', desc: 'Derrota a 1.000 Pokémon.', value: st('totalKills'), goal: 1000, reward: { t1: 2 } },

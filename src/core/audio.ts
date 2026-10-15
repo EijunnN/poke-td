@@ -17,6 +17,13 @@ export const Audio = (() => {
   let settings: { music: number; sfx: number; muted: boolean } = { music: 0.55, sfx: 0.7, muted: false };
   try { Object.assign(settings, JSON.parse(localStorage.getItem(KEY) || '{}')); } catch (e) { /* nada */ }
   let noiseBuf: AudioBuffer = null;
+  /**
+   * Azar propio del sonido (ruido, eco). Antes usaba Math.random, el del juego: el eco se
+   * rellena con un temporizador real (unos 170.000 números) y, según cuándo cayera, cambiaba
+   * todo lo que sale al azar en la partida (las pruebas grabadas fallaban de vez en cuando).
+   */
+  let seed = 0x9e3779b9;
+  const rand = () => { seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
 
   function save() { try { localStorage.setItem(KEY, JSON.stringify(settings)); } catch (e) { /* nada */ } }
 
@@ -44,7 +51,7 @@ export const Audio = (() => {
     let ch = 0;
     const fill = () => {
       const d = ir.getChannelData(ch);
-      for (let i = 0; i < len; i++) { const g = 1 - i / len; d[i] = (Math.random() * 2 - 1) * g * g * Math.sqrt(g); }
+      for (let i = 0; i < len; i++) { const g = 1 - i / len; d[i] = (rand() * 2 - 1) * g * g * Math.sqrt(g); }
       if (++ch < 2) setTimeout(fill, 30); else reverb.buffer = ir;
     };
     setTimeout(fill, 300);
@@ -53,7 +60,7 @@ export const Audio = (() => {
 
     noiseBuf = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
     const nd = noiseBuf.getChannelData(0);
-    for (let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1;
+    for (let i = 0; i < nd.length; i++) nd[i] = rand() * 2 - 1;
 
     applyVolumes();
     return true;
@@ -104,7 +111,7 @@ export const Audio = (() => {
   function noise(t: number, dur: number, dest: AudioNode) {
     const s = ctx.createBufferSource();
     s.buffer = noiseBuf;
-    s.connect(dest); s.start(t, Math.random() * 0.5); s.stop(t + dur + 0.05);
+    s.connect(dest); s.start(t, rand() * 0.5); s.stop(t + dur + 0.05);
     return s;
   }
 

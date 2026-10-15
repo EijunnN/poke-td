@@ -151,6 +151,13 @@ async function main() {
     await ana.click('#rk-mode button:nth-child(2)');
     await ana.waitForFunction(() => /Todavía no hay marcas/.test(document.getElementById('rk-list').textContent), null, { timeout: 10000 });
     check(true, 'la pestaña Grupo está vacía y lo dice');
+    // Las de Defensa (solo y en grupo): sin marcas, otra cabecera y sin filtro por Pokémon.
+    for (const n of [3, 4]) {
+      await ana.click(`#rk-mode button:nth-child(${n})`);
+      await ana.waitForFunction(() => /Todavía no hay marcas/.test(document.getElementById('rk-list').textContent), null, { timeout: 10000 });
+      check(/oleadas superadas/.test(await text(ana, '#rk-what')) && await ana.evaluate(() => document.getElementById('rk-poke').classList.contains('hidden')),
+        `la pestaña ${n === 3 ? 'Defensa' : 'Defensa en grupo'} cuenta oleadas y no filtra por Pokémon`);
+    }
     await ana.click('#rk-mode button:nth-child(1)');
     await ana.waitForFunction(() => document.querySelectorAll('#rk-list .rk-row').length === 2, null, { timeout: 10000 });
     // El filtro por Pokémon (sólo histórico): Beto jugó con Charizard (6)

@@ -5,7 +5,7 @@ import { G } from '../g';
  * no se sube nada, las listas salen vacías y no se lanza ningún error.
  *
  *   tabla = modo + periodo:
- *     s_d20261008   solitario, hoy            g_...   en grupo    d_...   Defensa
+ *     s_d20261008   solitario, hoy            g_...   en grupo    d_...   Defensa    e_...   Defensa en grupo
  *     s_w2026-41    semana ISO                s_m202610  mes
  *     s_all2        histórico
  *     s_all2_p25    histórico sólo con Pikachu (el filtro por Pokémon sólo
@@ -59,7 +59,7 @@ export const Ranking = (() => {
 
   /** El filtro por Pokémon sólo existe en el histórico. */
   function board(mode: string, period: string, dex?: number | null) {
-    return mode + '_' + periodIds()[period] + (dex && period === 'a' && mode !== 'd' ? '_p' + dex : '');
+    return mode + '_' + periodIds()[period] + (dex && period === 'a' && mode !== 'd' && mode !== 'e' ? '_p' + dex : '');
   }
 
   // ---------------- llamadas al servidor ----------------
@@ -146,6 +146,14 @@ export const Ranking = (() => {
   async function submitDefenseNow(r: { waves: number; lives: number; secs: number; kills: number; dex: number; shiny?: boolean }) {
     if (!session() || r.waves < 1) return [];
     return send({ mode: 'd', waves: r.waves, lives: r.lives, secs: r.secs, kills: r.kills, dex: r.dex, shiny: !!r.shiny });
+  }
+
+  /** Defensa en grupo: la sube el anfitrión, con todo el equipo (cada uno con su héroe). */
+  function submitDefenseGroup(r: { waves: number; lives: number; secs: number; kills: number; members: Member[] }) { return track(submitDefenseGroupNow(r)); }
+  async function submitDefenseGroupNow(r: { waves: number; lives: number; secs: number; kills: number; members: Member[] }) {
+    if (!session() || r.waves < 1 || !r.members || r.members.length < 2) return [];
+    return send({ mode: 'e', waves: r.waves, lives: r.lives, secs: r.secs, kills: r.kills,
+                  members: r.members.map(m => ({ uid: String(m.uid), dex: m.dex, shiny: !!m.shiny })) });
   }
 
   // ---------------- leer ----------------
@@ -251,7 +259,7 @@ export const Ranking = (() => {
     return (await need('GET', '/admin/marked')).accounts;
   }
 
-  return { PERIODS, periodIds, board, runStarted, submitSolo, submitGroup, submitDefense, top, myRank, removeMine,
+  return { PERIODS, periodIds, board, runStarted, submitSolo, submitGroup, submitDefense, submitDefenseGroup, top, myRank, removeMine,
            report, reported, isAdmin, reports, entryInfo, removeEntry, purgeAbove, removeEverywhere, setMarked, dismiss, markedAccounts };
 })();
 G.Ranking = Ranking;

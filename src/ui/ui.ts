@@ -184,6 +184,14 @@ export const UI = (() => {
   // ---------------- sprites en canvas del DOM ----------------
 
   const live = new Set<any>();
+  /**
+   * Azar propio de estos dibujos (cuándo atacan, centelleos de shiny): sólo se animan cuando el
+   * navegador avisa de que se ven, y eso llega cuando quiere; con el azar del juego, la partida
+   * dependía de ello.
+   */
+  let useed = 0x2545f491;
+  const urand = (a = 0, b = 1) => { useed = useed + 0x6D2B79F5 | 0; let t = Math.imul(useed ^ useed >>> 15, 1 | useed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return a + (b - a) * (((t ^ t >>> 14) >>> 0) / 4294967296); };
+  const upick = <T,>(xs: T[]) => xs[Math.floor(urand() * xs.length) % xs.length];
   // Sólo se animan los canvas que están a la vista (la colección tiene cientos).
   const seen = new WeakMap();
   const io = 'IntersectionObserver' in window
@@ -205,7 +213,7 @@ export const UI = (() => {
     const a = new G.Sprites.Animator(dex, 1, !!opts.shiny);
     a.dir = opts.dir || 0;
     a.loop(opts.anim || 'Idle');
-    const s = { cv, ctx: cv.getContext('2d'), a, dex, opts, t: Math.random() * 3, spinT: 0, sparkT: 0 };
+    const s = { cv, ctx: cv.getContext('2d'), a, dex, opts, t: urand() * 3, spinT: 0, sparkT: 0 };
     live.add(s);
     if (io) io.observe(cv);
     return s;
@@ -220,7 +228,7 @@ export const UI = (() => {
 
       if (s.opts.lively) {
         s.t -= dt;
-        if (s.t <= 0) { s.t = G.U.rand(2.5, 4.5); s.a.play(G.U.pick(['Attack', 'Shoot', 'Charge'])); }
+        if (s.t <= 0) { s.t = urand(2.5, 4.5); s.a.play(upick(['Attack', 'Shoot', 'Charge'])); }
       }
       if (s.opts.spin) {
         s.spinT += dt;
@@ -261,8 +269,8 @@ export const UI = (() => {
         s.tw = s.tw || [];
         s.sparkT -= dt;
         if (s.sparkT <= 0 && s.tw.length < 4) {
-          s.sparkT = G.U.rand(0.18, 0.45);
-          s.tw.push({ x: fx + G.U.rand(-0.32, 0.32) * cv.width, y: G.U.rand(0.12, 0.7) * cv.height, t: 0, life: G.U.rand(0.5, 0.8) });
+          s.sparkT = urand(0.18, 0.45);
+          s.tw.push({ x: fx + urand(-0.32, 0.32) * cv.width, y: urand(0.12, 0.7) * cv.height, t: 0, life: urand(0.5, 0.8) });
         }
         for (let i = s.tw.length - 1; i >= 0; i--) {
           const w = s.tw[i];

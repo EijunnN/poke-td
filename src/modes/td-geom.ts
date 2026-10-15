@@ -158,6 +158,20 @@ export function stepBack(x: number, y: number, wp: number, d: number, path: Pt[]
   return { x: px, y: py, wp: w };
 }
 
+// ---------------- mapas ----------------
+
+/** Un mapa: su camino en tiles, de la entrada a la base. Todos miden más o menos lo mismo. */
+export interface TdMap { id: string; name: string; en: string; route: [number, number][] }
+export const MAPS: TdMap[] = [
+  { id: 'valle', name: 'Valle', en: 'Valley', route: [[-20, -8], [-8, -8], [-8, 6], [4, 6], [4, -6], [14, -6], [14, 8], [19, 8]] },
+  { id: 'zigzag', name: 'Zigzag', en: 'Zigzag', route: [[-20, -10], [10, -10], [10, 0], [-10, 0], [-10, 10], [19, 10]] },
+  { id: 'espiral', name: 'Espiral', en: 'Spiral', route: [[-20, 4], [-12, -12], [10, -12], [14, 6], [-4, 10], [-6, -3], [4, -3]] },
+];
+/** El mapa con ese id (el primero si no existe). */
+export const mapById = (id: unknown) => MAPS.find(m => m.id === id) || MAPS[0];
+/** Uno al azar. */
+export const randomMap = (rnd: () => number) => MAPS[Math.floor(rnd() * MAPS.length) % MAPS.length];
+
 // ---------------- a quién atacar ----------------
 
 /** A quién ataca una torre, entre los que tiene a su alcance. */
@@ -283,11 +297,11 @@ export const AURA_KINDS: AuraKind[] = ['dmg', 'haste', 'crit', 'bounty', 'range'
 /** `en`: el movimiento y lo que da, en inglés. */
 export interface AuraDef { move: string; color: string; what: string; levels: number[]; en: [string, string] }
 export const AURAS: Record<AuraKind, AuraDef> = {
-  dmg:    { move: 'Danza Espada', color: '#ff6b4a', what: 'de daño',              levels: [0.15, 0.2, 0.25, 0.3, 0.4], en: ['Swords Dance', 'damage'] },
-  haste:  { move: 'Viento Afín',  color: '#7fd4ff', what: 'de velocidad de ataque', levels: [0.15, 0.2, 0.25, 0.3, 0.4], en: ['Tailwind', 'attack speed'] },
-  crit:   { move: 'Foco Energía', color: '#ffb03b', what: 'de golpe crítico (×1,5)', levels: [0.1, 0.13, 0.16, 0.2, 0.25], en: ['Focus Energy', 'critical hit chance (×1.5)'] },
-  bounty: { move: 'Día de Pago',  color: '#ffd23f', what: 'de monedas por cada derrotado', levels: [0.2, 0.3, 0.4, 0.5, 0.6], en: ['Pay Day', 'coins per defeated enemy'] },
-  range:  { move: 'Vista Lince',  color: '#b48cff', what: 'de alcance (a las de largo alcance)', levels: [0.1, 0.15, 0.2, 0.25, 0.3], en: ['Keen Eye', 'range (for long-range towers)'] },
+  dmg:    { move: 'Danza Espada', color: '#ff6b4a', what: 'de daño',              levels: [0.25, 0.31, 0.37, 0.43, 0.5], en: ['Swords Dance', 'damage'] },
+  haste:  { move: 'Viento Afín',  color: '#7fd4ff', what: 'de velocidad de ataque', levels: [0.25, 0.31, 0.37, 0.43, 0.5], en: ['Tailwind', 'attack speed'] },
+  crit:   { move: 'Foco Energía', color: '#ffb03b', what: 'de golpe crítico (×1,5)', levels: [0.2, 0.25, 0.3, 0.36, 0.45], en: ['Focus Energy', 'critical hit chance (×1.5)'] },
+  bounty: { move: 'Día de Pago',  color: '#ffd23f', what: 'de monedas por cada derrotado', levels: [0.3, 0.45, 0.6, 0.75, 0.9], en: ['Pay Day', 'coins per defeated enemy'] },
+  range:  { move: 'Vista Lince',  color: '#b48cff', what: 'de alcance (a las de largo alcance)', levels: [0.15, 0.2, 0.25, 0.3, 0.4], en: ['Keen Eye', 'range (for long-range towers)'] },
 };
 
 /** Qué aura da cada Pokémon de apoyo (sus evoluciones también, para que evolucionar no se la quite). */
@@ -299,14 +313,26 @@ export const SUPPORT: Record<number, AuraKind> = {
   163: 'range', 164: 'range',                                     // Hoothoot, Noctowl
 };
 
+/**
+ * Lo que cuesta un Pokémon de apoyo, sea cual sea su rareza. Por rareza, Scyther, Lucario o
+ * Togekiss costaban 150 (y sus mejoras, en proporción) por algo que no ataca: no salía a cuenta.
+ */
+export const SUPPORT_COST = 90;
+/** Lo que cuesta una torre de ese Pokémon: los de apoyo, SUPPORT_COST; los demás, según su rareza. */
+export const costFor = (dex: number, rarity: number) => (SUPPORT[dex] ? SUPPORT_COST : towerCost(rarity));
+
 /** Fuerza del aura en el nivel `level` (1-5). */
 export function auraStrength(kind: AuraKind, level: number): number {
   const l = AURAS[kind].levels;
   return l[Math.max(0, Math.min(l.length - 1, (level | 0) - 1))];
 }
 
-/** Radio del aura en el nivel `level`. */
-export const auraRadius = (level: number) => 150 + 15 * (Math.max(1, Math.min(MAX_LEVEL, level | 0)) - 1);
+/**
+ * Radio del aura en el nivel `level`. Con tools/td-balance.ts --support: con auras de +15 % y
+ * radio 150 un apoyo (que cuesta como una torre y no ataca) valía mucho menos que otra torre.
+ * Ahora uno de nivel 4 que alcanza a 4 torres vale por unas dos más; dos auras juntas, como mucho ×2,25.
+ */
+export const auraRadius = (level: number) => 170 + 15 * (Math.max(1, Math.min(MAX_LEVEL, level | 0)) - 1);
 
 export interface AuraSource { x: number; y: number; kind: AuraKind; level: number }
 export type AuraTotals = Record<AuraKind, number>;

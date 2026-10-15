@@ -3,8 +3,8 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { DEX } from '../src/data/pokedex';
-import { WAVES, LAST_WAVE, START_LIVES, waveAt, waveHp, waveCount, waveGap, bossHpMul, leakCost,
-         defenseScore, scoreParts, spawnTime, minDefenseTime, maxDefenseKills } from '../src/modes/td-waves';
+import { WAVES, LAST_WAVE, MAX_WAVE, START_LIVES, WIN_COINS, waveAt, waveHp, waveCount, waveGap, bossHpMul, leakCost,
+         defenseScore, scoreParts, spawnTime, minDefenseTime, maxDefenseKills, defenseCoins } from '../src/modes/td-waves';
 import { killReward, waveBonus } from '../src/modes/td-geom';
 
 const BY = new Map(DEX.map(p => [p.dex, p]));
@@ -38,8 +38,27 @@ describe('calendario', () => {
 
   test('fuera de rango no revienta', () => {
     expect(waveAt(0)).toBe(WAVES[0]);
-    expect(waveAt(999)).toBe(WAVES[LAST_WAVE - 1]);
+    expect(waveAt(-5)).toBe(WAVES[0]);
     expect(waveAt(NaN as any)).toBe(WAVES[0]);
+    expect(waveAt(LAST_WAVE)).toBe(WAVES[LAST_WAVE - 1]);
+  });
+
+  test('sin fin: tras la 30 vuelve a empezar el calendario, marcado y con su inglés', () => {
+    for (let n = LAST_WAVE + 1; n <= LAST_WAVE * 3 + 1; n++) {
+      const w = waveAt(n), base = WAVES[(n - 1) % LAST_WAVE];
+      expect(w.endless).toBe(true);
+      expect(w.pool).toEqual(base.pool);
+      expect(w.boss).toBe(base.boss);
+      expect(w.legend).toBe(base.legend);
+      expect(w.theme).toBe('Sin fin · ' + base.theme);
+      expect(w.en[0]).toBe('Endless · ' + base.en[0]);
+      expect(w.en[1]).toBe(base.en[1]);
+    }
+    expect(WAVES.some(w => w.endless)).toBe(false);           // el calendario no se toca
+    expect(waveAt(999).endless).toBe(true);
+    // Sigue endureciéndose: más vida y no menos enemigos que en la 30.
+    expect(waveHp(LAST_WAVE + 1)).toBeGreaterThan(waveHp(LAST_WAVE));
+    expect(waveCount(MAX_WAVE)).toBeGreaterThan(0);
   });
 });
 
@@ -100,7 +119,9 @@ describe('ranking de Defensa', () => {
       expect(minDefenseTime(w)).toBeCloseTo(prev + spawnTime(w), 6);
       prev = minDefenseTime(w);
     }
-    expect(minDefenseTime(LAST_WAVE + 5)).toBe(minDefenseTime(LAST_WAVE));
+    // En el sin fin sigue sumando, hasta el tope del ranking.
+    expect(minDefenseTime(LAST_WAVE + 5)).toBeCloseTo(minDefenseTime(LAST_WAVE) + [1, 2, 3, 4, 5].reduce((s, i) => s + spawnTime(LAST_WAVE + i), 0), 6);
+    expect(minDefenseTime(MAX_WAVE + 10)).toBe(minDefenseTime(MAX_WAVE));
     // Ni demasiado (castigaría a quien juega rápido) ni nada: entre 2 y 15 min para las 30.
     expect(minDefenseTime(LAST_WAVE)).toBeGreaterThan(120);
     expect(minDefenseTime(LAST_WAVE)).toBeLessThan(900);
@@ -109,7 +130,31 @@ describe('ranking de Defensa', () => {
   test('derrotados máximos: todo lo que sale hasta la oleada siguiente, jefes incluidos', () => {
     expect(maxDefenseKills(0)).toBe(waveCount(1));
     const all = WAVES.reduce((s, w, i) => s + waveCount(i + 1) + (w.boss ? 1 : 0), 0);
-    expect(maxDefenseKills(LAST_WAVE)).toBe(all);
     expect(maxDefenseKills(LAST_WAVE - 1)).toBe(all);
+    // Tras la 30, la siguiente (la 31, del sin fin) también cuenta.
+    expect(maxDefenseKills(LAST_WAVE)).toBe(all + waveCount(LAST_WAVE + 1) + (waveAt(LAST_WAVE + 1).boss ? 1 : 0));
+    expect(maxDefenseKills(MAX_WAVE + 5)).toBe(maxDefenseKills(MAX_WAVE));
+  });
+
+  test('puntuación del sin fin: hasta la 99 cabe sin pisar las vidas', () => {
+    expect(scoreParts(defenseScore(MAX_WAVE, START_LIVES))).toEqual({ waves: MAX_WAVE, lives: START_LIVES });
+    expect(defenseScore(LAST_WAVE + 1, 0)).toBeGreaterThan(defenseScore(LAST_WAVE, START_LIVES));
+  });
+});
+
+describe('recompensas de cuenta', () => {
+  test('10 por oleada, 1 por cada 5 derrotados y el premio de la victoria', () => {
+    expect(defenseCoins(0, 0, false)).toBe(0);
+    expect(defenseCoins(10, 99, false)).toBe(100 + 19);
+    expect(defenseCoins(30, 500, true)).toBe(300 + 100 + WIN_COINS);
+    expect(defenseCoins(-3, -10, false)).toBe(0);
+    expect(defenseCoins(12.7, 7.9, false)).toBe(120 + 1);
+  });
+
+  test('una partida entera da más o menos lo que una de hordas del mismo rato (no se dispara)', () => {
+    // 30 oleadas con todos los enemigos derrotados: unas 700 monedas (una de hordas de 20 min da del orden de 600-900).
+    const all = maxDefenseKills(LAST_WAVE - 1);
+    expect(defenseCoins(LAST_WAVE, all, true)).toBeLessThan(1000);
+    expect(defenseCoins(LAST_WAVE, all, true)).toBeGreaterThan(500);
   });
 });

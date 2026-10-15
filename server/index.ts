@@ -44,7 +44,9 @@ export function startServer(o: ServerOptions = {}) {
   // Módulos de la API: cada uno con sus rutas y sus tablas.
   // Las marcas de grupo del ranking sólo valen para el equipo que de verdad empezó una partida junto
   // (lo apunta realtime cuando el anfitrión manda `start`) y no antes de que el anfitrión avisara al ranking.
-  const ranking = createRanking(db, { verifyTeam: rt.verifyTeam });
+  // Con el mismo reloj que el tiempo real (en las pruebas, uno falso): verifyTeam compara sus horas.
+  const clock = o.realtime?.clock;
+  const ranking = createRanking(db, { verifyTeam: rt.verifyTeam, now: clock ? () => clock.now() : undefined });
   const modules: Module[] = [createAccount(db, { perIp: o.loginLimit }), ranking, createSocial(db, rt)];
   const api = createApi(db, { loginLimit: o.loginLimit, modules });
 

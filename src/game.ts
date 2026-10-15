@@ -363,11 +363,12 @@ export const Flow = {
     } else this.goMenu();
   },
   play() { G.Game.startRun(); },
-  /** Empieza la partida en grupo (el anfitrión la manda a todos). */
+  /** Empieza la partida en grupo (el anfitrión la manda a todos): de hordas o, con mode 'td', de Defensa. */
   startCoop(cfg) {
     if (G.Game.state !== 'ui' || !G.Social.room) return;
     G.LobbyUI.close();
-    G.Game.startRun(cfg);
+    if (cfg.mode === 'td') G.Game.start('td', { coop: cfg });
+    else G.Game.startRun(cfg);
   }
 };
 G.Flow = Flow;

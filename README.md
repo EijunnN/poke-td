@@ -12,6 +12,8 @@ Juego de Pokémon para navegador y móvil con dos modos:
   poder (Hielo congela, Fuego quema, Eléctrico paraliza, Psíquico confunde...) y la
   tabla de tipos de los juegos manda. Los Pokémon de apoyo (Scyther, Togekiss, Lucario,
   Meowth, Noctowl) no atacan: dan auras de daño, velocidad, crítico, monedas o alcance.
+  Tres mapas, modo sin fin tras la victoria, premios de cuenta, misiones y logros, ranking
+  propio y **en grupo de 2 a 4** (vidas compartidas, monedas y torres de cada uno).
 
 Sprites de *Pokémon Mundo Misterioso*, **966 Pokémon de las 9 generaciones**,
 shinies, gacha por región, misiones, logros, ranking, amigos y partidas en grupo

@@ -776,6 +776,8 @@ a.btn { text-decoration: none; display: inline-block; color: var(--ink); }
 .news-btn.new .dot { display: block; }
 .box.news-box { width: min(640px, 100%); max-height: calc(100dvh - 90px); display: flex; flex-direction: column; }
 .news-body { overflow-y: auto; padding-right: 4px; }
+/* Sala: a qué se juega (ui/social-ui.ts, LobbyUI) */
+.lobby-mode { gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
 /* Cómo se juega (ui/guide-ui.ts) */
 .guide-body h3 { color: var(--gold); margin: 14px 0 6px; font-size: 17px; }
 .guide-body p, .guide-body li { line-height: 1.45; }

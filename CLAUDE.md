@@ -8,7 +8,7 @@ servidores, dominio ni cuentas con el original.
   uno se apunta en `G` (`src/g.ts`) y declara su tipo en `Registry`.
 - Modos de juego: `src/game.ts` lleva el bucle, el lienzo, la pausa y los menús;
   lo de dentro de la partida lo pone un modo que cumple `GameMode` (`src/run.ts`).
-  `src/modes/survivor.ts` es el de hordas y `src/modes/td.ts` el de Defensa (sus cálculos puros en `td-geom.ts`, las oleadas en `td-waves.ts`; `node tools/td-balance.ts` juega una partida entera con un bot para afinarlas). Un modo nuevo se añade en `src/modes/`,
+  `src/modes/survivor.ts` es el de hordas y `src/modes/td.ts` el de Defensa (sus cálculos puros y mapas en `td-geom.ts`, las oleadas, el ranking y los premios en `td-waves.ts`; `node tools/td-balance.ts` juega una partida entera con un bot para afinarlas, `--support` con apoyos). La Defensa en grupo usa la red del cooperativo (`src/net/coop.ts`: eventos propios por `api.onEvent` y `api.resync`); la sala elige el modo (`LobbyUI`, `cfg.mode === 'td'`). Ranking: modos `d` (Defensa) y `e` (Defensa en grupo), su `t` es oleadas·100 + vidas. Un modo nuevo se añade en `src/modes/`,
   se importa en `main.ts` y se apunta en `MODES` de `game.ts`.
 - `public/` — estáticos servidos tal cual (`assets/` con sprites, fuente e iconos; PWA).
 - `server/` — servidor Bun sobre SQLite (`server/db.ts`, archivo en `data/`); sustituye a Firebase.

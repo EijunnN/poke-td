@@ -26,12 +26,15 @@ export interface MissionEventData {
   types?: string[];
   boss?: boolean;
   daily?: boolean;
+  /** Defensa (tdEnd): oleadas superadas y si se ganó. */
+  waves?: number;
+  won?: boolean;
 }
 
 /** Una plantilla de misión (ver cabecera). */
 export interface MissionDef {
   id: string;
-  ev: 'kill' | 'runEnd' | 'chest' | 'item' | 'evolve' | 'rift' | 'missionDone';
+  ev: 'kill' | 'runEnd' | 'chest' | 'item' | 'evolve' | 'rift' | 'missionDone' | 'tdEnd';
   param?: 'type';
   mode?: 'max' | 'add';
   value?: (d: MissionEventData) => number;
@@ -65,7 +68,9 @@ export const MissionDefs = (() => {
     { id: 'item', ev: 'item', goals: [1], reward: { t1: 2, coins: 150 },
       text: () => 'Encuentra un objeto equipable' },
     { id: 'evolve', ev: 'evolve', goals: [1], reward: { t1: 3, coins: 250 },
-      text: () => 'Evoluciona un movimiento' }
+      text: () => 'Evoluciona un movimiento' },
+    { id: 'tdWaves', ev: 'tdEnd', mode: 'max', value: d => d.waves || 0, goals: [10, 15, 20], reward: { t1: 3, coins: 200 },
+      text: n => `Supera ${n} oleadas en una partida de Defensa` }
   ];
 
   const weekly: MissionDef[] = [
@@ -80,7 +85,9 @@ export const MissionDefs = (() => {
     { id: 'wevolve', ev: 'evolve', goals: [3, 5], reward: { t10: 1, coins: 900 },
       text: n => `Evoluciona ${n} movimientos` },
     { id: 'wdaily', ev: 'missionDone', match: d => d.daily, goals: [8, 12], reward: { t10: 1, coins: 800 },
-      text: n => `Completa ${n} misiones diarias` }
+      text: n => `Completa ${n} misiones diarias` },
+    { id: 'wtdWin', ev: 'tdEnd', match: d => !!d.won, goals: [1, 2], reward: { t10: 1, coins: 1000 },
+      text: n => (n === 1 ? 'Gana una partida de Defensa (las 30 oleadas)' : `Gana ${n} partidas de Defensa`) }
   ];
 
   const BY: Record<string, MissionDef> = {};

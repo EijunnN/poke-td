@@ -22,6 +22,8 @@ export interface Wave {
   boss?: number;
   /** El jefe es legendario (más vida y más vidas si llega). */
   legend?: boolean;
+  /** Oleada del modo sin fin (después de la última). */
+  endless?: boolean;
 }
 
 export const WAVES: Wave[] = [
@@ -59,8 +61,19 @@ export const WAVES: Wave[] = [
 
 export const LAST_WAVE = WAVES.length;
 
-/** La oleada n (1..30); más allá de la última, la última. */
-export const waveAt = (n: number): Wave => WAVES[Math.max(0, Math.min(WAVES.length - 1, (n | 0) - 1))];
+/**
+ * La oleada n. Tras la última sigue el modo sin fin: el calendario vuelve a empezar
+ * (con sus jefes y legendarios), pero la vida y la velocidad siguen creciendo con n.
+ */
+export function waveAt(n: number): Wave {
+  const w = Math.max(1, n | 0);
+  const base = WAVES[(w - 1) % WAVES.length];
+  if (w <= WAVES.length) return base;
+  return { ...base, theme: 'Sin fin · ' + base.theme, en: ['Endless · ' + base.en[0], base.en[1]], endless: true };
+}
+
+/** Hasta qué oleada cuenta el ranking (el sin fin no da para más: la vida crece un 19 % por oleada). */
+export const MAX_WAVE = 99;
 
 /** Cuánto crece la vida de una oleada a la siguiente. */
 export const HP_GROWTH = 1.19;
@@ -109,12 +122,26 @@ export function spawnTime(n: number): number {
 /** Lo mínimo que puede durar (en segundos de partida) superar las primeras `waves` oleadas. */
 export function minDefenseTime(waves: number): number {
   let s = 0;
-  for (let n = 1; n <= Math.min(waves, LAST_WAVE); n++) s += spawnTime(n);
+  for (let n = 1; n <= Math.min(waves, MAX_WAVE); n++) s += spawnTime(n);
   return s;
 }
 /** Los enemigos que pueden salir hasta la oleada siguiente a las `waves` superadas (la que te tumbó). */
 export function maxDefenseKills(waves: number): number {
   let k = 0;
-  for (let n = 1; n <= Math.min(waves + 1, LAST_WAVE); n++) k += waveCount(n) + (waveAt(n).boss ? 1 : 0);
+  for (let n = 1; n <= Math.min(waves + 1, MAX_WAVE); n++) k += waveCount(n) + (waveAt(n).boss ? 1 : 0);
   return k;
+}
+
+// ---------------- recompensas de cuenta ----------------
+
+/** Premio por ganar (superar la última oleada). */
+export const WIN_COINS = 250;
+
+/**
+ * Monedas de la cuenta al acabar una partida de Defensa: 10 por oleada superada,
+ * una por cada 5 derrotados y el premio de la victoria. Más o menos lo que da una
+ * partida de hordas del mismo rato (y lo que el guardado del servidor acepta).
+ */
+export function defenseCoins(waves: number, kills: number, won: boolean): number {
+  return Math.max(0, waves | 0) * 10 + Math.floor(Math.max(0, kills | 0) / 5) + (won ? WIN_COINS : 0);
 }

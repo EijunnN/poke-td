@@ -23,6 +23,10 @@ import { G } from '../g';
  * las copias del invitado y siguen los enemigos, objetos y props rotos que hay ahora, más cómo está
  * la subida de nivel. El invitado guarda sus eventos (golpes, elegir carta...) hasta poder mandarlos.
  * El estado del mapa (Sentencia de Arceus, grieta/arena y clima) va en ['st', ...] justo después de ['rs'].
+ *
+ * Otros modos (el de Defensa, modes/td.ts) mandan sus propios eventos por el mismo
+ * camino (broadcast / toHost) y los reciben en api.onEvent; los estados que añade
+ * un enemigo con netBits() van en los bits 3 y siguientes de su estado.
  */
 /** Un jugador de la partida (lo que manda el anfitrión al empezar). */
 export interface CoopMember { uid: string; name: string; dex: number; shiny: boolean }
@@ -34,6 +38,13 @@ export interface CoopApi {
   hold?(names: string[]): void; away?(name: string | null): void;
   shiny(dex: number): void; item(id: any): void;
   over(data: any): void; lost(msg: string): void; mateLeft?(m: any): void;
+  /**
+   * Eventos propios del modo (los que Coop no conoce): en el anfitrión, los de un
+   * invitado (`from` = su uid); en el invitado, los del anfitrión. Ver modes/td.ts.
+   */
+  onEvent?(from: string, ev: any[]): void;
+  /** Anfitrión: eventos del modo que recuperan su estado tras un corte (van detrás de los enemigos). */
+  resync?(u: string): any[];
 }
 type Ev = any[];
 
@@ -192,7 +203,7 @@ export const Coop = (() => {
       if (out.length >= MAX_E) break;
       const a = ANIMS.indexOf(e.anim.cur);
       out.push([e.id, r1(e.x), r1(e.y), Math.ceil(e.hp), a < 0 ? 0 : a, e.anim.dir,
-                (e.burn > 0 ? 1 : 0) | (e.poison > 0 ? 2 : 0) | (e.shield > 0 ? 4 : 0)]);
+                (e.burn > 0 ? 1 : 0) | (e.poison > 0 ? 2 : 0) | (e.shield > 0 ? 4 : 0) | ((e.netBits ? e.netBits() : 0) << 3)]);
     }
     return out;
   }
@@ -292,6 +303,7 @@ export const Coop = (() => {
       evs.push(['lw', [...waiting].map(nameOf)]);
     } else evs.push(['lr']);
     evs.push(['hp', holdNames()]);
+    if (api.resync) evs.push(...api.resync(u));
     evs.push(...m.owed.splice(0));
     m.q = evs;
   }
@@ -345,6 +357,7 @@ export const Coop = (() => {
         case 'he': holdOff(from); break;
         case 're': G.Rift.enterRequest(); break;
         case 'bye': mateGone(from); break;
+        default: if (api.onEvent) api.onEvent(from, ev);
       }
     }
   }
@@ -429,6 +442,7 @@ export const Coop = (() => {
       case 'ev': G.Events.onNet(ev); break;
       case 'hz': G.Hazards.add(ev[1], true); break;
       case 'fxr': G.FX.ring(ev[1], ev[2], 8, ev[3], ev[4], 0.5, 3); break;
+      default: if (api.onEvent) api.onEvent(hostUid, ev);
     }
   }
 

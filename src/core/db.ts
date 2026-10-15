@@ -30,6 +30,9 @@ export interface SaveStats {
   coinsEarned: number; shinies: number; bossesTotal: number; riftWins: number; evolutions: number;
   missionsDone: number; groupRuns: number; bestGroupTime: number;
   judged?: number; judgeTime?: number; judgeBosses?: number;   // Sentencia de Arceus (se crean al usarlas)
+  // Defensa (modes/td.ts; se crean al usarlas): partidas, mejor oleada superada, victorias,
+  // victorias en grupo y victorias sin perder ninguna vida.
+  tdRuns?: number; tdBestWave?: number; tdWins?: number; tdGroupWins?: number; tdPerfect?: number;
 }
 
 /** Partida guardada de una cuenta. Las claves de los mapas son números de Pokédex o ids. */

@@ -133,6 +133,8 @@ export class Enemy {
   // Se añaden más tarde (o sólo a algunos enemigos):
   declare golden?: boolean;           // hora dorada (makeGolden)
   declare remote?: boolean;           // copia de un enemigo del anfitrión
+  /** Estados propios de un modo para el cooperativo (net/coop.ts los manda en los bits 3+ del estado). */
+  declare netBits?: () => number;
   declare net?: EnemyNet;             // última posición recibida (copias)
   declare lastNetAnim?: number;
   declare ai?: BossAI;                // IA de jefe (bossInit)

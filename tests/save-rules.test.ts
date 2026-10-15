@@ -356,7 +356,9 @@ describe('PUT /api/save: lo conseguido nunca se pierde', () => {
     const s = rica();
     seed(u, s);
     age(u, 600);
-    const encogida = game({ created: s.created, coins: 100, owned: { 1: mon() }, stats: { runs: 1 } });
+    // (El que se queda, con la misma entrada: con mon() llevaría la hora de ahora, y si cambiaba el
+    // milisegundo entre las dos la comparación de abajo fallaba sin que el servidor tuviera culpa.)
+    const encogida = game({ created: s.created, coins: 100, owned: { 1: s.owned[1] }, stats: { runs: 1 } });
     const r = await put(u, encogida, 1);
     expect(r.status).toBe(200);
     const g = (await stored(u)).save;

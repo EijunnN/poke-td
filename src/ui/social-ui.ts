@@ -145,6 +145,12 @@ import { G } from '../g';
 
   export const LobbyUI = (() => {
     let membersKey = '';
+    /**
+     * A qué se juega: hordas o Defensa (y en qué mapa). Lo elige el anfitrión y se lo
+     * cuenta a la sala con { k:'lobby', mode, map } (otra vez cuando entra alguien).
+     */
+    let game: { mode: 'hordas' | 'td'; map: string } = { mode: 'hordas', map: 'random' };
+    const tellGame = () => { if (G.Social.room && G.Social.room.isHost) G.Net.broadcast({ k: 'lobby', ...game }); };
 
     function init() {
       $('lobby-leave').onclick = async () => {
@@ -168,7 +174,41 @@ import { G } from '../g';
         }
         if (G.UI.isOpen('scr-lobby')) render();
       });
-      G.Net.onPeer(() => { if (G.UI.isOpen('scr-lobby')) render(); });
+      G.Net.onPeer((u, mode) => {
+        if (mode === 'relay') tellGame();          // quien llega (o vuelve) se entera de a qué se juega
+        if (G.UI.isOpen('scr-lobby')) render();
+      });
+      G.Net.on((from, msg) => {
+        const room = G.Social.room;
+        if (!msg || msg.k !== 'lobby' || !room || from !== room.host || room.isHost) return;
+        game = { mode: msg.mode === 'td' ? 'td' : 'hordas', map: typeof msg.map === 'string' ? msg.map.slice(0, 20) : 'random' };
+        if (G.UI.isOpen('scr-lobby')) render();
+      });
+    }
+
+    /** El modo (y el mapa de la Defensa): botones para el anfitrión; para los demás, lo que ha elegido. */
+    function renderMode(room) {
+      const box = $('lobby-mode');
+      const maps = [...G.TD_MAPS.map(m => [m.id, m.name]), ['random', 'Al azar']];
+      const mapName = (maps.find(m => m[0] === game.map) || maps[maps.length - 1])[1];
+      if (!room.isHost) {
+        box.innerHTML = `<span class="sub">Modo: <b>${game.mode === 'td' ? 'Defensa · ' + esc(mapName) : 'Hordas'}</b></span>`;
+        return;
+      }
+      box.innerHTML = '<b>Modo:</b>';
+      const chip = (label, on, fn) => {
+        const b = document.createElement('button');
+        b.className = 'btn small' + (on ? ' gold' : '');
+        b.textContent = label;
+        b.onclick = () => { fn(); tellGame(); render(); };
+        box.appendChild(b);
+      };
+      chip('Hordas', game.mode === 'hordas', () => { game.mode = 'hordas'; });
+      chip('Defensa', game.mode === 'td', () => { game.mode = 'td'; });
+      if (game.mode === 'td') {
+        box.insertAdjacentHTML('beforeend', '<b style="margin-left:8px">Mapa:</b>');
+        for (const [id, name] of maps) chip(name, game.map === id, () => { game.map = id; });
+      }
     }
 
     function open() {
@@ -193,6 +233,7 @@ import { G } from '../g';
       const room = G.Social.room;
       if (!room) return;
       const ms = room.members;
+      renderMode(room);
       $('lobby-sub').textContent = room.isHost
         ? 'Eres el anfitrión. Invita a tus amigos (hasta ' + G.Social.MAX_PLAYERS + ') y empezad cuando estéis.'
         : 'Estás en la sala de ' + ((ms.find(m => m.uid === room.host) || {}).name || '…') + '. El anfitrión empezará la partida.';
@@ -257,16 +298,18 @@ import { G } from '../g';
     function start() {
       const room = G.Social.room;
       if (!room || !room.isHost || room.members.length < 2) return;
-      const cfg = {
+      const cfg: { k: string; [key: string]: any } = {
         k: 'start', seed: Math.floor(Math.random() * 1e6), host: room.host,
         members: room.members.map(m => ({ uid: m.uid, name: m.name, dex: m.dex, shiny: !!m.shiny }))
       };
+      // Defensa: el mapa elegido (o uno al azar, el mismo para todos).
+      if (game.mode === 'td') { cfg.mode = 'td'; cfg.map = game.map === 'random' ? G.U.pick(G.TD_MAPS).id : game.map; }
       G.Social.setOpen(false);
       G.Net.broadcast(cfg);
       G.Flow.startCoop(cfg);
     }
 
-    return { init, open, close, render };
+    return { init, open, close, render, get game() { return { ...game }; }, setGame(mode: 'hordas' | 'td', map = 'random') { game = { mode, map }; tellGame(); render(); } };
   })();
   G.LobbyUI = LobbyUI;
 

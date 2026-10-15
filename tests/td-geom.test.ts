@@ -3,6 +3,7 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { leadAngle, distToPath, placementError, moveRange, PATH_CLEAR, TOWER_GAP } from '../src/modes/td-geom';
+import { MAPS, mapById, randomMap, distToSegment, pathLengths, ENDS_CLEAR } from '../src/modes/td-geom';
 
 /** Simula el disparo: ¿pasa el proyectil a menos de `hit` del blanco en algún momento? */
 function hits(sx: number, sy: number, tx: number, ty: number, vx: number, vy: number, speed: number, ang: number, hit = 12, life = 3) {
@@ -244,5 +245,65 @@ describe('Pokémon de apoyo', () => {
       for (const to of EVOLUTIONS[d] || []) if (by.has(to)) expect(SUPPORT[to]).toBe(SUPPORT[d]);
     }
     expect(Object.values(SUPPORT).every(k => AURAS[k as string])).toBe(true);
+  });
+});
+
+describe('mapas', () => {
+  const TS = 32, BOUND = 20 * TS, CLEAR = 24;          // como en modes/td.ts (tile de 32, claro de 24 tiles)
+  const ptsOf = (m: typeof MAPS[number]) => m.route.map(([x, y]) => ({ x: x * TS, y: y * TS }));
+  const lenOf = (m: typeof MAPS[number]) => { const l = pathLengths(ptsOf(m)); return l[l.length - 1]; };
+
+  test('ids únicos, nombre en los dos idiomas, y mapById / randomMap', () => {
+    expect(new Set(MAPS.map(m => m.id)).size).toBe(MAPS.length);
+    expect(MAPS.length).toBeGreaterThanOrEqual(3);
+    for (const m of MAPS) { expect(m.name.length).toBeGreaterThan(0); expect(m.en.length).toBeGreaterThan(0); }
+    for (const m of MAPS) expect(mapById(m.id)).toBe(m);
+    expect(mapById('nada')).toBe(MAPS[0]);
+    expect(mapById(undefined)).toBe(MAPS[0]);
+    const seen = new Set<string>();
+    for (let i = 0; i < MAPS.length; i++) seen.add(randomMap(() => (i + 0.5) / MAPS.length).id);
+    expect(seen.size).toBe(MAPS.length);
+    expect(randomMap(() => 0.9999999).id).toBe(MAPS[MAPS.length - 1].id);
+  });
+
+  test.each(MAPS.map(m => [m.id, m] as const))('%s: cabe en el claro, y la entrada y la base quedan lejos', (_, m) => {
+    for (const [x, y] of m.route) expect(Math.hypot(x, y)).toBeLessThanOrEqual(CLEAR - 0.5);
+    const p = ptsOf(m), a = p[0], b = p[p.length - 1];
+    expect(Math.hypot(a.x - b.x, a.y - b.y)).toBeGreaterThan(2 * ENDS_CLEAR + 200);
+  });
+
+  test.each(MAPS.map(m => [m.id, m] as const))('%s: los tramos que no se tocan quedan separados (cabe una torre entre ellos)', (_, m) => {
+    const p = ptsOf(m);
+    // Entre dos tramos no seguidos: los dos bordes del camino y sitio para una torre.
+    const need = 2 * PATH_CLEAR + TOWER_GAP;
+    for (let i = 0; i + 1 < p.length; i++) {
+      for (let j = i + 2; j + 1 < p.length; j++) {
+        // Distancia mínima entre los dos segmentos (por sus puntos y muestras).
+        let d = Infinity;
+        for (let k = 0; k <= 20; k++) {
+          const t = k / 20;
+          d = Math.min(d, distToSegment(p[i].x + (p[i + 1].x - p[i].x) * t, p[i].y + (p[i + 1].y - p[i].y) * t, p[j], p[j + 1]));
+          d = Math.min(d, distToSegment(p[j].x + (p[j + 1].x - p[j].x) * t, p[j].y + (p[j + 1].y - p[j].y) * t, p[i], p[i + 1]));
+        }
+        expect([i, j, Math.round(d)]).toEqual([i, j, Math.max(Math.round(d), need)]);
+      }
+    }
+  });
+
+  test('todos miden parecido (la dificultad y el ranking valen para cualquiera)', () => {
+    const base = lenOf(MAPS[0]);
+    for (const m of MAPS) expect([m.id, Math.abs(lenOf(m) / base - 1) < 0.35]).toEqual([m.id, true]);
+  });
+
+  test.each(MAPS.map(m => [m.id, m] as const))('%s: hay sitio de sobra para construir junto al camino', (_, m) => {
+    const path = ptsOf(m);
+    let ok = 0;
+    for (let x = -BOUND; x <= BOUND; x += TS) {
+      for (let y = -BOUND; y <= BOUND; y += TS) {
+        if (distToPath(x, y, path) > 160) continue;         // al alcance del camino
+        if (!placementError(x, y, { path, towers: [], bound: BOUND })) ok++;
+      }
+    }
+    expect(ok).toBeGreaterThan(120);
   });
 });

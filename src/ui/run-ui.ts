@@ -103,13 +103,12 @@ export const RunUI = (() => {
     return true;
   }
 
+  /** @param r  lo de la partida; `cells` ([nombre, valor][]) cambia las cuatro cifras de arriba (la Defensa enseña oleadas y vidas). */
   function showOver(r, onBack) {
     $('over-title').textContent = r.dead ? 'Has caído…' : 'Run terminada';
+    const cells: [string, string | number][] = r.cells || [['Tiempo', G.U.mmss(r.time)], ['Nivel', r.level], ['Derrotados', r.kills], ['Jefes', r.bosses]];
     $('over-stats').innerHTML = `
-      <div><span>Tiempo</span><b>${G.U.mmss(r.time)}</b></div>
-      <div><span>Nivel</span><b>${r.level}</b></div>
-      <div><span>Derrotados</span><b>${r.kills}</b></div>
-      <div><span>Jefes</span><b>${r.bosses}</b></div>
+      ${cells.map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join('')}
       ${r.judge ? `<div style="grid-column:1/-1"><span>Ante Arceus</span><b class="gold">${G.U.mmss(r.judge.time)} · ${r.judge.bosses} ${r.judge.bosses === 1 ? 'legendario' : 'legendarios'}</b></div>` : ''}
       <div style="grid-column:1/-1"><span>Pokémonedas ganadas</span>
         <b class="gold"><span class="coin"></span> +${r.coins}</b>

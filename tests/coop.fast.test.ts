@@ -670,6 +670,170 @@ describe('cooperativo', () => {
     expect(await B.allErrors()).toEqual([]);
   });
 
+  // ---------------- Defensa en grupo (modes/td.ts) ----------------
+
+  test('Defensa en grupo: el anfitrión elige modo y mapa en la sala, y empieza para los dos', async () => {
+    await click(A, '#btn-again');
+    await click(B, '#btn-again');
+    await waitPage(A, 'A de vuelta en la sala', () => G.Social.room && G.Social.room.members.length === 2 && G.Game.state === 'ui');
+    await waitPage(B, 'B de vuelta en la sala', () => G.Social.room && G.Game.state === 'ui');
+    await A.eval(() => G.LobbyUI.setGame('td', 'zigzag'));
+    await waitPage(B, 'B ve que se juega a Defensa en Zigzag', () => G.LobbyUI.game.mode === 'td' && G.LobbyUI.game.map === 'zigzag');
+    expect(await B.eval(() => document.getElementById('lobby-mode').textContent)).toContain('Defensa');
+    await waitPage(A, 'A puede empezar', () => !(document.getElementById('lobby-start') as HTMLButtonElement).disabled);
+    await click(A, '#lobby-start');
+    for (const d of [A, B]) await waitPage(d, 'en la Defensa en grupo', () => G.Run.mode && G.Run.mode.id === 'td' && G.Coop.active && G.Game.state === 'playing');
+    const a = await A.eval(() => G.TD.net), b = await B.eval(() => G.TD.net);
+    expect([a.coop, a.host, a.map, b.coop, b.host, b.map]).toEqual([true, true, 'zigzag', true, false, 'zigzag']);
+    // Cada uno con su cartera (las lleva el anfitrión; el invitado recibe la suya).
+    expect(a.purse).toEqual({ [uidA]: 150, [uidB]: 150 });
+    await waitPage(B, 'B recibe el estado del anfitrión', u => G.TD.net.purse[u] === 150, uidB);
+    expect(await A.allErrors()).toEqual([]);
+    expect(await B.allErrors()).toEqual([]);
+  });
+
+  /** Un sitio libre junto al camino (el n-ésimo, por cercanía al camino), según lo que ve esa página. */
+  const freeSpot = (d: Dev, n = 0) => d.eval(k => {
+    const r = G.TD.route, out: { x: number; y: number; d: number }[] = [];
+    const seg = (x: number, y: number, a: any, b: any) => {
+      const dx = b.x - a.x, dy = b.y - a.y, l = dx * dx + dy * dy;
+      const t = l ? Math.max(0, Math.min(1, ((x - a.x) * dx + (y - a.y) * dy) / l)) : 0;
+      return Math.hypot(a.x + dx * t - x, a.y + dy * t - y);
+    };
+    for (let x = -600; x <= 600; x += 24) for (let y = -600; y <= 600; y += 24) {
+      if (!G.TD.canPlace(x, y)) continue;
+      let dm = Infinity;
+      for (let i = 1; i < r.length; i++) dm = Math.min(dm, seg(x, y, r[i - 1], r[i]));
+      if (dm < 110) out.push({ x, y, d: Math.abs(x) + Math.abs(y) });
+    }
+    out.sort((p, q) => p.d - q.d);
+    return out[k * 7];
+  }, n);
+  /** Planta en esa página la primera torre que se pueda comprar de su tienda, en un sitio libre. */
+  async function plantOn(d: Dev, n: number) {
+    const s = await freeSpot(d, n);
+    expect(s).toBeTruthy();
+    await d.eval(p => { const dex = G.TD.info.shop[0]; G.TD.debugBuy(dex); G.TD.debugPlace(p.x, p.y); }, s);
+    return s;
+  }
+
+  test('Defensa en grupo: cada uno planta con sus monedas, y sólo el dueño toca su torre', async () => {
+    // B (invitado) pide plantar: lo hace el anfitrión con el dinero de B.
+    const sb = await plantOn(B, 0);
+    await waitPage(A, 'A ve la torre de B', u => G.TD.net.towers.some((t: any) => t.owner === u), uidB);
+    await waitPage(B, 'B ve su torre', u => G.TD.net.towers.some((t: any) => t.owner === u), uidB);
+    const cost = await A.eval(u => 150 - G.TD.net.purse[u], uidB);
+    expect(cost).toBeGreaterThan(0);
+    expect(await A.eval(u => G.TD.net.purse[u], uidA)).toBe(150);                // la de A no se toca
+    await waitPage(B, 'a B le cobran lo suyo', c => G.TD.info.money === 150 - c, cost);
+    expect(await B.eval(() => G.TD.net.towers[0])).toMatchObject({ x: sb.x, y: sb.y, level: 1 });
+    // A planta la suya; B la ve, de A.
+    await plantOn(A, 3);
+    await waitPage(B, 'B ve la torre de A', u => G.TD.net.towers.some((t: any) => t.owner === u), uidA);
+    expect(await A.eval(() => G.TD.net.towers.map((t: any) => [t.id, t.owner]))).toEqual(await B.eval(() => G.TD.net.towers.map((t: any) => [t.id, t.owner])));
+
+    // B intenta mejorar y vender la de A: el anfitrión no le hace caso.
+    const iA = await B.eval(u => G.TD.net.towers.findIndex((t: any) => t.owner === u), uidA);
+    const moneyB = await A.eval(u => G.TD.net.purse[u], uidB);
+    await B.eval(i => { G.TD.debugUpgrade(i); G.TD.debugSell(i); G.TD.debugCycleMode(i); }, iA);
+    await rig.run(10);
+    const ta = await A.eval(u => G.TD.net.towers.find((t: any) => t.owner === u), uidA);
+    expect([ta.level, ta.mode]).toEqual([1, 'first']);
+    expect(await A.eval(u => G.TD.net.purse[u], uidB)).toBe(moneyB);
+    // En el panel, la de un compañero no tiene botones.
+    await B.eval(i => G.TD.debugSelect(i), iA);
+    expect(await B.eval(() => [!!document.querySelector('#td-panel [data-a=up]'), document.getElementById('td-panel').textContent.includes(G.Coop.members[0].name)])).toEqual([false, true]);
+
+    // B no puede plantar encima de una torre: el anfitrión se lo dice y no cobra.
+    await B.eval(p => { G.TD.debugBuy(G.TD.info.shop[0]); }, null);
+    await B.eval(p => { G.TD.debugPlace(p.x, p.y); }, sb);
+    await rig.run(10);
+    expect(await A.eval(u => G.TD.net.towers.filter((t: any) => t.owner === u).length, uidB)).toBe(1);
+    expect(await A.eval(u => G.TD.net.purse[u], uidB)).toBe(moneyB);
+
+    // B mejora la suya (y cambia a quién ataca): se ve igual en los dos.
+    const iB = await B.eval(u => G.TD.net.towers.findIndex((t: any) => t.owner === u), uidB);
+    await B.eval(i => { G.TD.debugUpgrade(i); G.TD.debugCycleMode(i); }, iB);
+    await waitPage(A, 'la torre de B sube de nivel en el anfitrión', u => { const t = G.TD.net.towers.find((x: any) => x.owner === u); return t.level === 2 && t.mode === 'last'; }, uidB);
+    await waitPage(B, 'y en B', u => { const t = G.TD.net.towers.find((x: any) => x.owner === u); return t.level === 2 && t.mode === 'last'; }, uidB);
+    expect(await A.eval(u => G.TD.net.purse[u], uidB)).toBeLessThan(moneyB);
+    expect(await A.allErrors()).toEqual([]);
+    expect(await B.allErrors()).toEqual([]);
+  });
+
+  test('Defensa en grupo: las oleadas, los ataques de las torres en los dos y las monedas para los dos', async () => {
+    // Los héroes aguantan y casi no pegan: así los enemigos llegan a las torres (si no, los héroes los barren antes).
+    for (const d of [A, B]) await d.eval(() => { const p = G.Game.player; p.maxHp = p.hp = 1e7; p.atkMul = 0.001; });
+    const before = await A.eval(() => ({ ...G.TD.net.purse }));
+    await B.eval(() => G.TD.debugCallWave());                       // el invitado también puede adelantarla
+    await waitPage(A, 'empieza la oleada 1', () => G.TD.info.wave === 1);
+    await waitPage(B, 'B ve copias de los enemigos', () => G.EnemyMgr.all().some((e: any) => e.remote));
+    await rig.until('se supera la oleada 1', () => A.eval(() => G.TD.net.cleared >= 1), 600);
+    // Las torres del anfitrión han atacado, y el invitado ha visto esos ataques en sus copias.
+    expect(await A.eval(() => G.TD.net.towers.some((t: any) => t.shots > 0))).toBe(true);
+    await waitPage(B, 'B ve atacar a las torres', () => G.TD.net.towers.some((t: any) => t.shots > 0));
+    // Por cada enemigo y por la oleada cobran los dos lo mismo.
+    const after = await A.eval(() => ({ ...G.TD.net.purse }));
+    expect(after[uidA] - before[uidA]).toBeGreaterThan(0);
+    expect(after[uidA] - before[uidA]).toBe(after[uidB] - before[uidB]);
+    await waitPage(B, 'B ve sus monedas', ([u, m]) => G.TD.info.money === m, [uidB, after[uidB]]);
+    expect(await B.eval(() => [G.TD.info.wave, G.TD.net.cleared, G.TD.info.lives])).toEqual(await A.eval(() => [G.TD.info.wave, G.TD.net.cleared, G.TD.info.lives]));
+    // La velocidad la elige el anfitrión (el invitado no puede).
+    await B.eval(() => G.TD.debugFast(true));
+    await rig.run(5);
+    expect(await A.eval(() => G.TD.net.fast)).toBe(false);
+    await A.eval(() => G.TD.debugFast(true));
+    await waitPage(B, 'B ve el ×2 del anfitrión', () => G.TD.net.fast === true);
+    await A.eval(() => G.TD.debugFast(false));
+    expect(await A.allErrors()).toEqual([]);
+    expect(await B.allErrors()).toEqual([]);
+  });
+
+  test('Defensa en grupo: el invitado se corta y vuelve con las torres y el estado de ahora', async () => {
+    await dropAndReturn(async () => {
+      // Mientras B no está: A planta otra, vende la primera suya y la de B sube de nivel... no (sólo B la toca).
+      await plantOn(A, 6);
+      await rig.run(5);
+      const iA = await A.eval(u => G.TD.net.towers.findIndex((t: any) => t.owner === u), uidA);
+      await A.eval(i => G.TD.debugSell(i), iA);
+      await rig.run(5);
+    });
+    const want = await A.eval(() => G.TD.net.towers.map((t: any) => [t.id, t.owner, t.dex, t.level, t.mode]));
+    await waitPage(B, 'B tiene las mismas torres que el anfitrión', w => JSON.stringify(G.TD.net.towers.map((t: any) => [t.id, t.owner, t.dex, t.level, t.mode])) === w, JSON.stringify(want));
+    await waitPage(B, 'y las mismas monedas y vidas', ([u, m, l]) => G.TD.info.money === m && G.TD.info.lives === l,
+      [uidB, await A.eval(u => G.TD.net.purse[u], uidB), await A.eval(() => G.TD.info.lives)]);
+    expect(await A.allErrors()).toEqual([]);
+    expect(await B.allErrors()).toEqual([]);
+  });
+
+  test('Defensa en grupo: al acabar, premio para los dos y la marca del equipo en el ranking', async () => {
+    const s0 = await Promise.all([A, B].map(d => d.eval(() => ({ coins: G.DB.save.coins, runs: G.DB.save.stats.tdRuns || 0, group: G.DB.save.stats.groupRuns || 0 }))));
+    const sum = await A.eval(() => ({ w: G.TD.net.cleared, k: G.Game.player.kills }));
+    expect(sum.w).toBeGreaterThanOrEqual(1);
+    // Las pruebas de arena de antes marcan las dos cuentas (ganan premios en muy poco tiempo de reloj falso, ver
+    // server/save-rules.ts); una cuenta marcada no sube marcas. Aquí se desmarcan para poder ver la del equipo.
+    rig.srv!.db.raw.run('DELETE FROM ranking_marked');
+    // El anfitrión termina: se acaba para los dos.
+    await A.eval(() => G.Game.quit());
+    await waitPage(B, 'la Defensa acaba también para B', () => G.Game.state === 'over' && !G.Coop.active);
+    expect(await state(A)).toBe('over');
+    const s1 = await Promise.all([A, B].map(d => d.eval(() => ({ coins: G.DB.save.coins, runs: G.DB.save.stats.tdRuns || 0, group: G.DB.save.stats.groupRuns || 0 }))));
+    for (const i of [0, 1]) {
+      expect(s1[i].runs - s0[i].runs).toBe(1);
+      expect(s1[i].group - s0[i].group).toBe(1);
+      expect(s1[i].coins - s0[i].coins).toBeGreaterThanOrEqual(sum.w * 10);
+    }
+    // El anfitrión sube la marca del equipo (modo 'e', con los dos).
+    const id = [Number(uidA), Number(uidB)].sort((x, y) => x - y).join('_');
+    await rig.until('la marca del equipo llega al ranking', () => (rig.srv!.db.raw.query("SELECT COUNT(*) AS n FROM ranking_entries WHERE board LIKE 'e!_%' ESCAPE '!' AND id = ?").get(id) as any).n > 0, 80);
+    const row = rig.srv!.db.raw.query("SELECT t, lv FROM ranking_entries WHERE board = 'e_all2' AND id = ?").get(id) as any;
+    expect(row.lv).toBe(sum.w);
+    // Para la prueba de después (una de hordas), la sala vuelve a las hordas.
+    await A.eval(() => G.LobbyUI.setGame('hordas'));
+    expect(await A.allErrors()).toEqual([]);
+    expect(await B.allErrors()).toEqual([]);
+  });
+
   test('segunda partida: el anfitrión desaparece y no vuelve', async () => {
     await click(A, '#btn-again');
     await click(B, '#btn-again');

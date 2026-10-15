@@ -54,6 +54,7 @@ export const ACH_VALUE: Record<string, number> = {
   time5: 0.667, time10: 4, time15: 10, time20: 20, lvl20: 2, lvl40: 10, judge: 10, judge60: 20, judgeBoss: 20, runs50: 10,
   kills1k: 2, kills10k: 10, kills100k: 30, boss1: 2, boss25: 10, boss100: 20, evo1: 3, evo25: 10, evoAll: 30, items5: 3, itemsAll: 10,
   rift1: 3, rift10: 10, arenas: 20, leg10: 10, leg30: 20, legAll: 50, mis10: 3, mis50: 10, mis200: 30, group1: 2, group10: 10,
+  tdWave10: 3, tdWin: 10, tdPerfect: 20, tdEndless40: 20, tdGroupWin: 10,
 };
 /** Un logro por legendario (leg_<dex>): 1 ticket x1. Un id que no conoce se paga como uno de 10 (el juego puede ir por delante del servidor). */
 const achValue = (id: string) => ACH_VALUE[id] ?? (/^leg_\d+$/.test(id) ? 1 : 10);
