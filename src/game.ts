@@ -42,26 +42,53 @@ export const Game = (() => {
     ctx = cv.getContext('2d');
     view.ctx = ctx;
     resize();
-    addEventListener('resize', resize);
+    // WebKit (iPhone, PWA) a veces avisa del giro con las medidas viejas: se
+    // vuelve a medir al momento y un poco después, y el bucle lo vigila.
+    addEventListener('resize', settle);
+    addEventListener('orientationchange', settle);
+    if (window.visualViewport) window.visualViewport.addEventListener('resize', settle);
+    if (window.ResizeObserver) new ResizeObserver(settle).observe(cv);
+    G.Settings.on(k => { if (k === 'res') resize(); });
     G.Touch.init(cv);
     // En móvil: al cambiar de app o girarlo en vertical, la partida se pausa.
-    document.addEventListener('visibilitychange', () => { if (document.hidden) autoPause(); });
-    G.RunUI.wirePause(() => { Run.state = 'playing'; G.UI.hideAll(); }, () => Run.mode.quit());
+    document.addEventListener('visibilitychange', () => { if (document.hidden) autoPause(); else settle(); });
+    G.RunUI.wirePause(() => { Run.state = 'playing'; G.UI.hideAll(); }, () => Run.mode!.quit());
     Backdrop.init();
     last = performance.now();
     requestAnimationFrame(loop);
   }
 
+  // Resolución interna: "Alta" (por defecto) hasta ×1,5; "Normal", ×1. En
+  // pantallas ×2 dibujar el doble de píxeles era de lo que más costaba, y con
+  // el pixel art no se nota.
+  const calcDpr = () => Math.min(G.Settings.get('res') === 'normal' ? 1 : 1.5, window.devicePixelRatio || 1);
+  let iw = 0, ih = 0, checkAt = 0, redraw = true;
+  let settleTimers: ReturnType<typeof setTimeout>[] = [];
+
   function resize() {
-    // Resolución interna como mucho ×1,5: en pantallas ×2 dibujar el doble de
-    // píxeles era de lo que más costaba, y con el pixel art no se nota.
-    dpr = Math.min(1.5, window.devicePixelRatio || 1);
+    dpr = calcDpr();
     w = cv.clientWidth; h = cv.clientHeight;
-    cv.width = Math.round(w * dpr);
-    cv.height = Math.round(h * dpr);
+    iw = innerWidth; ih = innerHeight;
+    const pw = Math.round(w * dpr), ph = Math.round(h * dpr);
+    // (cambiar width/height borra el lienzo: sólo si cambia de verdad)
+    if (cv.width !== pw) cv.width = pw;
+    if (cv.height !== ph) cv.height = ph;
     view.w = w; view.h = h; view.dpr = dpr;
     G.Camera.resize(w, h, dpr);
     checkOrientation();
+    redraw = true;
+  }
+
+  /** Mide ahora y otra vez a los 150 y 500 ms (los navegadores móviles tardan en dar la medida nueva). */
+  function settle() {
+    resize();
+    settleTimers.forEach(clearTimeout);
+    settleTimers = [setTimeout(resize, 150), setTimeout(resize, 500)];
+  }
+
+  /** Red de seguridad: si el lienzo, la ventana o la densidad ya no cuadran con lo medido, se mide de nuevo. */
+  function watchSize() {
+    if (cv.clientWidth !== w || cv.clientHeight !== h || innerWidth !== iw || innerHeight !== ih || calcDpr() !== dpr) resize();
   }
 
   /** Móvil en vertical: aviso de girarlo (y pausa). */
@@ -114,6 +141,9 @@ export const Game = (() => {
 
   let speedK = 1;
   let fpsAcc = 0, fpsN = 0;
+  // Dibujo a ritmo bajo en menús y pausa: tiempo desde el último fotograma dibujado.
+  const SLOW_STEP = 1 / 30 - 0.004;
+  let slowAcc = 0, lastTag = '';
   // El siguiente fotograma se pide ANTES de nada: si algo falla a mitad, el
   // juego sigue (antes se quedaba congelado para siempre y había que recargar;
   // así se perdió una partida enorme al abrirse una grieta).
@@ -141,6 +171,7 @@ export const Game = (() => {
     const real = (ts - last) / 1000 || 0;
     const dt = Math.min(1 / 30, real) * speedK;
     last = ts;
+    if (ts - checkAt > 250) { checkAt = ts; watchSize(); }
     if (Run.state === 'playing') G.Settings.sample(real);
     fpsAcc += real; fpsN++;
     if (fpsAcc >= 0.5) { view.fps = Math.round(fpsN / fpsAcc); fpsAcc = 0; fpsN = 0; }
@@ -153,7 +184,15 @@ export const Game = (() => {
     // La red se atiende siempre (también con las cartas de nivel abiertas).
     if (G.Coop.active && player() && Run.state !== 'ui' && Run.state !== 'over') G.Coop.tick(dt);
 
-    if (player() && Run.state !== 'ui') Run.mode.render(view); else Backdrop.render(ctx, w, h, dpr, dt);
+    // Menús y pausa: nada se mueve deprisa, basta con ~30 FPS (en 120 Hz era gastar GPU a lo tonto).
+    const inRun = !!player() && Run.state !== 'ui';
+    const lazy = !inRun || Run.state === 'paused';
+    const tag = (inRun ? 'run:' : 'menu:') + Run.state;
+    slowAcc += real;
+    if (!lazy || redraw || tag !== lastTag || slowAcc >= SLOW_STEP) {
+      if (inRun) Run.mode!.render(view); else Backdrop.render(ctx, w, h, dpr, Math.min(slowAcc, 1 / 15) * speedK);
+      slowAcc = 0; lastTag = tag; redraw = false;
+    }
     G.UI.tick(dt);
 
     G.Input.endFrame();

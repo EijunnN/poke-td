@@ -282,6 +282,8 @@ G.I18n.add({
   'Tienes {x} de {x}': 'You have {x} of {x}', 'Tienes {x}': 'You have {x}', 'Gen {x}': 'Gen {x}', 'Probabilidades': 'Odds',
   'Tiradas sin 5★ en {x}: {x} / {x}': 'Pulls without a 5★ in {x}: {x} / {x}',
   '· A las {x} tiradas sin 5★ en un banner, la siguiente lo es.': '· After {x} pulls without a 5★ on a banner, the next one is.',
+  'Resolución': 'Resolution',
+  '<b>Normal</b> dibuja menos píxeles: va más fluido en móviles y pantallas de alta densidad.': '<b>Normal</b> draws fewer pixels: smoother on phones and high-density screens.',
   '· La tirada ×10 garantiza al menos una Épica.': '· The ×10 pull guarantees at least one Epic.',
   '· Los repetidos dan Pokémonedas. Los shiny no se repiten.': '· Duplicates give PokéCoins. Shinies never repeat.',
   '· Los tickets se consiguen jugando: algunos Pokémon los sueltan al caer, y los jefes y los legendarios de las grietas, a veces, tickets ×10.': '· Tickets are earned by playing: some Pokémon drop them when defeated, and bosses and rift legendaries sometimes give ×10 tickets.',

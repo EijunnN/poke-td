@@ -8,6 +8,7 @@ import { G } from '../g';
  *   calm        true/false                        menos sacudidas y destellos
  *   fps         true/false                        contador de FPS
  *   stick       0.8 | 1 | 1.25                    tamaño del joystick táctil
+ *   res         'high' | 'normal'                 resolución del lienzo (×1,5 o ×1)
  *
  *   G.Settings.get('quality')  ·  G.Settings.set('fps', true)  ·  G.Settings.on(fn)
  *   G.Settings.fx   nivel efectivo 0 (bajo) .. 2 (alto), ya resuelto el 'auto'
@@ -18,11 +19,12 @@ export interface SettingsData {
   calm: boolean;
   fps: boolean;
   stick: number;
+  res: 'high' | 'normal';
 }
 
 export const Settings = (() => {
   const KEY = 'ps.settings';
-  const DEF: SettingsData = { quality: 'auto', dmgNumbers: true, calm: false, fps: false, stick: 1 };
+  const DEF: SettingsData = { quality: 'auto', dmgNumbers: true, calm: false, fps: false, stick: 1, res: 'high' };
   let s: SettingsData = Object.assign({}, DEF);
   try { Object.assign(s, JSON.parse(localStorage.getItem(KEY) || '{}')); } catch (e) { /* nada */ }
   const fns = new Set<(k: string, v: any) => void>();
