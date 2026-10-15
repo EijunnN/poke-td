@@ -187,13 +187,8 @@ export const Combat = (() => {
       }
     }
     if (ghost) return;
-    let healed = 0;
-    for (const e of G.EnemyMgr.queryCircle(pl.x, pl.y, m.radius)) {
-      hit(pl, e, m.dmg * pl.atk, col, e.x - pl.x, e.y - pl.y, 0, m);
-      if (m.drain) healed += m.drain;
-    }
+    for (const e of G.EnemyMgr.queryCircle(pl.x, pl.y, m.radius)) hit(pl, e, m.dmg * pl.atk, col, e.x - pl.x, e.y - pl.y, 0, m);
     for (const p of G.World.propsInCircle(pl.x, pl.y, m.radius)) G.World.damageProp(p, m.dmg * pl.atk, col);
-    if (healed > 0) pl.heal(Math.min(healed, 6));
   }
 
   function buff(pl, m) {

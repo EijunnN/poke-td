@@ -267,8 +267,9 @@ export const Audio = (() => {
           const [n, len] = tok.split(':');
           const L = +len || 1;
           if (n !== '-') {
-            const midi = midiOf(n) + (tr.shift || 0);
-            ev[(bi * 16 + s) % steps].push({ inst: tr.inst, f: midiFreq(midi), len: L, v: tr.vel || 1 });
+            const note = midiOf(n);
+            if (note === null) console.warn('Música: nota no válida', n);
+            else ev[(bi * 16 + s) % steps].push({ inst: tr.inst, f: midiFreq(note + (tr.shift || 0)), len: L, v: tr.vel || 1 });
           }
           s += L;
         }

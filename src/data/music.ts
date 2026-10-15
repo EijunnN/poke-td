@@ -15,9 +15,11 @@ import { G } from '../g';
 export interface MusicTrack {
   bpm: number;
   swing?: number;
+  /** Compases de la canción; si falta, los de `chords`. */
+  bars?: number;
   chords: string[];
-  melody: { inst: string; vel: number; bars: string[] }[];
-  parts: { inst: string; octave?: number; useBass?: boolean; vel: number; pattern: string }[];
+  melody: { inst: string; vel: number; bars: string[]; shift?: number }[];
+  parts: { inst: string; octave: number; useBass?: boolean; vel: number; pattern: string }[];
   drums: Record<string, string>;
 }
 

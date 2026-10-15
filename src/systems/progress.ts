@@ -168,12 +168,12 @@ export const Progress = (() => {
         S.judged = (S.judged || 0) + 1;
         break;
       case 'judgeEnd':
-        S.judgeTime = Math.max(S.judgeTime || 0, Math.floor(d.time));
-        S.judgeBosses = Math.max(S.judgeBosses || 0, d.bosses);
+        S.judgeTime = Math.max(S.judgeTime || 0, Math.floor(d.time || 0));
+        S.judgeBosses = Math.max(S.judgeBosses || 0, d.bosses || 0);
         break;
       case 'tdEnd':
         S.tdRuns = (S.tdRuns || 0) + 1;
-        S.tdBestWave = Math.max(S.tdBestWave || 0, d.waves | 0);
+        S.tdBestWave = Math.max(S.tdBestWave || 0, (d.waves || 0) | 0);
         if (d.group) S.groupRuns = (S.groupRuns || 0) + 1;
         if (d.won) {
           S.tdWins = (S.tdWins || 0) + 1;

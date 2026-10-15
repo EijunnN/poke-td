@@ -145,6 +145,7 @@ export const Ranking = (() => {
     if (!better.length) return;
     const names: Record<string, string> = { d: 'de hoy', w: 'de la semana', m: 'del mes', a: 'histórico' };
     const best = PERIODS.map(p => p[0]).filter(p => better.includes(p)).pop();
+    if (!best) return;                       // (periodos que no conocemos: mejor callar que decir "undefined")
     G.UI.toast('¡Nueva mejor marca ' + names[best] + ' en el ranking!', 3400);
   }
 

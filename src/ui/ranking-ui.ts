@@ -111,8 +111,6 @@ export const RankingUI = (() => {
     const where = en ? ({ s: 'solo', g: 'group', d: 'in Defense', e: 'in group Defense' }[mode]) + (dex ? ' with ' + mon : '')
                      : ({ s: 'en solitario', g: 'en grupo', d: 'en Defensa', e: 'en Defensa en grupo' }[mode]) + (dex ? ' con ' + mon : '');
     $('rk-me').innerHTML = !G.Social.me ? 'Elige un apodo (en Amigos) para salir en el ranking.'
-      : me && me.out ? (en ? `<span translate="no">You're not in the top 50 ${where} ${pn} yet. Your exact rank is in All-time.</span>`
-                           : `Aún no estás en el top 50 ${pn} ${where}. Tu puesto exacto está en Histórico.`)
       : me ? (en ? `<span translate="no">Your best ${where} rank ${pn}: <b class="gold">#${me.pos}</b> · ${fmt(me.t)}</span>`
                  : `Tu mejor puesto ${pn} ${where}: <b class="gold">#${me.pos}</b> · ${fmt(me.t)}`)
       : (en ? `<span translate="no">You don't have a ${where} record ${pn} yet.</span>` : `Aún no tienes marca ${pn} ${where}.`);
