@@ -7,6 +7,10 @@
  *   node tools/td-balance.ts --seed 7 --seed 8
  *   node tools/td-balance.ts --support        también compra Pokémon de apoyo (Scyther, Togepi, Meowth)
  *   node tools/td-balance.ts --map espiral    en otro mapa (td-geom.ts, MAPS; por defecto, valle)
+ *   node tools/td-balance.ts --smart          juega con cabeza: apoyos bien puestos, enseña ataques a sus
+ *                                             mejores torres, compra los trofeos y mejora al héroe
+ * La dificultad se afina para que el --smart sufra (gane justo o caiga cerca del final) y el
+ * normal (que no sabe nada de tipos ni de estrategia) caiga hacia la mitad.
  * En cada oleada, las torres con un * reciben el aura de algún apoyo.
  *
  * No es una prueba (no falla): es una herramienta para mirar. Tarda un par de
@@ -25,11 +29,12 @@ const seeds = process.argv.flatMap((a, i) => a === '--seed' ? [+process.argv[i +
 if (!seeds.length) seeds.push(4242);
 /** --hp 1,2,4: repite con la vida de los enemigos multiplicada (para ver dónde empieza a costar). */
 const hpMuls = (process.argv.includes('--hp') ? process.argv[process.argv.indexOf('--hp') + 1] : '1').split(',').map(Number);
-const support = process.argv.includes('--support');
+const smart = process.argv.includes('--smart');
+const support = smart || process.argv.includes('--support');
 const mapId = process.argv.includes('--map') ? process.argv[process.argv.indexOf('--map') + 1] : 'valle';
 
 /** Dentro de la página: juega hasta ganar o perder y devuelve una línea por oleada. */
-async function play(seed: number, hpMul: number, support: boolean, mapId: string) {
+async function play(seed: number, hpMul: number, support: boolean, mapId: string, smart: boolean) {
   const h = window.__h;
   h.freeze();
   if (G.Game.state !== 'ui') { G.Game.quit(); G.Game.toUI(); }
@@ -53,6 +58,20 @@ async function play(seed: number, hpMul: number, support: boolean, mapId: string
   }
   const rows: any[] = [];
   let lastWave = 0, buy = 0;
+  /**
+   * Lo que haría alguien que sabe: un trofeo si llega el dinero; enseñar un ataque a la mejor torre
+   * que aún pueda (desde el nivel 3); mejorar al héroe si sobra. → true si ha hecho algo
+   */
+  function smartMove(info: any): boolean {
+    const net = G.TD.net;
+    const trophy = G.TD.shop.find((c: any) => c.trophy && info.money >= c.cost + 40);
+    if (trophy && info.towers.length < 16) { G.TD.debugBuy(trophy.dex); return true; }
+    const best = net.towers.map((t: any, i: number) => ({ i, t })).filter((x: any) => !info.towers[x.i].support && x.t.level >= 3 && x.t.learned.length < 2)
+      .sort((a: any, b: any) => b.t.level - a.t.level || a.t.learned.length - b.t.learned.length)[0];
+    if (best && info.money >= info.towers[best.i].spent * 0.9) { const before = net.towers[best.i].learned.length; G.TD.debugLearn(best.i); return G.TD.net.towers[best.i].learned.length > before; }
+    if (info.money > 400 && info.heroLevel < 5) { G.TD.debugHero(); return true; }
+    return false;
+  }
   for (let f = 0; f < 200000 && G.Game.state === 'playing'; f++) {
     // Ganada: se termina (si no, seguiría el sin fin).
     if (G.TD.net.won) { G.TD.finishWon(); break; }
@@ -62,6 +81,7 @@ async function play(seed: number, hpMul: number, support: boolean, mapId: string
     const info = G.TD.info;
     if (f % 15 === 0 && !G.TD.placing) {
       if (info.evo) G.TD.debugEvolve(info.evo[0]);
+      else if (smart && f % 45 === 0 && smartMove(info)) { /* ya ha hecho algo */ }
       else {
         // Primero, hasta 8 torres (una de cada tipo del equipo); después, mejora la de menos nivel.
         const lowest = info.towers.map((t: any, i: number) => ({ i, l: t.level })).sort((a: any, b: any) => a.l - b.l)[0];
@@ -112,8 +132,8 @@ async function main() {
   for (const hpMul of hpMuls) for (const seed of seeds) {
     await page.waitForLoadState('networkidle');
     const t0 = Date.now();
-    const rows = await page.evaluate(`(${play})(${seed}, ${hpMul}, ${support}, ${JSON.stringify(mapId)})`) as any[];
-    console.log(`\n== semilla ${seed}, vida ×${hpMul}, mapa ${mapId}${support ? ', con apoyos' : ''} (${Math.round((Date.now() - t0) / 1000)} s) ==`);
+    const rows = await page.evaluate(`(${play})(${seed}, ${hpMul}, ${support}, ${JSON.stringify(mapId)}, ${smart})`) as any[];
+    console.log(`\n== semilla ${seed}, vida ×${hpMul}, mapa ${mapId}${smart ? ', con cabeza' : support ? ', con apoyos' : ''} (${Math.round((Date.now() - t0) / 1000)} s) ==`);
     for (const r of rows) console.log(r.end ? JSON.stringify(r) : `oleada ${String(r.wave).padStart(2)} · vidas ${String(r.lives).padStart(2)} · llega al ${String(Math.round(r.reach * 100)).padStart(3)}% · monedas ${String(r.money).padStart(4)} · ${r.towers}`);
   }
   await browser.close();

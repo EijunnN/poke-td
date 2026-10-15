@@ -76,12 +76,24 @@ export function waveAt(n: number): Wave {
 export const MAX_WAVE = 99;
 
 /** Cuánto crece la vida de una oleada a la siguiente. */
-export const HP_GROWTH = 1.19;
+export const HP_GROWTH = 1.205;
+/**
+ * Y desde la oleada LATE_FROM, más: ahí las torres ya están en su forma final y con ataques
+ * aprendidos, y con el mismo ritmo de antes el final se volvía un paseo (tools/td-balance.ts).
+ */
+export const HP_GROWTH_LATE = 1.23;
+export const LATE_FROM = 20;
+/** Vida base de la oleada 1. */
+const HP_BASE = 65;
 
-/** Vida de un enemigo normal en la oleada n: crece un HP_GROWTH por oleada, más un poco fijo. */
+/**
+ * Vida de un enemigo normal en la oleada n: crece un HP_GROWTH por oleada (HP_GROWTH_LATE desde
+ * LATE_FROM), más un poco fijo. No hay niveles de dificultad: la partida es exigente para todos.
+ */
 export function waveHp(n: number): number {
   const w = Math.max(1, n | 0);
-  return Math.round(50 * Math.pow(HP_GROWTH, w - 1) + 10 * w);
+  const early = Math.min(w, LATE_FROM) - 1, late = Math.max(0, w - LATE_FROM);
+  return Math.round(HP_BASE * Math.pow(HP_GROWTH, early) * Math.pow(HP_GROWTH_LATE, late) + 10 * w);
 }
 
 /** Cuántos normales salen en la oleada n (en las de jefe, menos: el jefe vale por muchos). */
@@ -95,7 +107,7 @@ export function waveCount(n: number): number {
 export const waveGap = (n: number) => Math.max(0.45, 1.05 - Math.max(1, n | 0) * 0.02);
 
 /** Vida del jefe: tantas veces la de un normal. */
-export const bossHpMul = (legend: boolean) => legend ? 16 : 12;
+export const bossHpMul = (legend: boolean) => legend ? 13 : 12;
 
 /** Vidas al empezar la partida. */
 export const START_LIVES = 30;

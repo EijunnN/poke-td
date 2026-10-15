@@ -3,6 +3,7 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { DEX } from '../src/data/pokedex';
+import { HP_GROWTH, HP_GROWTH_LATE, LATE_FROM } from '../src/modes/td-waves';
 import { WAVES, LAST_WAVE, MAX_WAVE, START_LIVES, WIN_COINS, waveAt, waveHp, waveCount, waveGap, bossHpMul, leakCost,
          defenseScore, scoreParts, spawnTime, minDefenseTime, maxDefenseKills, defenseCoins } from '../src/modes/td-waves';
 import { killReward, waveBonus } from '../src/modes/td-geom';
@@ -139,6 +140,15 @@ describe('ranking de Defensa', () => {
   test('puntuación del sin fin: hasta la 99 cabe sin pisar las vidas', () => {
     expect(scoreParts(defenseScore(MAX_WAVE, START_LIVES))).toEqual({ waves: MAX_WAVE, lives: START_LIVES });
     expect(defenseScore(LAST_WAVE + 1, 0)).toBeGreaterThan(defenseScore(LAST_WAVE, START_LIVES));
+  });
+});
+
+describe('la curva se endurece al final', () => {
+  test('hasta LATE_FROM crece HP_GROWTH por oleada; desde ahí, HP_GROWTH_LATE (más)', () => {
+    const r = (n: number) => (waveHp(n) - 10 * n) / (waveHp(n - 1) - 10 * (n - 1));
+    for (let n = 2; n <= LATE_FROM; n++) expect(Math.abs(r(n) - HP_GROWTH)).toBeLessThan(0.01);
+    for (let n = LATE_FROM + 1; n <= LAST_WAVE + 5; n++) expect(Math.abs(r(n) - HP_GROWTH_LATE)).toBeLessThan(0.01);
+    expect(HP_GROWTH_LATE).toBeGreaterThan(HP_GROWTH);
   });
 });
 

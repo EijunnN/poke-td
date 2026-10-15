@@ -77,6 +77,8 @@ export const TD = (() => {
   const BREAK = 12;
   /** Antes de la primera oleada, más rato para plantar las primeras torres. */
   const FIRST_BREAK = 25;
+  /** Segundos de inmunidad a otro control fuerte tras uno (×1,5 en jefes y legendarios). */
+  const CC_IMMUNE = 2;
   /** Velocidad de los enemigos en el camino (unidades por segundo) en la oleada 1. */
   const WALK = 95;
   /** Favoritos como mucho (los que salen primero en la tienda). */
@@ -177,6 +179,11 @@ export const TD = (() => {
     /** Oleada en la que salió (para su recompensa). */
     wave = 1;
     chill = 0; chillCd = 0; frozenT = 0; stunT = 0; confuseT = 0; curseT = 0;
+    /**
+     * Inmune a otro control fuerte (congelar, paralizar, confundir, empujar) mientras dure: con
+     * muchas torres se podía tener a un enemigo parado para siempre, y el final era un paseo.
+     */
+    ccT = 0;
     /** Tipo del último golpe (el Hada da más monedas si es ella quien lo derrota). */
     lastType = '';
     textCd = 0;
@@ -189,7 +196,7 @@ export const TD = (() => {
       // Nunca cuenta como rezagado (en las hordas, los rezagados reaparecen junto al jugador).
       this.lagT = -1e9;
       if (!this.dead) {
-        this.chillCd -= dt; this.frozenT -= dt; this.stunT -= dt; this.confuseT -= dt; this.curseT -= dt; this.textCd -= dt;
+        this.chillCd -= dt; this.frozenT -= dt; this.stunT -= dt; this.confuseT -= dt; this.curseT -= dt; this.textCd -= dt; this.ccT -= dt;
       }
       // Confundido: anda hacia atrás.
       const to = this.confuseT > 0 && this.wp > 1 ? path[this.wp - 1] : path[this.wp];
@@ -211,13 +218,15 @@ export const TD = (() => {
       if (r.poison) this.applyPoison(r.poison);
       if (r.slow) this.applySlow(r.slow[0], r.slow[1]);
       if (r.curse) this.curseT = r.curse[0];
+      // Control fuerte: uno cada vez, y luego un rato de inmunidad (más largo en los jefes).
+      const cc = () => { if (this.ccT > 0) return false; this.ccT = CC_IMMUNE * (this.chief ? 1.5 : 1); return true; };
       if (r.chill && this.chillCd <= 0 && ++this.chill >= r.chill[0]) {
         this.chill = 0; this.chillCd = 2.5;
-        this.freeze(r.chill[1] * (this.chief ? 0.5 : 1), 'frozen', '¡Congelado!', '#9fe8ff');
+        if (cc()) this.freeze(r.chill[1] * (this.chief ? 0.5 : 1), 'frozen', '¡Congelado!', '#9fe8ff');
       }
-      if (fx.stun > 0) this.freeze(fx.stun, 'stun', type === 'electric' ? '¡Paralizado!' : '¡Aturdido!', '#ffe14d');
-      if (fx.confuse > 0) { this.confuseT = Math.max(this.confuseT, fx.confuse); this.say('¡Confuso!', '#ff8ac4'); note('psychic'); }
-      if (fx.push > 0) {
+      if (fx.stun > 0 && cc()) this.freeze(fx.stun, 'stun', type === 'electric' ? '¡Paralizado!' : '¡Aturdido!', '#ffe14d');
+      if (fx.confuse > 0 && cc()) { this.confuseT = Math.max(this.confuseT, fx.confuse); this.say('¡Confuso!', '#ff8ac4'); note('psychic'); }
+      if (fx.push > 0 && cc()) {
         const b = stepBack(this.x, this.y, this.wp, fx.push, path);
         this.x = b.x; this.y = b.y; this.wp = b.wp;
         note('water');
@@ -817,16 +826,22 @@ export const TD = (() => {
   /** ¿Es tuya? (sólo su dueño la mejora, la vende o cambia a quién ataca) */
   const mine = (t: Tower) => t.owner === me;
 
-  /** Empieza a colocar una torre de la tienda (si te llega el dinero): sale una vista previa con su alcance. */
-  function startPlacing(dex: number) {
+  /** La última torre que has empezado a colocar (R la vuelve a coger). */
+  let lastDex = 0;
+
+  /**
+   * Empieza a colocar una torre de la tienda (si te llega el dinero): sale una vista previa con su alcance.
+   * @param again  sigues plantando la misma (Mayús): la vista previa se queda donde estaba el ratón
+   */
+  function startPlacing(dex: number, again = false) {
     if (!inPool(dex) || Run.state !== 'playing') return;
-    if (placing && placing.dex === dex) { cancelPlacing(); return; }      // pulsarla otra vez la suelta
+    if (placing && placing.dex === dex && !again) { cancelPlacing(); return; }      // pulsarla otra vez la suelta
     if (cash() < costOf(dex)) { G.Spawner.say('Te faltan monedas', 1.4, true); G.Audio.sfx('back'); return; }
     const preview = makeTower(dex);
     placing = { dex, preview, range: SUPPORT[dex] ? auraRadius(1) : rangeOf(preview) };
+    lastDex = dex;
     selected = null; pendingEvo = null;
-    ghostByPointer = false;
-    ghost.x = pl.x; ghost.y = pl.y;
+    if (!again) { ghostByPointer = false; ghost.x = pl.x; ghost.y = pl.y; }
     G.Sprites.preload([dex], 4000, preview.shiny);
     refreshUI();
   }
@@ -835,26 +850,34 @@ export const TD = (() => {
   /** Motivo por el que no se puede plantar en (x, y), o '' si se puede. */
   const whyNot = (x: number, y: number) => placementError(x, y, { path, towers: towers.map(t => t.p), bound });
 
-  /** Intenta plantar la torre que se está colocando en (x, y). */
-  function tryPlace(x: number, y: number) {
+  /**
+   * Intenta plantar la torre que se está colocando en (x, y).
+   * @param keep  con Mayús: tras plantarla, sigues con otra igual (si te llega el dinero)
+   */
+  function tryPlace(x: number, y: number, keep = false) {
     if (!placing || Run.state !== 'playing') return;
     const err = whyNot(x, y);
     if (err) { G.Spawner.say(err, 1.6, true); G.Audio.sfx('back'); return; }
-    const dex = placing.dex, shiny = !!placing.preview.shiny;
-    if (cash() < costOf(dex)) { G.Spawner.say('Te faltan monedas', 1.4, true); cancelPlacing(); return; }
+    const dex = placing.dex, shiny = !!placing.preview.shiny, cost = costOf(dex);
+    if (cash() < cost) { G.Spawner.say('Te faltan monedas', 1.4, true); cancelPlacing(); return; }
     placing = null;
     if (guest()) {
       // El anfitrión la planta (si aún se puede) y os la manda a todos.
       G.Coop.toHost(['tp', dex, Math.round(x), Math.round(y), shiny ? 1 : 0, isTrophy(dex) ? 1 : 0]);
-      wantSelect = { x, y };
+      wantSelect = keep ? null : { x, y };
       G.Audio.sfx('confirm');
+      // (Su cartera aún no ha bajado: lo que queda tras esta es lo que tiene menos lo que cuesta.)
+      if (keep && cash() - cost >= cost) startPlacing(dex, true);
       refreshUI();
       return;
     }
     const t = plant(me, dex, x, y, shiny);
-    if (t) selected = t;              // queda seleccionada: se ve su alcance y cómo mejorarla
+    if (t && keep && cash() >= cost) startPlacing(dex, true);         // Mayús: a por la siguiente
+    else if (t) selected = t;         // queda seleccionada: se ve su alcance y cómo mejorarla
     refreshUI();
   }
+  /** ¿Mayús pulsada? (para plantar seguidas) */
+  const shiftHeld = () => G.Input.held('shiftleft') || G.Input.held('shiftright');
   /** Invitado: la torre que has pedido plantar; al llegar, se selecciona. */
   let wantSelect: { x: number; y: number } | null = null;
 
@@ -1076,7 +1099,7 @@ export const TD = (() => {
       if (placing) {
         if (d.button === 2) { cancelPlacing(); return; }                      // clic derecho: la suelta
         ghost.x = p.x; ghost.y = p.y; ghostByPointer = true;
-        tryPlace(p.x, p.y);
+        tryPlace(p.x, p.y, e.shiftKey);
         return;
       }
       if (pendingEvo) return;                                                  // primero, elegir la evolución
@@ -1496,7 +1519,9 @@ export const TD = (() => {
       if (G.Input.tap('keym')) { mapOpen = !mapOpen; if (mapBox) mapBox.style.display = mapOpen ? '' : 'none'; }
       return;
     }
-    if (placing && (G.Input.tap('enter') || G.Input.tap('space') || G.Input.tap('numpadenter'))) tryPlace(ghost.x, ghost.y);
+    if (placing && (G.Input.tap('enter') || G.Input.tap('space') || G.Input.tap('numpadenter'))) tryPlace(ghost.x, ghost.y, shiftHeld());
+    // R: otra vez la última torre que compraste, sin ir a la tienda.
+    if (G.Input.tap('keyr') && lastDex && !placing) startPlacing(lastDex);
     if (G.Input.tap('keyn')) callWave();
     if (G.Input.tap('keyf')) toggleFast();
     if (G.Input.tap('keyc')) camFree = null;                                  // la cámara, de vuelta al héroe
@@ -1948,6 +1973,7 @@ export const TD = (() => {
     tip.style.display = '';
     tip.innerHTML = `<span>Colocando <b>${mon.name}</b>${r ? ' · ' + r.name : ''} · ${costOf(placing.dex)} monedas</span>
       ${err ? `<span class="bad">✖ ${err}</span>` : `<span class="good">✔ ${G.Touch.active ? 'Toca para plantar aquí' : 'Clic para plantar aquí'}</span>`}
+      ${G.Touch.active ? '' : '<span class="sub">Mayús + clic: plantar varias · R: repetir la última</span>'}
       <button class="btn small ghost" data-a="cancel">Cancelar (Esc)</button>`;
     (tip.querySelector('[data-a=cancel]') as HTMLElement).onclick = () => cancelPlacing();
   }
@@ -1966,6 +1992,9 @@ export const TD = (() => {
       ctx.fillStyle = 'rgba(255, 95, 109, 0.22)';
       for (const e of [path[0], path[path.length - 1]]) { ctx.beginPath(); ctx.arc(e.x, e.y, ENDS_CLEAR, 0, 6.2832); ctx.fill(); }
       for (const t of towers) { ctx.beginPath(); ctx.arc(t.p.x, t.p.y, TOWER_GAP, 0, 6.2832); ctx.fill(); }
+      // Lo que ocupa cada torre (no hay casillas: es un círculo; dos torres no pueden solaparse).
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)'; ctx.lineWidth = 1.5;
+      for (const t of towers) { ctx.beginPath(); ctx.arc(t.p.x, t.p.y, TOWER_GAP / 2, 0, 6.2832); ctx.stroke(); }
       // El borde del mapa.
       ctx.strokeStyle = 'rgba(255, 95, 109, 0.5)'; ctx.lineWidth = 3; ctx.setLineDash([12, 10]);
       ctx.beginPath(); ctx.arc(0, 0, bound, 0, 6.2832); ctx.stroke(); ctx.setLineDash([]);
@@ -2002,6 +2031,9 @@ export const TD = (() => {
       }
       // La que se coloca: verde si el sitio vale y roja si no (la X va encima de su sprite: drawables).
       ring(ctx, ghost.x, ghost.y, placing.range, whyNot(ghost.x, ghost.y) ? '255, 95, 109' : SUPPORT[placing.dex] ? '255, 210, 63' : '95, 224, 138');
+      // Y lo que ocupará la nueva.
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.18)'; ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(ghost.x, ghost.y, TOWER_GAP / 2, 0, 6.2832); ctx.fill(); ctx.stroke();
     } else if (selected && selected !== 'hero') {
       const k = SUPPORT[selected.dex];
       ring(ctx, selected.p.x, selected.p.y, k ? auraRadius(selected.level) : rangeOf(selected.p), '255, 210, 63');

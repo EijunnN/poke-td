@@ -26,6 +26,9 @@ export const CHANGELOG: ChangelogEntry[] = [
      'If the game has already started, you can watch it as a spectator, in Survivor and Defense: the camera follows the player you choose (Tab), and you do not play or earn anything.'],
     ['Minimapa en la Defensa: pulsa en él para mirar cualquier parte del mapa sin mover a tu héroe.',
      'Minimap in Defense: click it to look at any part of the map without moving your hero.']
+  ], chg: [
+    ['Defensa: tras congelar, paralizar, confundir o empujar a un enemigo, queda un momento inmune a otro de esos efectos.',
+     'Defense: after freezing, paralyzing, confusing or pushing an enemy, it is briefly immune to another of those effects.']
   ] },
   { d: '2026-10-14', title: ['Defensa en grupo', 'Group Defense'], new: [
     ['Defensa en grupo, de 2 a 4: desde una sala, el anfitrión elige Defensa y el mapa. Las vidas son de todos y las monedas de cada uno; cada torre es de quien la compra.',

@@ -142,6 +142,8 @@ export const GuideUI = (() => {
          'In the <b>shop</b> (left) pick a Pokémon and click on the map to plant it. Red areas cannot be used (the path, the entrance, the base, next to another tower) and the bar at the bottom tells you why. <kbd>Esc</kbd> or right click cancel.'],
         ['Cada torre ataca sólo a lo que está dentro de su <b>alcance</b> (el círculo que ves al colocarla).',
          'Each tower only attacks what is inside its <b>range</b> (the circle you see when placing it).'],
+        ['No hay casillas: una torre se planta donde quieras y ocupa un pequeño círculo (el blanco al colocarla); no puede solaparse con otra ni pisar el camino. Con <kbd>Mayús</kbd> + clic plantas varias seguidas de la misma, y <kbd>R</kbd> vuelve a coger la última que compraste.',
+         'There is no grid: you place a tower anywhere and it takes a small circle (the white one when placing it); it cannot overlap another or sit on the path. <kbd>Shift</kbd> + click places several of the same in a row, and <kbd>R</kbd> picks the last one you bought again.'],
         [`Haz clic en una torre para <b>mejorarla</b> (hasta el nivel ${MAX_LEVEL}; en los niveles ${EVOLVE_AT.join(' y ')} <b>evoluciona</b>, y si puede evolucionar en varios, eliges), elegir <b>a quién ataca</b> (el primero, el último, el más fuerte o el más cercano) o <b>venderla</b> (te devuelven el ${pct(REFUND)} de lo gastado).`,
          `Click a tower to <b>upgrade</b> it (up to level ${MAX_LEVEL}; at levels ${EVOLVE_AT.join(' and ')} it <b>evolves</b>, and if it has several evolutions you choose), choose <b>who it attacks</b> (first, last, strongest or nearest) or <b>sell</b> it (you get back ${pct(REFUND)} of what you spent).`],
         ['Cada Pokémon ataca a su manera (proyectil, rayo, onda, órbita, minas...), con un ataque de sus tipos que cambia al evolucionar. En su panel puedes <b>enseñarle</b> hasta 2 ataques más de sus tipos con monedas, como subir una habilidad: los lanza todos a la vez y suben de nivel con la torre.',
@@ -154,8 +156,8 @@ export const GuideUI = (() => {
          'The <b>minimap</b> (bottom right) shows the whole map: click on it to look there without moving your hero. You go back by moving the hero or with <kbd>C</kbd>; <kbd>M</kbd> hides it.'],
       ].map(([a, b]) => `<li>${T(a, b)}</li>`).join('')}</ol>`
       + h('El poder de cada tipo', 'Each type\'s power')
-      + `<p>${T('Además de su daño (con la tabla de tipos de los juegos), cada torre tiene un poder según el tipo de su ataque:',
-               'Besides its damage (with the games\' type chart), each tower has a power depending on its attack type:')}</p>`
+      + `<p>${T('Además de su daño (con la tabla de tipos de los juegos), cada torre tiene un poder según el tipo de su ataque. Tras congelar, paralizar, confundir o empujar a un enemigo, queda un momento inmune a otro de esos efectos (un jefe, algo más): mezcla tipos.',
+               'Besides its damage (with the games\' type chart), each tower has a power depending on its attack type. After freezing, paralyzing, confusing or pushing an enemy, it is briefly immune to another of those effects (a boss, a little longer): mix types.')}</p>`
       + `<table class="guide-table">${types.map(t => {
         const r = ROLES[t];
         return `<tr><td>${chip(t)}</td><td><b>${esc(en() ? r.en[0] : r.name)}</b></td><td>${esc(en() ? r.en[1] : r.desc)}</td></tr>`;
