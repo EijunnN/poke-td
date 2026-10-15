@@ -33,13 +33,16 @@ export const HUD = (() => {
     const touch = G.Touch.active;
 
     // ---------- barra de experiencia (borde superior) ----------
-    const xpF = pl.xp / pl.xpNext;
-    ctx.fillStyle = 'rgba(0,0,0,.5)';
-    ctx.fillRect(0, 0, w, 7);
-    const g = ctx.createLinearGradient(0, 0, w, 0);
-    g.addColorStop(0, '#4fd1ff'); g.addColorStop(1, '#a98bff');
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, w * G.U.clamp(xpF, 0, 1), 7);
+    // (La Defensa no tiene experiencia: ni barra ni nivel.)
+    if (!st.noLevel) {
+      const xpF = pl.xp / pl.xpNext;
+      ctx.fillStyle = 'rgba(0,0,0,.5)';
+      ctx.fillRect(0, 0, w, 7);
+      const g = ctx.createLinearGradient(0, 0, w, 0);
+      g.addColorStop(0, '#4fd1ff'); g.addColorStop(1, '#a98bff');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, w * G.U.clamp(xpF, 0, 1), 7);
+    }
 
     // ---------- vida + nivel ----------
     const px = 16, py = 20;
@@ -50,7 +53,7 @@ export const HUD = (() => {
 
     ctx.font = F(700, 11);
     ctx.fillStyle = '#ffcb3d';
-    ctx.fillText('Nv. ' + pl.level, px, py + 26);
+    if (!st.noLevel) ctx.fillText('Nv. ' + pl.level, px, py + 26);
 
     bar(ctx, px + 48, py + 17, 168, 11, pl.hp / pl.maxHp, '#ff5f6d');
     ctx.font = F(700, 10);

@@ -77,6 +77,8 @@ export const TD = (() => {
   const BREAK = 12;
   /** Antes de la primera oleada, más rato para plantar las primeras torres. */
   const FIRST_BREAK = 25;
+  /** Probabilidad de que un enemigo suelte una baya al caer. */
+  const HEAL_DROP = 0.012;
   /** Segundos de inmunidad a otro control fuerte tras uno (×1,5 en jefes y legendarios). */
   const CC_IMMUNE = 2;
   /** Velocidad de los enemigos en el camino (unidades por segundo) en la oleada 1. */
@@ -259,6 +261,8 @@ export const TD = (() => {
       if (pay) note('bounty');
       // Cobráis todos (en grupo, cada uno en su cartera).
       for (const u of Object.keys(purse)) purse[u] += n + bonus;
+      // De vez en cuando, una baya que cura al héroe (como antes, cuando soltaban gemas).
+      if (!this.remote && Math.random() < HEAL_DROP) G.Pickups.drop('heal', this.x, this.y);
       if (this.chief) {
         floatText(this.x, this.y - this.bodyH - 10, '+' + (n + bonus), '#ffd23f');
         announce('¡' + this.name + ' derrotado!', 2.4);
@@ -326,7 +330,7 @@ export const TD = (() => {
   const shots = new WeakMap<object, number>();
 
   /** Para el HUD del juego (ui/hud.ts): el reloj; sin el de arriba (la Defensa tiene su marcador). */
-  const st = { get time() { return time; }, noClock: true };
+  const st = { get time() { return time; }, noClock: true, noLevel: true };
 
   // ---------------- quién lleva la partida ----------------
 
@@ -704,7 +708,8 @@ export const TD = (() => {
     const hpK = G.U.clamp(mon.hp / 95, 0.85, 1.25), spdK = G.U.clamp(mon.spd / 105, 0.85, 1.2);
     let hp = waveHp(wave) * hpK * hpMul * groupHp(), spd = WALK * (1 + wave * 0.025) * spdK;
     if (chief) { hp *= bossHpMul(kind === 'legend'); spd *= 0.7; }
-    const def = { dex, name: mon.name, behavior: 'chase' as const, hp: Math.round(hp), spd, dmg: 10, xp: 3 + Math.floor(wave / 2) };
+    // Sin experiencia: en la Defensa no sueltan gemas (no servían para nada); se cobra en monedas.
+    const def = { dex, name: mon.name, behavior: 'chase' as const, hp: Math.round(hp), spd, dmg: 10, xp: 0 };
     const e = new Walker(def, path[0].x + G.U.rand(-10, 10), path[0].y + G.U.rand(-10, 10), { hp: 1, spd: 1, dmg: 1 });
     e.kind = kind;
     e.wave = wave;
