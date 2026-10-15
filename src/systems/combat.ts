@@ -325,13 +325,15 @@ export const Combat = (() => {
   function trailPatch(pl, m) {
     const col = G.U.TYPE_COLOR[m.type], vis = G.VFX.forMove(m);
     // Parado no deja uno nuevo encima del anterior (sólo de vez en cuando).
-    const last = pl.lastPatch;
+    // El último se apunta por movimiento: dos rastros (Tóxico + Rueda Fuego) no se pisan.
+    const lastBy = pl.lastPatch || (pl.lastPatch = {});
+    const last = lastBy[m.id];
     if (last && G.U.dist2(last.x, last.y, pl.x, pl.y) < (m.radius * 0.9) ** 2 && last.t < 1) return;
     const f = { kind: 'patch', owner: pl, ghost, m, col, vis, x: pl.x, y: pl.y, t: 0, life: m.dur || 3, r: m.radius,
                 tick: 0, dmg: m.dmg * pl.atk };
     fields.push(f);
-    pl.lastPatch = f;
-    const mine = fields.filter(o => o.kind === 'patch' && o.owner === pl && !o.gone);
+    lastBy[m.id] = f;
+    const mine = fields.filter(o => o.kind === 'patch' && o.owner === pl && o.m.id === m.id && !o.gone);
     for (const o of mine.slice(0, Math.max(0, mine.length - 18))) o.gone = true;
   }
 

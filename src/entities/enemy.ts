@@ -848,8 +848,15 @@ export class Enemy {
     if (this.burn > 0 || this.poison > 0 || (this.net && this.net.st & 3)) {
       ctx.save();
       ctx.globalAlpha = 0.45;
-      ctx.fillStyle = this.burn > 0 || (this.net && this.net.st & 1) ? '#ff8a3d' : '#c86bdc';
+      const burning = this.burn > 0 || (this.net && this.net.st & 1);
+      const poisoned = this.poison > 0 || (this.net && this.net.st & 2);
+      // Quemado y envenenado a la vez: la elipse naranja y, dentro, una morada más pequeña.
+      ctx.fillStyle = burning ? '#ff8a3d' : '#c86bdc';
       ctx.beginPath(); ctx.ellipse(this.x, this.y, this.r * 1.2, this.r * 0.5, 0, 0, 6.2832); ctx.fill();
+      if (burning && poisoned) {
+        ctx.fillStyle = '#c86bdc';
+        ctx.beginPath(); ctx.ellipse(this.x, this.y, this.r * 0.75, this.r * 0.31, 0, 0, 6.2832); ctx.fill();
+      }
       ctx.restore();
     }
 
