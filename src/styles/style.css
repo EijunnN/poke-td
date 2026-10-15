@@ -505,6 +505,9 @@ input[type=range]::-moz-range-thumb { width: 14px; height: 14px; border-radius: 
 #fr-add .field { min-width: 180px; }
 
 .lobby-members { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 10px; }
+/* Con más de 4 plazas (Defensa), dos filas de tarjetas más bajas. */
+.lobby-members:has(.lob-card:nth-child(5)) .lob-card { min-height: 118px; padding: 6px; }
+.lobby-members:has(.lob-card:nth-child(5)) .lob-card canvas { width: 80px; height: 64px; }
 .lob-card {
   display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 10px 6px;
   border-radius: 10px; background: rgba(0,0,0,.25); border: 3px solid var(--pc, rgba(244,248,255,.2));
@@ -778,6 +781,13 @@ a.btn { text-decoration: none; display: inline-block; color: var(--ink); }
 .news-body { overflow-y: auto; padding-right: 4px; }
 /* Sala: a qué se juega (ui/social-ui.ts, LobbyUI) */
 .lobby-mode { gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
+.lob-card.over { border-color: #ff5f6d; }
+.lobby-access .sub { align-self: center; }
+/* Salas públicas (ui/rooms-ui.ts) y la barra del espectador (net/spectate.ts) */
+.rooms-row .st { font-size: 13px; }
+#spec-bar { position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 40; display: flex; align-items: center; gap: 8px;
+            padding: 6px 10px; max-width: calc(100vw - 16px); flex-wrap: wrap; justify-content: center; font-size: 14px; }
+#spec-bar .spec-tag { color: var(--gold); font-weight: 700; text-transform: uppercase; font-size: 12px; letter-spacing: .5px; }
 /* Cómo se juega (ui/guide-ui.ts) */
 .guide-body h3 { color: var(--gold); margin: 14px 0 6px; font-size: 17px; }
 .guide-body p, .guide-body li { line-height: 1.45; }
@@ -787,7 +797,8 @@ a.btn { text-decoration: none; display: inline-block; color: var(--ink); }
 .guide-table { width: 100%; border-collapse: collapse; font-size: 14px; margin: 4px 0 8px; }
 .guide-table td { padding: 4px 6px; border-bottom: 1px solid rgba(255,255,255,.08); vertical-align: top; }
 .guide-table.waves tr.boss td { color: var(--gold); }
-.guide-type { display: inline-block; font-style: normal; font-size: 11px; padding: 0 6px; border-radius: 6px; color: #10131c; font-weight: 700; line-height: 16px; white-space: nowrap; }
+.guide-type { display: inline-block; font-style: normal; font-size: 13px; padding: 2px 8px; border-radius: 6px; font-weight: 700; line-height: 16px;
+              white-space: nowrap; text-shadow: none; letter-spacing: .3px; }
 .news-day { padding-bottom: 6px; border-bottom: 1px solid rgba(255,255,255,.1); }
 .news-day:last-child { border-bottom: 0; }
 .news-day h3 { color: var(--gold); margin: 14px 0 6px; font-size: 18px; }

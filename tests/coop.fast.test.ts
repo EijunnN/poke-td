@@ -273,7 +273,7 @@ class Dev {
 let vite: ViteDevServer;
 let browser: Browser;
 let rig: Rig;
-let A: Dev, B: Dev;
+let A: Dev, B: Dev, C: Dev;
 
 const freePort = () => new Promise<number>(r => { const t = tcp(); t.listen(0, '127.0.0.1', () => { const p = (t.address() as any).port; t.close(() => r(p)); }); });
 
@@ -285,9 +285,9 @@ beforeAll(async () => {
   browser = await chromium.launch({ channel: 'chrome', headless: true }).catch(() => chromium.launch({ channel: 'msedge', headless: true }));
   rig = new Rig();
   rig.up();
-  A = new Dev(rig, 'anfitrión'); B = new Dev(rig, 'invitado');
-  rig.devs.push(A, B);
-  await Promise.all([A.open(browser, url), B.open(browser, url)]);
+  A = new Dev(rig, 'anfitrión'); B = new Dev(rig, 'invitado'); C = new Dev(rig, 'espectador');
+  rig.devs.push(A, B, C);
+  await Promise.all([A.open(browser, url), B.open(browser, url), C.open(browser, url)]);
 });
 afterAll(async () => {
   await browser?.close();
@@ -757,6 +757,7 @@ describe('cooperativo', () => {
     await waitPage(A, 'la torre de B sube de nivel en el anfitrión', u => { const t = G.TD.net.towers.find((x: any) => x.owner === u); return t.level === 2 && t.mode === 'last'; }, uidB);
     await waitPage(B, 'y en B', u => { const t = G.TD.net.towers.find((x: any) => x.owner === u); return t.level === 2 && t.mode === 'last'; }, uidB);
     expect(await A.eval(u => G.TD.net.purse[u], uidB)).toBeLessThan(moneyB);
+
     expect(await A.allErrors()).toEqual([]);
     expect(await B.allErrors()).toEqual([]);
   });
@@ -777,7 +778,33 @@ describe('cooperativo', () => {
     expect(after[uidA] - before[uidA]).toBeGreaterThan(0);
     expect(after[uidA] - before[uidA]).toBe(after[uidB] - before[uidB]);
     await waitPage(B, 'B ve sus monedas', ([u, m]) => G.TD.info.money === m, [uidB, after[uidB]]);
+    // Enseñar un ataque (como subir una habilidad): B a la suya sí; a la de A, no.
+    const iA2 = await B.eval(u => G.TD.net.towers.findIndex((t: any) => t.owner === u), uidA);
+    const iB2 = await B.eval(u => G.TD.net.towers.findIndex((t: any) => t.owner === u), uidB);
+    await B.eval(i => G.TD.debugLearn(i), iA2);
+    await rig.run(8);
+    expect(await A.eval(u => G.TD.net.towers.find((t: any) => t.owner === u).learned, uidA)).toEqual([]);
+    const moneyL = await A.eval(u => G.TD.net.purse[u], uidB);
+    const spentL = await A.eval(u => G.TD.net.towers.find((t: any) => t.owner === u).spent, uidB);
+    const learnt = await B.eval(i => G.TD.debugLearn(i), iB2);
+    expect(typeof learnt).toBe('string');
+    await waitPage(A, 'el anfitrión enseña el ataque a la torre de B', ([u, m]) => G.TD.net.towers.find((t: any) => t.owner === u).moves.includes(m), [uidB, learnt]);
+    await waitPage(B, 'y B lo ve en su copia', ([u, m]) => G.TD.net.towers.find((t: any) => t.owner === u).learned.includes(m), [uidB, learnt]);
+    const paid = moneyL - await A.eval(u => G.TD.net.purse[u], uidB);
+    expect(paid).toBeGreaterThan(0);
+    expect(await A.eval(u => G.TD.net.towers.find((t: any) => t.owner === u).spent, uidB)).toBe(spentL + paid);
     expect(await B.eval(() => [G.TD.info.wave, G.TD.net.cleared, G.TD.info.lives])).toEqual(await A.eval(() => [G.TD.info.wave, G.TD.net.cleared, G.TD.info.lives]));
+    // Un legendario derrotado se une a la tienda de los dos (trofeo, caro) y el invitado lo puede plantar.
+    await A.eval(() => { const id = G.TD.debugBoss(484, true); G.EnemyMgr.get(id).hurt(1e12, '#ffffff'); });
+    for (const d of [A, B]) await waitPage(d, 'Palkia pasa a la tienda', () => G.TD.shop.some((c: any) => c.dex === 484 && c.trophy && c.cost === 300));
+    // El anfitrión no se deja engañar: ni un trofeo que nadie ha ganado (Dialga) ni uno que no se puede pagar.
+    const pb = await A.eval(u => G.TD.net.purse[u], uidB);
+    expect(pb).toBeLessThan(300);
+    const sp = await freeSpot(B, 2);
+    await B.eval(p => { G.Coop.toHost(['tp', 483, p.x, p.y, 0, 1]); G.Coop.toHost(['tp', 484, p.x, p.y, 0, 1]); }, sp);
+    await rig.run(10);
+    expect(await A.eval(() => G.TD.net.towers.some((t: any) => t.dex === 483 || t.dex === 484))).toBe(false);
+    expect(await A.eval(u => G.TD.net.purse[u], uidB)).toBe(pb);
     // La velocidad la elige el anfitrión (el invitado no puede).
     await B.eval(() => G.TD.debugFast(true));
     await rig.run(5);
@@ -832,6 +859,121 @@ describe('cooperativo', () => {
     await A.eval(() => G.LobbyUI.setGame('hordas'));
     expect(await A.allErrors()).toEqual([]);
     expect(await B.allErrors()).toEqual([]);
+  });
+
+  // ---------------- salas públicas y espectadores (net/spectate.ts) ----------------
+
+  let nameC = '', roomId = '';
+  /** Lo que C tiene en su cuenta (para ver que mirar no da nada). */
+  // (Antes se cobran los logros pendientes, como el de tener tu primer Pokémon: no tienen que ver con mirar.)
+  const cAccount = () => C.eval(() => (G.Progress.checkAch(), { coins: G.DB.save.coins, td: G.DB.save.stats.tdRuns || 0, runs: G.DB.save.stats.runs || 0, kills: G.DB.save.stats.totalKills || 0 }));
+
+  test('sala pública: sale en la lista de otro jugador (sin ser amigos) y se puede mirar en cuanto empieza', async () => {
+    nameC = 'Mira' + Math.random().toString(36).slice(2, 6);
+    await newPlayer(C, nameC, 7);
+    expect(await C.eval(() => G.Social.start())).toBe('ok');
+    await waitPage(C, 'C conectado', () => G.Net.up);
+    // "Crear sala pública" (sin invitar a nadie): se crea, sale en la lista y se abre la sala.
+    await C.eval(() => G.RoomsUI.open());
+    await click(C, '#rooms-create');
+    await waitPage(C, 'C tiene su sala pública', () => G.Social.room && G.Social.room.isHost && G.Social.room.pub && G.UI.isOpen('scr-lobby'));
+    expect(await A.call(n => G.Social.listRooms().then((l: any[]) => l.some(r => r.hostName === n)), nameC)).toBe(true);
+    await C.call(() => G.Social.leaveRoom());
+    await waitPage(C, 'y la deja', () => !G.Social.room);
+    await click(A, '#btn-again');
+    await click(B, '#btn-again');
+    await waitPage(A, 'A de vuelta en la sala', () => G.Social.room && G.Social.room.members.length === 2 && G.Game.state === 'ui');
+    await A.eval(() => { G.LobbyUI.setGame('td', 'valle'); G.Social.setPublic(true, 'td', 'valle'); });
+    await waitPage(A, 'la sala es pública', () => G.Social.room.pub === true);
+    const list = await C.call(() => G.Social.listRooms());
+    const row = list.find((r: any) => r.host === uidA);
+    expect(row).toMatchObject({ hostName: nameA, mode: 'td', map: 'valle', n: 2, started: false });
+    roomId = row.id;
+    // Aún no han empezado: mirar no se puede (se podría entrar).
+    expect(await C.call(id => G.Spectate.start(id), roomId)).toBe(false);
+    await waitPage(A, 'A puede empezar', () => !(document.getElementById('lobby-start') as HTMLButtonElement).disabled);
+    await click(A, '#lobby-start');
+    for (const d of [A, B]) await waitPage(d, 'en la Defensa', () => G.Run.mode && G.Run.mode.id === 'td' && G.Game.state === 'playing');
+    expect((await C.call(() => G.Social.listRooms())).find((r: any) => r.id === roomId).started).toBe(true);
+    const before = await cAccount();
+    expect(await C.call(id => G.Spectate.start(id), roomId)).toBe(true);
+    await waitPage(C, 'C mira la Defensa', () => G.Coop.watching && G.Run.mode.id === 'td' && G.Game.state === 'playing');
+    await waitPage(A, 'el anfitrión tiene un espectador (que no es jugador)', () => G.Coop.watchers.length === 1 && G.Coop.players().length === 2);
+    expect(await C.eval(() => [G.Coop.puppets().length, G.Coop.players().length, !!document.getElementById('spec-bar')])).toEqual([2, 2, true]);
+    // A planta y lanza la oleada: C ve las torres y los enemigos.
+    await plantOn(A, 1);
+    await A.eval(() => G.TD.debugCallWave());
+    await waitPage(C, 'C ve las torres', () => G.TD.net.towers.length >= 1);
+    await waitPage(C, 'C ve copias de los enemigos', () => G.EnemyMgr.all().some((e: any) => e.remote));
+    // C no tiene tienda ni monedas, y no puede comprar: nada llega al anfitrión.
+    expect(await C.eval(() => [(window as any).getComputedStyle(document.getElementById('td-shop')).display, (window as any).getComputedStyle(document.querySelector('#td-hud .td-money')).display])).toEqual(['none', 'none']);
+    const n0 = await A.eval(() => G.TD.net.towers.length);
+    await C.eval(() => { G.Coop.toHost(['tp', 4, 0, 0, 0, 0]); G.Coop.toHost(['tw']); });
+    await rig.run(8);
+    expect(await A.eval(() => G.TD.net.towers.length)).toBe(n0);
+    // Cambiar a quién mira.
+    const t0 = await C.eval(() => G.Spectate.target().uid);
+    await C.eval(() => G.Spectate.next(1));
+    expect(await C.eval(() => G.Spectate.target().uid)).not.toBe(t0);
+    // C sale: vuelve a la lista y el anfitrión deja de tenerlo.
+    await C.eval(() => G.Game.quit());
+    await waitPage(C, 'C de vuelta a la lista', () => G.Game.state === 'ui' && G.UI.isOpen('scr-rooms') && !G.Coop.active);
+    await waitPage(A, 'el anfitrión ya no tiene espectador', () => G.Coop.watchers.length === 0);
+    expect(await cAccount()).toEqual(before);                          // mirar no da nada
+    expect(await A.allErrors()).toEqual([]);
+    expect(await B.allErrors()).toEqual([]);
+    expect(await C.allErrors()).toEqual([]);
+  });
+
+  test('el espectador que vuelve a mirar ve la partida de ahora; al acabar, vuelve a la lista sin premio', async () => {
+    const before = await cAccount();
+    expect(await C.call(id => G.Spectate.start(id), roomId)).toBe(true);
+    await waitPage(C, 'C mira otra vez', () => G.Coop.watching && G.Game.state === 'playing');
+    const want = JSON.stringify(await A.eval(() => G.TD.net.towers.map((t: any) => [t.id, t.dex])));
+    await waitPage(C, 'C tiene las torres de ahora', w => JSON.stringify(G.TD.net.towers.map((t: any) => [t.id, t.dex])) === w, want);
+    await A.eval(() => G.Game.quit());
+    await waitPage(B, 'la partida acaba para B', () => G.Game.state === 'over' && !G.Coop.active);
+    await waitPage(C, 'y C vuelve a la lista', () => G.Game.state === 'ui' && !G.Coop.active && !G.Social.watching);
+    expect(await cAccount()).toEqual(before);
+    expect(await C.allErrors()).toEqual([]);
+  });
+
+  test('Survivor: también se mira, y las cartas de nivel no esperan al espectador', async () => {
+    await click(A, '#btn-again');
+    await click(B, '#btn-again');
+    await waitPage(A, 'A de vuelta en la sala', () => G.Social.room && G.Social.room.members.length === 2 && G.Game.state === 'ui');
+    await A.eval(() => G.LobbyUI.setGame('hordas'));
+    await waitPage(A, 'la lista dice Survivor', () => G.Social.room.mode === 'survivor');
+    await waitPage(A, 'A puede empezar', () => !(document.getElementById('lobby-start') as HTMLButtonElement).disabled);
+    await click(A, '#lobby-start');
+    for (const d of [A, B]) await waitPage(d, 'en el Survivor', () => G.Run.mode && G.Run.mode.id === 'survivor' && G.Game.state === 'playing' && G.Coop.active);
+    const before = await cAccount();
+    expect(await C.call(id => G.Spectate.start(id), roomId)).toBe(true);
+    await waitPage(C, 'C mira el Survivor', () => G.Coop.watching && G.Run.mode.id === 'survivor' && G.Game.state === 'playing');
+    await waitPage(A, 'el anfitrión lo tiene como espectador', () => G.Coop.watchers.length === 1 && G.Coop.players().length === 2);
+    for (const d of [A, B]) await d.eval(() => { const p = G.Game.player; p.maxHp = p.hp = 1e7; });
+    await A.eval(() => {
+      const def = G.Enemies.bagAt(60)[0], pl = G.Game.player;
+      for (let i = 0; i < 6; i++) G.EnemyMgr.add(new G.Enemy(def, pl.x + Math.cos(i) * 220, pl.y + Math.sin(i) * 220, G.Enemies.scale(60)));
+    });
+    await waitPage(C, 'C ve copias de los enemigos', () => G.EnemyMgr.all().some((e: any) => e.remote));
+    // Cartas de nivel: esperan a A y a B, no a C (que ni las ve).
+    await A.eval(() => G.Game.debugLevelUp());
+    await waitPage(A, 'cartas en A', () => G.Game.state === 'levelup');
+    await waitPage(B, 'cartas en B', () => G.Game.state === 'levelup');
+    expect(await C.eval(() => G.Game.state)).toBe('playing');
+    await click(A, '#cards .card');
+    await click(B, '#cards .card');
+    await waitPage(A, 'sigue la partida', () => G.Game.state === 'playing');
+    // El anfitrión termina: C vuelve a la lista, sin premio.
+    await A.eval(() => G.Game.quit());
+    await waitPage(B, 'acaba para B', () => G.Game.state === 'over' && !G.Coop.active);
+    await waitPage(C, 'y C vuelve a la lista', () => G.Game.state === 'ui' && !G.Coop.active && !G.Social.watching);
+    expect(await cAccount()).toEqual(before);
+    await A.eval(() => G.Social.setPublic(false, 'survivor', 'random'));
+    expect(await A.allErrors()).toEqual([]);
+    expect(await B.allErrors()).toEqual([]);
+    expect(await C.allErrors()).toEqual([]);
   });
 
   test('segunda partida: el anfitrión desaparece y no vuelve', async () => {

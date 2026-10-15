@@ -22,9 +22,16 @@ export const Survivor = (() => {
 
   // ---------------- run ----------------
 
-  /** @param coop  { seed, host, members } para una partida en grupo */
+  /**
+   * Espectador (sala pública ya en juego; net/spectate.ts): su Pokémon no juega (no se dibuja,
+   * no ataca, no recoge, no le dan), está donde mira la cámara, y al acabar no cobra nada.
+   */
+  let spectating = false;
+
+  /** @param coop  { seed, host, members } para una partida en grupo (con `watch`, como espectador) */
   function start(coop = null) {
     holdBy = []; awayBy = null;
+    spectating = !!(coop && coop.watch);
     const save = G.DB.save;
     const mon = G.DEX_BY[save.partner];
     const perks = G.Upgrades.perks(G.DB.upgradesOf(mon.dex));
@@ -67,7 +74,8 @@ export const Survivor = (() => {
 
     if (coop) {
       G.Coop.begin(coop, pl, coopApi);
-      G.Social.setPlaying(true);
+      if (!spectating) G.Social.setPlaying(true);
+      else pl.hurt = () => 0;                       // al espectador no le hace nada nadie
     }
     G.Camera.x = pl.x; G.Camera.y = pl.y; G.Camera.shake = 0;
     // Hojas de sprites locales: el compañero y los primeros enemigos.
@@ -133,7 +141,7 @@ export const Survivor = (() => {
       pl.kills = t.kills; pl.bosses = t.bosses; pl.coins = t.coins;
       if (t.t1 > pl.t1 || t.t10 > pl.t10) G.Audio.sfx('shiny');
       pl.t1 = t.t1 || 0; pl.t10 = t.t10 || 0;
-      bankTickets();
+      if (!spectating) bankTickets();               // mirar no da tickets
     },
     levelStart(level) {
       Run.state = 'levelup';
@@ -211,6 +219,16 @@ export const Survivor = (() => {
 
   function endRun(dead = true) {
     if (Run.state === 'over' || !pl) return;
+    // Espectador: ni premio ni resumen; de vuelta a la lista de salas.
+    if (spectating) {
+      spectating = false;
+      Run.state = 'over';
+      G.Audio.music(null);
+      G.RunUI.closeLevelUp();
+      pl = null;
+      G.Spectate.ended('La partida que mirabas ha terminado');
+      return;
+    }
     const coop = !!pl.uid;                    // sólo las partidas en grupo le ponen uid
     const wasHost = !!pl.coopHost;
     const team = coop ? G.Coop.members.slice() : [];
@@ -455,6 +473,13 @@ export const Survivor = (() => {
     }
 
     pl.frozen = coop && (G.UI.isOpen('scr-pause') || G.UI.isOpen('scr-item'));
+    if (spectating) {
+      // Donde mira la cámara: con el jugador al que sigue (el anfitrión le manda los enemigos de ahí).
+      const t = G.Spectate.target();
+      if (t) { pl.x = t.x; pl.y = t.y; }
+      pl.frozen = true; pl.dead = false; pl.hp = pl.maxHp;
+      G.Spectate.tick();
+    }
     pl.update(dt);
     if (coop) {
       for (const p of G.Coop.puppets()) { p.netUpdate(dt); G.Combat.ghostOrbit(p, dt, time); }
@@ -468,13 +493,13 @@ export const Survivor = (() => {
     else G.Spawner.tickBanner(dt);
     G.EnemyMgr.update(dt, all);
     G.EnemyMgr.rebuildGrid();
-    G.Combat.tick(dt, pl, time);
+    if (!spectating) G.Combat.tick(dt, pl, time);
     G.Projectiles.update(dt, pl, G.EnemyMgr.all());
     G.Combat.resolve(dt, pl, time);
     G.Combat.updateFields(dt);
     G.Pickups.update(dt, all, onCollect);
     G.Hazards.update(dt);
-    G.Interact.update(dt, pl);
+    if (!spectating) G.Interact.update(dt, pl);
     G.Rift.update(dt, pl, time);
     G.Judgment.update(dt, pl, time);
     G.Events.update(dt, all, time);
@@ -514,7 +539,7 @@ export const Survivor = (() => {
     ctx.save();
     ctx.scale(G.Camera.scale, G.Camera.scale);
     G.Camera.apply(ctx);
-    v.drawScene(G.Camera, G.Coop.active ? [pl, ...G.Coop.puppets()] : [pl]);
+    v.drawScene(G.Camera, G.Coop.active ? (spectating ? G.Coop.puppets() : [pl, ...G.Coop.puppets()]) : [pl]);
     G.Projectiles.draw(ctx);
     G.Combat.drawAirFields(ctx);
     G.FX.draw(ctx);
@@ -532,7 +557,7 @@ export const Survivor = (() => {
       ctx.fillStyle = g;
       ctx.fillRect(0, 0, w, h);
     }
-    if (!G.Judgment.cinematic) G.HUD.draw(ctx, w, h, pl, st);
+    if (!G.Judgment.cinematic) G.HUD.draw(ctx, w, h, spectating ? G.Spectate.target() || pl : pl, st);
     G.Judgment.drawOverlay(ctx, w, h);
     G.Touch.draw(ctx);
     if (G.Settings.get('fps')) {
@@ -584,6 +609,7 @@ export const Survivor = (() => {
   }
 
   function keysPlay() {
+    if (spectating) { G.Spectate.keys(); return; }
     for (let i = 0; i < 4; i++) {
       if (G.Input.tap('digit' + (i + 1)) || G.Input.tap('numpad' + (i + 1))) pl.setActive(i);
     }

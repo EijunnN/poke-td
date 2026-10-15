@@ -7,6 +7,13 @@ G.LIFT = LIFT;
 
 export const U = {
   clamp(v: number, a: number, b: number): number { return v < a ? a : v > b ? b : v; },
+  /** Color de texto que se lee sobre el fondo `hex` ('#rrggbb'): oscuro en los claros, blanco en los oscuros. */
+  inkOn(hex: string): string {
+    const n = parseInt(String(hex).replace('#', '').slice(0, 6), 16);
+    if (!Number.isFinite(n)) return '#10131c';
+    const l = (0.299 * (n >> 16 & 255) + 0.587 * (n >> 8 & 255) + 0.114 * (n & 255)) / 255;
+    return l > 0.55 ? '#10131c' : '#ffffff';
+  },
   lerp(a: number, b: number, t: number): number { return a + (b - a) * t; },
   rand(a: number, b: number): number { return a + Math.random() * (b - a); },
   randInt(a: number, b: number): number { return Math.floor(a + Math.random() * (b - a + 1)); },

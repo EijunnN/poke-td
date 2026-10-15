@@ -24,13 +24,21 @@ import { G } from '../g';
  * la subida de nivel. El invitado guarda sus eventos (golpes, elegir carta...) hasta poder mandarlos.
  * El estado del mapa (Sentencia de Arceus, grieta/arena y clima) va en ['st', ...] justo después de ['rs'].
  *
+ * ESPECTADORES (salas públicas; server/realtime.ts, room.watch): el anfitrión los añade como
+ * compañeros "que miran" (`watcher`) cuando aparecen en la sala: les manda la partida igual
+ * que a un invitado (los enemigos, cerca de donde miran), pero no son jugadores: no tienen
+ * Pokémon en el mapa, no cuentan para la experiencia ni para las cartas, y de lo que mandan
+ * sólo se mira dónde está su cámara. En el espectador (`watching`), todos los jugadores son
+ * copias y se ignora lo que es de un jugador (cartas, objetos, curas...).
+ *
  * Otros modos (el de Defensa, modes/td.ts) mandan sus propios eventos por el mismo
  * camino (broadcast / toHost) y los reciben en api.onEvent; los estados que añade
  * un enemigo con netBits() van en los bits 3 y siguientes de su estado.
  */
 /** Un jugador de la partida (lo que manda el anfitrión al empezar). */
 export interface CoopMember { uid: string; name: string; dex: number; shiny: boolean }
-export interface CoopConfig { k?: string; seed: number; host: string; members: CoopMember[] }
+/** `watch`: entras como espectador (no eres uno de `members`). */
+export interface CoopConfig { k?: string; seed: number; host: string; members: CoopMember[]; watch?: boolean }
 /** Lo que el modo de juego (modes/survivor.ts) le da a Coop para actuar sobre la partida. */
 export interface CoopApi {
   team(): any; summary?(): any; syncTeam(t: any): void;
@@ -50,7 +58,8 @@ type Ev = any[];
 
 export const Coop = (() => {
   const ANIMS = ['Idle', 'Walk', 'Attack', 'Shoot', 'Charge', 'Hurt', 'Faint'];
-  const COLORS = ['#ffcb3d', '#5fc8ff', '#7ee07a', '#ff8ad8'];
+  // Un color por jugador (el Survivor usa los 4 primeros; la Defensa, hasta 8).
+  const COLORS = ['#ffcb3d', '#5fc8ff', '#7ee07a', '#ff8ad8', '#ff9a3d', '#b48cff', '#7fe0e0', '#ff6b6b'];
   // Ritmo de los estados, por el servidor (net.ts): 15 por segundo, lo que la
   // interpolación del invitado (enemigos y compañeros) ya tenía ajustado cuando iba
   // directo. Por un WebSocket no hay motivo para menos: el servidor no cobra por GB
@@ -69,6 +78,8 @@ export const Coop = (() => {
   const MAX_E = 900;
 
   let active = false, host = false, me: string | null = null, hostUid: string | null = null;
+  /** Eres espectador en esta partida. */
+  let watching = false;
   let local = null;                     // tu Player
   const mates = new Map<string, any>();              // uid -> { uid, name, color, pl, connected, q:[], flushT, xpMul }
   let outEv: Ev[] = [];                       // invitado: eventos para el anfitrión
@@ -101,12 +112,16 @@ export const Coop = (() => {
     active = true;
     me = G.Net.uid; hostUid = cfg.host;
     host = me === hostUid;
+    watching = !!cfg.watch && !host;
     local = pl;
     api = cb;
     members = cfg.members;
     mates.clear();
     outEv = []; flushT = 0; waiting = new Set(); holds = new Set(); broken = [];
     hostAway = false; stalled = false; lastHostAt = performance.now();
+    // Espectador: en cuanto tiene la partida montada, pide el estado entero (lo que el anfitrión
+    // le mandó al verlo llegar pudo llegar antes de esto, y entonces se perdió).
+    if (cfg.watch && cfg.host !== me) outEv.push(['ws']);
     cfg.members.forEach((m, i) => {
       const x = (i - (cfg.members.length - 1) / 2) * 34, y = 0;
       if (m.uid === me) { pl.x = x; pl.y = y; pl.uid = me; pl.coopHost = host; pl.tagColor = COLORS[i]; return; }
@@ -121,7 +136,7 @@ export const Coop = (() => {
   }
 
   function end() {
-    active = false; host = false; local = null;
+    active = false; host = false; local = null; watching = false;
     mates.clear(); outEv = []; waiting = new Set(); holds = new Set();
   }
 
@@ -141,12 +156,29 @@ export const Coop = (() => {
 
   // ---------------- lista de jugadores ----------------
 
+  /** Los jugadores de la partida (tú primero; el espectador no es jugador, ni los que miran). */
   function players() {
-    const out = [local];
-    for (const m of mates.values()) if (m.connected) out.push(m.pl);
+    const out = watching ? [] : [local];
+    for (const m of mates.values()) if (m.connected && !m.watcher) out.push(m.pl);
     return out;
   }
-  function puppets() { const out = []; for (const m of mates.values()) if (m.connected) out.push(m.pl); return out; }
+  function puppets() { const out = []; for (const m of mates.values()) if (m.connected && !m.watcher) out.push(m.pl); return out; }
+
+  // ---------------- espectadores (anfitrión) ----------------
+
+  /** Alguien empieza a mirar: se le trata como a un invitado que vuelve (se le manda todo). */
+  function addWatcher(u: string, name: string) {
+    if (!host || !active || mates.has(u)) return;
+    mates.set(u, { uid: u, name, color: '#ffffff', pl: { x: 0, y: 0 }, connected: true, watcher: true, q: [], owed: [], flushT: 0, xpMul: 1 });
+    resync(u);
+  }
+  /** Anfitrión: los que miran según la sala (server/realtime.ts los cuenta en la sala). */
+  function syncWatchers(list: { uid: string; name: string }[]) {
+    if (!host || !active) return;
+    const ids = new Set(list.map(w => w.uid));
+    for (const [u, m] of [...mates]) if (m.watcher && !ids.has(u)) mates.delete(u);
+    for (const w of list) if (!mates.has(w.uid) && G.Net.mode(w.uid) === 'relay') addWatcher(w.uid, w.name);
+  }
 
   /**
    * Multiplicador de la experiencia del equipo: la media de los bonus de
@@ -155,7 +187,7 @@ export const Coop = (() => {
    */
   function xpFactor() {
     let s = local.xpMul, n = 1;
-    for (const m of mates.values()) if (m.connected) { s += m.xpMul || 1; n++; }
+    for (const m of mates.values()) if (m.connected && !m.watcher) { s += m.xpMul || 1; n++; }
     return (s / n) / local.xpMul / (1 + 0.6 * (n - 1));
   }
 
@@ -212,7 +244,7 @@ export const Coop = (() => {
     const st = api.team();
     const p = { [me]: myState() };
     for (const o of mates.values()) {
-      if (o.connected && o.uid !== m.uid && o.state) p[o.uid] = o.state;
+      if (o.connected && !o.watcher && o.uid !== m.uid && o.state) p[o.uid] = o.state;
     }
     const ev = m.q.splice(0, MAX_EV);
     const f: { k: string; [key: string]: any } = { k: 'f', t: r2(st.time), lv: st.level, xp: r2(st.xp), xn: st.xpNext, ki: st.kills, bo: st.bosses, co: st.coins, tk: [st.t1, st.t10],
@@ -282,8 +314,15 @@ export const Coop = (() => {
 
   G.Net.onPeer((u, mode) => {
     if (!active) return;
-    // Un compañero que vuelve tras un corte: se le reenvía todo lo que se ha perdido.
-    if (mode === 'relay') { if (host) resync(u); return; }
+    // Un compañero que vuelve tras un corte: se le reenvía todo lo que se ha perdido. Alguien que
+    // empieza a mirar (está entre los espectadores de la sala): se le añade y se le manda todo.
+    if (mode === 'relay') {
+      if (!host) return;
+      if (mates.has(u)) { resync(u); return; }
+      const w = G.Social.room && (G.Social.room.watchers || []).find(x => x.uid === u);
+      if (w) addWatcher(u, w.name);
+      return;
+    }
     if (mode !== 'closed') return;
     if (host) mateGone(u);
     else if (u === hostUid) { const cb = api.lost; end(); if (cb) cb('Se ha perdido la conexión con el anfitrión.'); }
@@ -311,6 +350,8 @@ export const Coop = (() => {
   function mateGone(u) {
     const m = mates.get(u);
     if (!m || !m.connected) return;
+    // Quien miraba se va sin más.
+    if (m.watcher) { mates.delete(u); return; }
     m.connected = false;
     G.Projectiles.clearOrbs(m.pl);
     G.Spawner.say(m.name + ' ha dejado la partida', 2.6);
@@ -324,6 +365,13 @@ export const Coop = (() => {
   function onClientFrame(from, msg) {
     const m = mates.get(from);
     if (!m || !m.connected) return;
+    // Un espectador sólo dice dónde mira (para mandarle los enemigos de cerca); y si se va.
+    if (m.watcher) {
+      if (Array.isArray(msg.p) && Number.isFinite(msg.p[0]) && Number.isFinite(msg.p[1])) { m.pl.x = msg.p[0]; m.pl.y = msg.p[1]; }
+      if ((msg.ev || []).some(e => e && e[0] === 'bye')) { mates.delete(from); return; }
+      if ((msg.ev || []).some(e => e && e[0] === 'ws')) resync(from);
+      return;
+    }
     if (msg.p) { m.state = msg.p; m.pl.net = readState(msg.p); m.xpMul = m.pl.net.xpMul || 1; }
     for (const ev of msg.ev || []) {
       switch (ev[0]) {
@@ -378,7 +426,7 @@ export const Coop = (() => {
   function onHostFrame(msg) {
     lastHostAt = performance.now();
     if (stalled) { stalled = false; updateAway(); }
-    for (const ev of msg.ev || []) applyHostEvent(ev);
+    for (const ev of msg.ev || []) { applyHostEvent(ev); if (!active) return; }    // ('ov' acaba la partida: lo demás ya sobra)
     if (msg.ja) G.Judgment.netApply(msg.ja);
     api.syncTeam({ time: msg.t, level: msg.lv, xp: msg.xp, xpNext: msg.xn, kills: msg.ki, bosses: msg.bo, coins: msg.co,
                    t1: (msg.tk || [])[0], t10: (msg.tk || [])[1] });
@@ -402,7 +450,10 @@ export const Coop = (() => {
     }
   }
 
+  /** Lo que es de un jugador (cartas, objetos, curas, imán...): el espectador no lo tiene. */
+  const PLAYER_ONLY = new Set(['item', 'heal', 'mag', 'lu', 'lw', 'lr', 'hp', 'sh']);
   function applyHostEvent(ev) {
+    if (watching && PLAYER_ONLY.has(ev[0])) return;
     switch (ev[0]) {
       case 'rs': G.EnemyMgr.clearRemote(); G.Pickups.clear(); break;       // el anfitrión va a reenviar todo
       case 'st': G.Judgment.restore(ev[1]); G.Rift.restore(ev[2]); G.Weather.restore(ev[3]); break;
@@ -450,7 +501,7 @@ export const Coop = (() => {
 
   /** Tu ataque: los demás lo repiten como fantasma. */
   function cast(pl, m) {
-    if (!active || pl !== local) return;
+    if (!active || pl !== local || watching) return;
     if (host) emit(['c', me, m.id, m.lvl, r2(pl.aim), m.evolved ? 1 : 0]);
     else outEv.push(['c', m.id, m.lvl, r2(pl.aim), m.evolved ? 1 : 0]);
   }
@@ -496,7 +547,7 @@ export const Coop = (() => {
 
   function levelStart(level) {
     waiting = new Set([me]);
-    for (const m of mates.values()) if (m.connected) waiting.add(m.uid);
+    for (const m of mates.values()) if (m.connected && !m.watcher) waiting.add(m.uid);
     emit(['lu', level]);
     flushAll();
     api.levelStart(level);
@@ -558,14 +609,18 @@ export const Coop = (() => {
   }
 
   return {
-    ANIMS, COLORS, begin, end, leave, tick, players, puppets, xpFactor, scaleRate, scaleHp,
+    ANIMS, COLORS, begin, end, leave, tick, players, puppets, xpFactor, scaleRate, scaleHp, addWatcher, syncWatchers,
     cast, hit, status, hurtShown, enemyAdded, enemyGone, enemyShot, pickupAdded, pickupGone, say,
     propBroken, collected, shinyCaught, levelStart, localPicked, over, holdStart, holdEnd,
     /** Anfitrión: evento para todos. Invitado: evento para el anfitrión. */
     broadcast(ev) { emit(ev); },
     toHost(ev) { if (active && !host) { outEv.push(ev); flushClient(true); } },
     mate(u) { return mates.get(u); },
-    get mates() { return [...mates.values()]; },
+    /** Los compañeros que juegan (no los que miran). */
+    get mates() { return [...mates.values()].filter(m => !m.watcher); },
+    /** Los que miran la partida (anfitrión). */
+    get watchers() { return [...mates.values()].filter(m => m.watcher).map(m => ({ uid: m.uid, name: m.name })); },
+    get watching() { return active && watching; },
     get members() { return members; },
     get active() { return active; },
     get isHost() { return active && host; },

@@ -1214,3 +1214,178 @@ describe('marcas de grupo contra la sala real', () => {
     expect((await submit(h, [h, g1, g2])).status).toBe(200);
   });
 });
+
+describe('salas públicas y espectadores', () => {
+  /** Sala pública del anfitrión `h` (sin nadie más), con su modo y mapa. */
+  function publicRoom(h: Acc, mode = 'td', map = 'zigzag') {
+    const hc = online(h);
+    const room = hc.req({ k: 'room.new', dex: 25, shiny: false }).room;
+    expect(hc.req({ k: 'room.pub', v: true, mode, map }).ok).toBe(true);
+    return { hc, room };
+  }
+  const listed = (c: Client) => c.req({ k: 'rooms.list' }).rooms as any[];
+  /** El anfitrión empieza la partida con los que tenga en la sala. */
+  const start = (hc: Client, h: Acc, members: Acc[], extra: Record<string, unknown> = {}) =>
+    hc.send({ k: 'g', d: { k: 'start', seed: 77, host: h.uid, members: members.map(m => ({ uid: m.uid, name: 'falso', dex: 1 })), ...extra } });
+
+  test('por defecto privada: no sale en la lista y no se entra sin invitación', async () => {
+    const h = account(), x = account();
+    const hc = online(h), xc = online(x);
+    const room = hc.req({ k: 'room.new', dex: 25, shiny: false }).room;
+    expect(room).toMatchObject({ pub: false, mode: 'survivor', watchers: [] });
+    expect(listed(xc).some(r => r.id === room.id)).toBe(false);
+    expect(xc.req({ k: 'room.join', id: room.id, dex: 4, shiny: false }).ok).toBe(false);
+  });
+
+  test('pública: sale en la lista y cualquiera entra sin invitación ni amistad (hasta llenarla)', async () => {
+    const h = account();
+    const { hc, room } = publicRoom(h, 'survivor', 'random');
+    const others = [account(), account(), account(), account()].map(online);
+    const row = listed(others[0]).find(r => r.id === room.id);
+    expect(row).toMatchObject({ host: h.uid, hostName: h.name, mode: 'survivor', n: 1, max: 4, started: false, watchers: 0 });
+    for (const c of others.slice(0, 3)) expect(c.req({ k: 'room.join', id: room.id, dex: 4, shiny: false }).ok).toBe(true);
+    const full = others[3].req({ k: 'room.join', id: room.id, dex: 4, shiny: false });
+    expect(full.ok).toBe(false);
+    expect(full.error).toContain('llena');
+    expect(hc.take(m => m.k === 'room' && m.room?.members.length === 4).room.pub).toBe(true);
+  });
+
+  test('cuántos caben depende de a qué se juega: Survivor 4; Defensa, el mapa (Valle 6, Zigzag 8; al azar, 6)', async () => {
+    const h = account();
+    const { hc, room } = publicRoom(h, 'td', 'zigzag');
+    expect(listed(hc).find(r => r.id === room.id).max).toBe(8);
+    const others = Array.from({ length: 8 }, () => online(account()));
+    for (const c of others.slice(0, 7)) expect(c.req({ k: 'room.join', id: room.id, dex: 4, shiny: false }).ok).toBe(true);
+    expect(others[7].req({ k: 'room.join', id: room.id, dex: 4, shiny: false }).error).toContain('llena');
+    expect(hc.msgs.filter(m => m.k === 'room').pop().room).toMatchObject({ max: 8 });
+    // Cambiar a un mapa o modo más pequeño no echa a nadie: la sala dice cuántos caben (y no se puede empezar, ver la sala).
+    hc.req({ k: 'room.pub', v: true, mode: 'td', map: 'valle' });
+    expect(hc.msgs.filter(m => m.k === 'room').pop().room).toMatchObject({ max: 6, members: { length: 8 } });
+    hc.req({ k: 'room.pub', v: true, mode: 'td', map: 'random' });
+    expect(listed(hc).find(r => r.id === room.id).max).toBe(6);
+    hc.req({ k: 'room.pub', v: false, mode: 'survivor', map: 'random' });
+    expect(hc.msgs.filter(m => m.k === 'room').pop().room).toMatchObject({ max: 4, pub: false });
+  });
+
+  test('sólo el anfitrión la hace pública, y con datos válidos; al volver a privada sale de la lista', async () => {
+    const h = account(), g = account(), x = account();
+    const { hc, gcs, room } = await roomWith(h, [g]);
+    expect(gcs[0].req({ k: 'room.pub', v: true, mode: 'td', map: 'valle' }).ok).toBe(false);          // un invitado no
+    const malos: Record<string, unknown>[] = [{ v: 'si', mode: 'td', map: 'valle' }, { v: true, mode: 'otro', map: 'valle' },
+      { v: true, mode: 'td', map: "x' OR 1" }, { v: true, mode: 'td', map: 'a'.repeat(30) }, { v: true, mode: 'td' }];
+    for (const m of malos) expect(hc.req({ k: 'room.pub', ...m }).ok).toBe(false);
+    const xc = online(x);
+    expect(listed(xc).some(r => r.id === room.id)).toBe(false);
+    expect(hc.req({ k: 'room.pub', v: true, mode: 'survivor', map: 'random' }).ok).toBe(true);
+    expect(listed(xc).find(r => r.id === room.id)).toMatchObject({ mode: 'survivor', n: 2 });
+    expect(hc.req({ k: 'room.pub', v: false, mode: 'survivor', map: 'random' }).ok).toBe(true);
+    expect(listed(xc).some(r => r.id === room.id)).toBe(false);
+    expect(xc.req({ k: 'room.join', id: room.id, dex: 4, shiny: false }).ok).toBe(false);
+  });
+
+  test('en juego no se entra: se mira. El espectador recibe la partida (con los nombres de verdad) y no ocupa sitio', async () => {
+    const h = account(), g = account(), w = account();
+    const { hc, room } = publicRoom(h);
+    const gc = online(g), wc = online(w);
+    expect(gc.req({ k: 'room.join', id: room.id, dex: 4, shiny: false }).ok).toBe(true);
+    // Aún en la sala: no se puede mirar (se puede entrar).
+    expect(wc.req({ k: 'room.watch', id: room.id }).error).toContain('aún no ha empezado');
+    start(hc, h, [h, g], { mode: 'td', map: 'zigzag' });
+    gc.take(m => m.k === 'g' && m.d.k === 'start');
+    expect(listed(wc).find(r => r.id === room.id)).toMatchObject({ started: true, n: 2 });
+    expect(wc.req({ k: 'room.join', id: room.id, dex: 4, shiny: false }).error).toContain('empezado');
+    const v = wc.req({ k: 'room.watch', id: room.id });
+    expect(v.ok).toBe(true);
+    expect(v.cfg).toMatchObject({ k: 'start', seed: 77, host: h.uid, mode: 'td', map: 'zigzag' });
+    expect(v.cfg.members).toEqual([{ uid: h.uid, name: h.name, dex: 25, shiny: false }, { uid: g.uid, name: g.name, dex: 4, shiny: false }]);
+    expect(v.room.members.length).toBe(2);
+    expect(hc.take(m => m.k === 'room' && m.room?.watchers.length === 1).room.watchers).toEqual([{ uid: w.uid, name: w.name }]);
+    expect(listed(wc).find(r => r.id === room.id).watchers).toBe(1);
+    // Un jugador de la sala no puede mirar su propia partida.
+    expect(gc.req({ k: 'room.watch', id: room.id }).ok).toBe(false);
+  });
+
+  test('el espectador sólo habla con el anfitrión, y sólo el anfitrión le habla a él', async () => {
+    const h = account(), g = account(), w = account();
+    const { hc, room } = publicRoom(h);
+    const gc = online(g); gc.req({ k: 'room.join', id: room.id, dex: 4, shiny: false });
+    start(hc, h, [h, g]);
+    gc.take(m => m.k === 'g' && m.d.k === 'start');
+    const wc = online(w);
+    wc.req({ k: 'room.watch', id: room.id });
+    // Anfitrión -> espectador: llega.
+    hc.send({ k: 'g', to: w.uid, d: { k: 'f', p: [1] } });
+    expect(wc.take(m => m.k === 'g')).toEqual({ k: 'g', f: h.uid, d: { k: 'f', p: [1] } });
+    // Un jugador que no es el anfitrión -> espectador: no.
+    gc.send({ k: 'g', to: w.uid, d: { k: 'f', p: [2] } });
+    gc.take(m => m.k === 'err');
+    wc.none(m => m.k === 'g');
+    // Espectador -> anfitrión: llega (con su uid puesto por el servidor). A otro, a todos o empezar: no.
+    wc.send({ k: 'g', to: h.uid, f: g.uid, d: { k: 'f', p: [3] } });
+    expect(hc.take(m => m.k === 'g')).toEqual({ k: 'g', f: w.uid, d: { k: 'f', p: [3] } });
+    wc.send({ k: 'g', to: g.uid, d: { k: 'f', p: [4] } });
+    wc.send({ k: 'g', d: { k: 'f', p: [5] } });
+    wc.send({ k: 'g', to: h.uid, d: { k: 'start', seed: 1, host: w.uid, members: [] } });
+    gc.none(m => m.k === 'g');
+    hc.none(m => m.k === 'g');
+    // Una difusión del anfitrión (sin `to`) es para los jugadores, no para los espectadores.
+    hc.send({ k: 'g', d: { k: 'f', p: [6] } });
+    expect(gc.take(m => m.k === 'g').d.p).toEqual([6]);
+    wc.none(m => m.k === 'g');
+  });
+
+  test('tope de espectadores; quien está en otra sala no mira; al irse o al acabar la partida, fuera', async () => {
+    const h = account(), g = account();
+    const { hc, room } = publicRoom(h);
+    const gc = online(g); gc.req({ k: 'room.join', id: room.id, dex: 4, shiny: false });
+    start(hc, h, [h, g]);
+    const ws = Array.from({ length: 9 }, () => online(account()));
+    for (const c of ws.slice(0, 8)) expect(c.req({ k: 'room.watch', id: room.id }).ok).toBe(true);
+    expect(ws[8].req({ k: 'room.watch', id: room.id }).error).toContain('mirando');
+    // Alguien con su propia sala no puede mirar otra.
+    const oc = online(account());
+    oc.req({ k: 'room.new', dex: 25, shiny: false });
+    expect(oc.req({ k: 'room.watch', id: room.id }).ok).toBe(false);
+    // Uno deja de mirar y otro se cae: el anfitrión lo ve.
+    ws[0].req({ k: 'room.unwatch' });
+    ws[1].kill();
+    expect(hc.msgs.filter(m => m.k === 'room').pop().room.watchers.length).toBe(6);
+    // Se acaba la partida (la sala se reabre): todos los espectadores salen, avisados.
+    hc.req({ k: 'room.open', v: true });
+    for (const c of ws.slice(2, 8)) expect(c.take(m => m.k === 'watch' && m.room === null).why).toBe('ended');
+    expect(listed(ws[2]).find(r => r.id === room.id)).toMatchObject({ started: false, watchers: 0 });
+    // Y ya se puede entrar a jugar.
+    expect(ws[2].req({ k: 'room.join', id: room.id, dex: 4, shiny: false }).ok).toBe(true);
+  });
+
+  test('si el anfitrión cierra la sala, los espectadores se enteran', async () => {
+    const h = account(), g = account(), w = account();
+    const { hc, room } = publicRoom(h);
+    const gc = online(g); gc.req({ k: 'room.join', id: room.id, dex: 4, shiny: false });
+    start(hc, h, [h, g]);
+    const wc = online(w);
+    wc.req({ k: 'room.watch', id: room.id });
+    hc.req({ k: 'room.leave' });
+    expect(wc.take(m => m.k === 'watch' && m.room === null).why).toBeDefined();
+    expect(listed(wc).some(r => r.id === room.id)).toBe(false);
+  });
+});
+
+describe('salas públicas tras un reinicio', () => {
+  beforeEach(() => { fresh({ file: true }); });
+  const listed = (c: Client) => c.req({ k: 'rooms.list' }).rooms as any[];
+  test('siguen siendo públicas, con su modo y mapa, y la partida sigue pudiéndose mirar', async () => {
+    const h = account(), g = account();
+    const hc = online(h);
+    const room = hc.req({ k: 'room.new', dex: 25, shiny: false }).room;
+    hc.req({ k: 'room.pub', v: true, mode: 'td', map: 'espiral' });
+    const gc = online(g); gc.req({ k: 'room.join', id: room.id, dex: 4, shiny: false });
+    hc.send({ k: 'g', d: { k: 'start', seed: 5, host: h.uid, members: [{ uid: h.uid }, { uid: g.uid }], mode: 'td', map: 'espiral' } });
+    E.restart();
+    const hc2 = online(h);
+    expect(hc2.hello.room).toMatchObject({ id: room.id, pub: true, mode: 'td', map: 'espiral', started: true });
+    const wc = online(account());
+    expect(listed(wc).find(r => r.id === room.id)).toMatchObject({ mode: 'td', map: 'espiral', started: true });
+    expect(wc.req({ k: 'room.watch', id: room.id }).cfg).toMatchObject({ seed: 5, mode: 'td', map: 'espiral' });
+  });
+});

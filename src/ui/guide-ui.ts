@@ -16,7 +16,7 @@ export const GuideUI = (() => {
   type Tab = 'basics' | 'survivor' | 'td' | 'faq';
   const TABS: [Tab, string, string][] = [
     ['basics', 'Lo básico', 'Basics'],
-    ['survivor', 'Supervivencia', 'Survival'],
+    ['survivor', 'Survivor', 'Survivor'],
     ['td', 'Defensa', 'Defense'],
     ['faq', 'Preguntas', 'FAQ'],
   ];
@@ -28,7 +28,7 @@ export const GuideUI = (() => {
   const pct = (x: number) => Math.round(x * 100) + '%';
   const h = (es: string, eng: string) => `<h3>${T(es, eng)}</h3>`;
   const ul = (items: [string, string][]) => `<ul>${items.map(([a, b]) => `<li>${T(a, b)}</li>`).join('')}</ul>`;
-  const chip = (t: string) => `<i class="guide-type" style="background:${G.U.TYPE_COLOR[t] || '#888'}">${esc(en() ? t[0].toUpperCase() + t.slice(1) : G.U.TYPE_NAME[t] || t)}</i>`;
+  const chip = (t: string) => `<i class="guide-type" style="background:${G.U.TYPE_COLOR[t] || '#888'};color:${G.U.inkOn(G.U.TYPE_COLOR[t] || '#888')}">${esc(en() ? t[0].toUpperCase() + t.slice(1) : G.U.TYPE_NAME[t] || t)}</i>`;
   const name = (dex: number) => esc((G.DEX_BY[dex] && G.DEX_BY[dex].name) || '#' + dex);
 
   function basics() {
@@ -144,10 +144,14 @@ export const GuideUI = (() => {
          'Each tower only attacks what is inside its <b>range</b> (the circle you see when placing it).'],
         [`Haz clic en una torre para <b>mejorarla</b> (hasta el nivel ${MAX_LEVEL}; en los niveles ${EVOLVE_AT.join(' y ')} <b>evoluciona</b>, y si puede evolucionar en varios, eliges), elegir <b>a quién ataca</b> (el primero, el último, el más fuerte o el más cercano) o <b>venderla</b> (te devuelven el ${pct(REFUND)} de lo gastado).`,
          `Click a tower to <b>upgrade</b> it (up to level ${MAX_LEVEL}; at levels ${EVOLVE_AT.join(' and ')} it <b>evolves</b>, and if it has several evolutions you choose), choose <b>who it attacks</b> (first, last, strongest or nearest) or <b>sell</b> it (you get back ${pct(REFUND)} of what you spent).`],
+        ['Cada Pokémon ataca a su manera (proyectil, rayo, onda, órbita, minas...), con un ataque de sus tipos que cambia al evolucionar. En su panel puedes <b>enseñarle</b> hasta 2 ataques más de sus tipos con monedas, como subir una habilidad: los lanza todos a la vez y suben de nivel con la torre.',
+         'Each Pokémon attacks in its own way (projectile, beam, wave, orbit, mines...), with an attack of its types that changes when it evolves. In its panel you can <b>teach</b> it up to 2 more attacks of its types with coins, like levelling up an ability: it uses them all at once and they level up with the tower.'],
         ['Tu compañero también lucha: haz clic en él para mejorar su ataque. Si cae, se levanta a los pocos segundos.',
          'Your partner fights too: click on it to upgrade its attack. If it faints, it gets back up after a few seconds.'],
         ['El botón <b>×1/×2</b> (tecla <kbd>F</kbd>) acelera la partida.',
          'The <b>×1/×2</b> button (<kbd>F</kbd> key) speeds the game up.'],
+        ['El <b>minimapa</b> (abajo a la derecha) enseña todo el mapa: pulsa en él para mirar allí sin mover a tu héroe. Vuelves al mover al héroe o con <kbd>C</kbd>; <kbd>M</kbd> lo esconde.',
+         'The <b>minimap</b> (bottom right) shows the whole map: click on it to look there without moving your hero. You go back by moving the hero or with <kbd>C</kbd>; <kbd>M</kbd> hides it.'],
       ].map(([a, b]) => `<li>${T(a, b)}</li>`).join('')}</ol>`
       + h('El poder de cada tipo', 'Each type\'s power')
       + `<p>${T('Además de su daño (con la tabla de tipos de los juegos), cada torre tiene un poder según el tipo de su ataque:',
@@ -157,12 +161,12 @@ export const GuideUI = (() => {
         return `<tr><td>${chip(t)}</td><td><b>${esc(en() ? r.en[0] : r.name)}</b></td><td>${esc(en() ? r.en[1] : r.desc)}</td></tr>`;
       }).join('')}</table>`
       + h('Pokémon de apoyo', 'Support Pokémon')
-      + `<p>${T('No atacan: dan un <b>aura</b> a las torres que tienen cerca (el anillo de su color). Al mejorarlos crece su fuerza y su radio. Dos auras de la misma clase no se suman: cuenta la más fuerte.',
-               'They do not attack: they give an <b>aura</b> to nearby towers (the ring in their colour). Upgrading them raises their strength and radius. Two auras of the same kind do not stack: the strongest counts.')}</p>`
+      + `<p>${T('No atacan: dan un <b>aura</b> a las torres que tienen cerca (el anillo de su color). Al mejorarlos crece su fuerza y su radio. Dos auras de la misma clase no se suman: cuenta la más fuerte. Si no tienes ninguno de una clase, en la tienda tienes uno prestado.',
+               'They do not attack: they give an <b>aura</b> to nearby towers (the ring in their colour). Upgrading them raises their strength and radius. Two auras of the same kind do not stack: the strongest counts. If you have none of a kind, the shop lends you one.')}</p>`
       + `<table class="guide-table">${AURA_KINDS.map(auraLine).join('')}</table>`
       + h('Las oleadas', 'The waves')
-      + `<p>${T('Siempre son las mismas, y antes de cada una se anuncia su tema y una pista. Cada 5 sale un jefe y cada 10 un legendario.',
-               'They are always the same, and before each one its theme and a hint are shown. Every 5th wave brings a boss and every 10th a legendary.')}</p>`
+      + `<p>${T('Siempre son las mismas, y antes de cada una se anuncia su tema y una pista. Cada 5 sale un jefe y cada 10 un legendario. Al derrotarlo, se une a tu tienda como <b>trofeo</b> para el resto de la partida, aunque no lo tengas (es caro: un legendario cuesta 300).',
+               'They are always the same, and before each one its theme and a hint are shown. Every 5th wave brings a boss and every 10th a legendary. Once defeated, it joins your shop as a <b>trophy</b> for the rest of the game, even if you do not own it (it is expensive: a legendary costs 300).')}</p>`
       + `<table class="guide-table waves">${WAVES.map((w, i) =>
         `<tr${w.boss ? ' class="boss"' : ''}><td>${i + 1}</td><td><b>${esc(en() ? w.en[0] : w.theme)}</b></td><td>${esc(en() ? w.en[1] : w.hint)}</td></tr>`).join('')}</table>`
       + h('Consejos', 'Tips')
@@ -193,6 +197,9 @@ export const GuideUI = (() => {
       ['¿La Defensa da recompensas?', 'Does Defense give rewards?',
        'Sí: Pokémonedas para tu cuenta según las oleadas que superes y los enemigos que caigan (más si ganas), y cuenta para misiones, logros y su propio ranking. Las monedas de la tienda son sólo para esa partida.',
        'Yes: Pokécoins for your account depending on the waves you clear and the enemies defeated (more if you win), and it counts for missions, achievements and its own leaderboard. Shop coins only last for that game.'],
+      ['¿Puedo jugar con gente que no es mi amiga?', 'Can I play with people who are not my friends?',
+       'Sí: en tu sala marca «Sala pública» y saldrá en «Salas públicas» (en el menú). Cualquiera puede entrar mientras estáis en la sala; si ya habéis empezado, sólo puede mirar la partida como espectador (no juega ni gana nada). Sirve para Survivor y para Defensa.',
+       'Yes: in your room tick “Public room” and it will show in “Public rooms” (in the menu). Anyone can join while you are in the room; once you have started, they can only watch the game as a spectator (they do not play or earn anything). It works for Survivor and Defense.'],
       ['¿Puedo jugar la Defensa con amigos?', 'Can I play Defense with friends?',
        'Sí, hasta 4: desde una sala, el anfitrión elige Defensa. Cada uno compra sus torres con sus monedas y las vidas son de todos.',
        'Yes, up to 4: from a room, the host chooses Defense. Each player buys their own towers with their own coins, and lives are shared.'],

@@ -118,13 +118,14 @@
   <div class="menu-right">
     <div class="box">
       <div class="menu-list">
-        <button class="menu-item play" data-go="play">Jugar<small>Entra en la mazmorra</small></button>
+        <button class="menu-item play" data-go="play">Survivor<small>Entra en la mazmorra</small></button>
         <button class="menu-item" data-go="td">Defensa<small>Tower defense · solo o en grupo</small></button>
         <button class="menu-item" data-go="dex">Pokémon<small id="menu-dex-count">Tu colección</small></button>
         <button class="menu-item" data-go="upgrades">Mejoras<small>Haz más fuerte cada run</small></button>
         <button class="menu-item" data-go="gacha">Gacha<small>9 regiones · Pokémon y shinies</small></button>
         <button class="menu-item" data-go="goals">Misiones<small id="menu-goals-sub">Misiones, logros y perfil</small></button>
         <button class="menu-item" data-go="friends">Amigos<small id="menu-friends-sub">Juega en grupo, hasta 4</small></button>
+        <button class="menu-item" data-go="rooms">Salas públicas<small>Únete a una partida o mírala</small></button>
         <button class="menu-item" data-go="rank">Ranking<small>Quién aguanta más</small></button>
         <button class="menu-item" data-go="settings">Ajustes<small>Sonido, gráficos, controles y cuenta</small></button>
       </div>
@@ -280,6 +281,17 @@
 </section>
 
 <!-- ====== Amigos ====== -->
+<section id="scr-rooms" class="scr dim hidden">
+  <div class="box wide">
+    <div class="row between"><h2>Salas públicas</h2>
+      <div class="row"><button id="rooms-create" class="btn small gold">Crear sala pública</button><button id="rooms-refresh" class="btn small">Actualizar</button><button class="btn small ghost" data-back>Volver</button></div></div>
+    <p class="sub">Entra en una sala que espera jugadores, o mira una partida que ya ha empezado.</p>
+    <div class="filters" id="rooms-filter"></div>
+    <div id="rooms-list" class="fr-list"></div>
+    <p class="note" id="rooms-note"></p>
+  </div>
+</section>
+
 <section id="scr-friends" class="scr dim hidden">
   <div class="box wide">
     <div class="row between"><h2>Amigos</h2>

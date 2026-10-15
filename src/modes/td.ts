@@ -6,7 +6,7 @@ import {
   evolvesAt, START_MONEY, MAX_LEVEL, PATH_CLEAR, TOWER_GAP, ENDS_CLEAR,
   pathLengths, pathProgress, stepBack, pickTarget, TARGET_MODES, TARGET_NAME, type TargetMode,
   ROLES, roleHit, SUPPORT, AURAS, AURA_KINDS, auraStrength, auraRadius, aurasAt, type AuraKind, type AuraTotals,
-  MAPS, mapById, randomMap, costFor, type TdMap
+  MAPS, mapById, randomMap, costFor, trophyCost, type TdMap
 } from './td-geom';
 import { START_LIVES, LAST_WAVE, MAX_WAVE, WIN_COINS, waveAt, waveHp, waveCount, waveGap, bossHpMul, leakCost, defenseCoins } from './td-waves';
 import type { CoopConfig } from '../net/coop';
@@ -52,15 +52,20 @@ import type { CoopConfig } from '../net/coop';
  * sólo él la mejora o la vende. Los invitados ven copias de las torres que repiten
  * sus ataques sin hacer daño (G.Combat.ghostCast).
  *
- *   invitado -> anfitrión   ['tp', dex, x, y, shiny] plantar · ['tu', id] mejorar · ['ts', id] vender
+ *   invitado -> anfitrión   ['tp', dex, x, y, shiny, trofeo] plantar · ['tu', id] mejorar · ['ts', id] vender
  *                           ['tm', id, modo] a quién ataca · ['te', id, dex] evolución elegida
- *                           ['th'] mejorar al héroe · ['tw'] adelantar la oleada
- *   anfitrión -> invitados  ['tt', id, dueño, dex, x, y, nivel, modo, shiny, base, gastado] una torre (nueva o cambiada)
+ *                           ['th'] mejorar al héroe · ['tw'] adelantar la oleada · ['tl', id, mov] enseñarle un ataque
+ *   anfitrión -> invitados  ['tt', id, dueño, dex, x, y, nivel, modo, shiny, base, gastado, [aprendidos]] una torre (nueva o cambiada)
  *                           ['tr', id] torre vendida · ['tc', id, mov, nivel, ángulo, evolucionado] ataque de una torre
  *                           ['tv', id, [dex...]] evolución por elegir (la ve su dueño)
  *                           ['tg', vidas, oleada, fase, segundos, quedan, ×2, superadas, ganada, {uid: monedas}, escapados]
  *                           ['tb', idEnemigo, 'boss'|'legend'] un jefe (más grande) · ['th', uid, nivel] héroe mejorado
  *                           ['tx', x, y, texto, color] un número o aviso flotante
+ *                           ['tq', dex] un jefe o legendario derrotado pasa a la tienda (trofeo)
+ *
+ * Espectador (sala pública ya en juego; net/spectate.ts): monta la partida como un invitado,
+ * pero sin héroe propio (no se dibuja, no ataca ni recoge), sin tienda ni nada que comprar; la
+ * cámara sigue al jugador que elijas (o donde mandes con el minimapa) y al acabar no cobra nada.
  *
  * Todo lo del modo vive aquí, en td-geom.ts y en td-waves.ts: no cambia nada
  * del modo de hordas.
@@ -81,6 +86,8 @@ export const TD = (() => {
    * torre cubría medio mapa y daba igual dónde ponerla.
    */
   const RANGE_MAX = 340;
+  /** El apoyo que se presta de cada clase si no tienes ninguno: Scyther, Togepi, Riolu, Meowth y Hoothoot. */
+  const LENT_SUPPORT = [123, 175, 447, 52, 163];
   /** Cuántos Pokémon enseña la tienda a la vez (con más, se filtra por tipo). */
   const SHOP_MAX = 60;
 
@@ -91,6 +98,8 @@ export const TD = (() => {
   interface Tower {
     id: number; owner: string; p: any; dex: number; shiny: boolean; level: number; base: number; spent: number;
     mode: TargetMode; atk: number; buff: AuraTotals;
+    /** Ataques que le has enseñado con monedas (además del suyo). */
+    learned: string[];
   }
 
   let time = 0;
@@ -101,7 +110,10 @@ export const TD = (() => {
   /** Favoritos (salen primero en la tienda). */
   let team: number[] = [];
   /** Todo lo que se puede comprar: tu colección y, si es corta, iniciales prestados. */
-  let pool: { dex: number; lent: boolean }[] = [];
+  /** lent: prestado (iniciales, apoyos) · trophy: jefe o legendario derrotado en esta partida (más caro). */
+  let pool: { dex: number; lent: boolean; trophy?: boolean }[] = [];
+  /** Trofeos de esta partida, en el orden en que se ganaron (para el invitado que vuelve tras un corte). */
+  let trophies: number[] = [];
   /** Quién eres en la partida: 'me' en solitario, tu uid en grupo. */
   let me = 'me';
   /** Las monedas de cada jugador (en solitario, sólo las tuyas). Las lleva el anfitrión. */
@@ -241,6 +253,9 @@ export const TD = (() => {
       if (this.chief) {
         floatText(this.x, this.y - this.bodyH - 10, '+' + (n + bonus), '#ffd23f');
         announce('¡' + this.name + ' derrotado!', 2.4);
+        // Derrotarlo lo desbloquea: pasa a la tienda (de todos) para el resto de la partida.
+        unlockTrophy(this.dex);
+        if (coop) G.Coop.broadcast(['tq', this.dex]);
       }
     }
 
@@ -308,8 +323,10 @@ export const TD = (() => {
 
   /** ¿Simulas tú la partida? En solitario sí; en grupo, sólo el anfitrión. */
   const hosting = () => !coop || G.Coop.isHost;
-  /** ¿Eres invitado en una partida en grupo? */
+  /** ¿Eres invitado en una partida en grupo? (el espectador también lo es) */
   const guest = () => !!coop && !G.Coop.isHost;
+  /** ¿Sólo miras la partida (espectador)? */
+  const watching = () => !!coop && !!coop.watch;
   /** Tus monedas. */
   const cash = () => purse[me] || 0;
   /** Texto de un jugador (su apodo) dentro de HTML. */
@@ -350,6 +367,12 @@ export const TD = (() => {
         if (G.DEX_BY[s.dex] && s.dex !== save.partner && !out.some(o => o.dex === s.dex)) out.push({ dex: s.dex, lent: true });
       }
     }
+    // Apoyos: de cada clase de aura que no tengas, uno prestado (si no, quien empieza no los ve nunca).
+    for (const dex of LENT_SUPPORT) {
+      const kind = SUPPORT[dex];
+      if (!G.DEX_BY[dex] || dex === save.partner || out.some(o => SUPPORT[o.dex] === kind)) continue;
+      out.push({ dex, lent: true });
+    }
     return out;
   }
 
@@ -361,14 +384,72 @@ export const TD = (() => {
     return out;
   }
 
+  // ---------------- el ataque de cada torre ----------------
+
+  /** Formas de ataque que no sirven quieto: embestir (te mueve), el rastro al andar y los potenciadores. */
+  const NOT_FOR_TOWERS = new Set(['buff', 'dash', 'trail']);
+  const towerMoves = new Map<number, string>();
+  let parentOf: Map<number, number> | null = null;
+  /** De qué evoluciona `dex` (o undefined). */
+  function preEvo(dex: number) {
+    if (!parentOf) {
+      parentOf = new Map();
+      const E = (G.EVOLUTIONS || {}) as Record<number, number[]>;
+      for (const [from, tos] of Object.entries(E)) for (const to of tos) if (!parentOf.has(to)) parentOf.set(to, +from);
+    }
+    return parentOf.get(dex);
+  }
+  /**
+   * El ataque de un Pokémon como torre. Antes era el inicial de su tipo, así que todos los de
+   * Fuego lanzaban Ascuas y todos los de Agua, Pistola Agua. Ahora cada especie tiene uno de
+   * los de sus tipos (siempre el mismo), y al evolucionar cambia a otro distinto. Los iniciales
+   * conservan el suyo.
+   */
+  /** Todos los ataques de sus tipos que sirven en una torre (los Normal sólo si es de tipo Normal), en orden fijo. */
+  function towerPool(dex: number): string[] {
+    const mon = G.DEX_BY[dex];
+    if (!mon) return [];
+    return (G.Moves.poolFor(mon) as string[]).filter(m => {
+      const d = G.Moves.BY_ID[m];
+      return d && mon.types.includes(d.type) && !NOT_FOR_TOWERS.has(d.kind);
+    }).sort();
+  }
+  function towerMoveOf(dex: number): string {
+    const got = towerMoves.get(dex);
+    if (got) return got;
+    const mon = G.DEX_BY[dex];
+    let id = G.startMoveOf(dex);
+    if (mon && !G.STARTER_BY[dex]) {
+      const usable = towerPool(dex);
+      // Primero los de su tipo principal (Zapdos, Eléctrico; Moltres, Fuego); los del segundo, sólo si del
+      // principal hay uno nada más (Dragonite: Dragón sólo tiene Furia Dragón).
+      const main = usable.filter(m => G.Moves.BY_ID[m].type === mon.types[0]);
+      let ids = main.length >= 2 ? main : usable;
+      // Una evolución final o un legendario no se queda con el ataque básico de su tipo (el inicial).
+      const final = !((G.EVOLUTIONS || {})[dex] || []).length && (preEvo(dex) || mon.leg);
+      if (final) { const strong = ids.filter(m => m !== G.Moves.startFor({ types: [G.Moves.BY_ID[m].type] })); if (strong.length) ids = strong; }
+      if (ids.length) {
+        let i = (Math.imul(dex, 2654435761) >>> 0) % ids.length;
+        // Al evolucionar, un ataque distinto del de su forma anterior (si hay de dónde elegir).
+        const from = preEvo(dex);
+        if (from && ids.length > 1 && ids[i] === towerMoveOf(from)) i = (i + 1) % ids.length;
+        id = ids[i];
+      }
+    }
+    towerMoves.set(dex, id);
+    return id;
+  }
+
   /** El tipo del ataque de un Pokémon (el de su movimiento): decide su poder. */
   function attackType(dex: number): string {
-    const m = G.Moves.BY_ID[G.startMoveOf(dex)];
+    const m = G.Moves.BY_ID[towerMoveOf(dex)];
     return (m && m.type) || G.DEX_BY[dex].types[0];
   }
   const typeName = (t: string) => G.U.TYPE_NAME[t] || t;
-  const auraChip = (k: AuraKind) => `<i class="td-type" style="background:${AURAS[k].color}">Apoyo</i>`;
-  const typeChip = (t: string) => `<i class="td-type" style="background:${G.U.TYPE_COLOR[t] || '#888'}">${typeName(t)}</i>`;
+  /** Etiqueta de color (tipo o apoyo), con el texto oscuro o blanco según se lea mejor sobre su fondo. */
+  const tag = (bg: string, text: string) => `<i class="td-type" style="background:${bg};color:${G.U.inkOn(bg)}">${text}</i>`;
+  const auraChip = (k: AuraKind) => tag(AURAS[k].color, 'Apoyo');
+  const typeChip = (t: string) => tag(G.U.TYPE_COLOR[t] || '#888', typeName(t));
 
   /** Pantalla de favoritos antes de empezar: salen primero en la tienda. */
   function openTeam() {
@@ -472,11 +553,11 @@ export const TD = (() => {
     lens = pathLengths(path);
     bound = 20 * TS;
     time = 0; lives = START_LIVES; wave = 0; leaked = 0; downT = 0; won = false; flawless = false; fast = false; cleared = 0; tampered = false; hostAway = null;
-    heroLevel = 1; reach = 0; hpMul = 1; bossLeft = 0; toSpawn = 0; leftShown = 0; stateT = 0;
+    heroLevel = 1; reach = 0; hpMul = 1; bossLeft = 0; toSpawn = 0; leftShown = 0; stateT = 0; camFree = null;
     // Cada jugador empieza con lo mismo (en solitario, sólo tú).
     purse = {}; heroLv = {};
     for (const u of coop ? coop.members.map(m => m.uid) : [me]) { purse[u] = START_MONEY; heroLv[u] = 1; }
-    towers = []; nextTowerId = 1; placing = null; selected = null; pendingEvo = null; powers = {};
+    towers = []; nextTowerId = 1; placing = null; selected = null; pendingEvo = null; powers = {}; trophies = [];
     pool = candidates();
     team = cleanTeam(opts && opts.team);
     if (!opts || !Array.isArray(opts.team)) { if (!team.length) team = cleanTeam(save.tdTeam); }
@@ -489,7 +570,7 @@ export const TD = (() => {
     pl.addMove(G.startMoveOf(mon.dex));
     if (coop) {
       G.Coop.begin(coop, pl, coopApi);
-      G.Social.setPlaying(true);
+      if (!coop.watch) G.Social.setPlaying(true);
     }
     G.Camera.x = pl.x; G.Camera.y = pl.y; G.Camera.shake = 0;
     G.Sprites.preload([mon.dex], 8000, pl.shiny);
@@ -521,6 +602,14 @@ export const TD = (() => {
   function finish(d: ReturnType<typeof summary>) {
     if (Run.state === 'over' || !pl) return;
     Run.state = 'over';
+    // Espectador: ni premio ni resumen; de vuelta a la lista de salas.
+    if (watching()) {
+      hideUI();
+      G.Audio.music(null);
+      pl = null; towers = []; G.EnemyMgr.clear();
+      G.Spectate.ended(d.won ? '¡Han defendido la base!' : 'La partida que mirabas ha terminado');
+      return;
+    }
     // (Si el anfitrión abandona, Coop ya se ha cerrado: quién era el anfitrión lo dice la partida.)
     const group = !!coop, wasHost = !coop || coop.host === me, members = coop ? coop.members.slice() : [];
     if (coop) {
@@ -596,9 +685,10 @@ export const TD = (() => {
   const groupHp = () => (coop && G.Coop.active ? 1 + 0.85 * (G.Coop.players().length - 1) : 1);
 
   /** Saca un enemigo de la oleada (los normales primero; el jefe, al final). */
-  function spawnEnemy(chief: boolean) {
+  /** @param bossDex  (pruebas) el jefe que sale, en vez del de la oleada */
+  function spawnEnemy(chief: boolean, bossDex = 0) {
     const w = waveAt(wave);
-    const dex = chief ? w.boss! : w.pool[Math.floor(Math.random() * w.pool.length)];
+    const dex = chief ? bossDex || w.boss! : w.pool[Math.floor(Math.random() * w.pool.length)];
     const mon = G.DEX_BY[dex];
     const kind = !chief ? 'normal' : w.legend ? 'legend' : 'boss';
     // Vida y velocidad: la curva de la oleada, ajustadas un poco con los stats del Pokémon.
@@ -704,10 +794,24 @@ export const TD = (() => {
   function makeTower(dex: number, shiny = G.DB.ownsShiny(dex)) {
     const t = new G.Player(G.DEX_BY[dex], {}, shiny);
     t.frozen = true;
-    t.addMove(G.startMoveOf(dex));
+    t.addMove(towerMoveOf(dex));
     return t;
   }
-  const costOf = (dex: number) => costFor(dex, G.DEX_BY[dex].rarity);
+  /** Lo que cuesta como trofeo (el jefe o legendario derrotado, si no lo tienes). */
+  const trophyCostOf = (dex: number) => trophyCost(G.DEX_BY[dex].rarity, !!G.DEX_BY[dex].leg);
+  const isTrophy = (dex: number) => pool.some(c => c.dex === dex && c.trophy);
+  const costOf = (dex: number) => (isTrophy(dex) ? trophyCostOf(dex) : costFor(dex, G.DEX_BY[dex].rarity));
+
+  /** Un jefe o legendario derrotado pasa a tu tienda (si no lo tenías ya). */
+  function unlockTrophy(dex: number) {
+    if (!G.DEX_BY[dex] || !G.startMoveOf(dex) || trophies.includes(dex)) return;
+    trophies.push(dex);
+    if (pool.some(c => c.dex === dex)) return;               // ya lo tienes: se compra a su precio de siempre
+    pool.push({ dex, lent: false, trophy: true });
+    G.Sprites.preload([dex], 4000);
+    G.Spawner.say('¡' + G.DEX_BY[dex].name + ' se une a la tienda!', 3, true);
+    buildShop();
+  }
   const inPool = (dex: number) => pool.some(c => c.dex === dex);
   const towerById = (id: number) => towers.find(t => t.id === id) || null;
   /** ¿Es tuya? (sólo su dueño la mejora, la vende o cambia a quién ataca) */
@@ -741,7 +845,7 @@ export const TD = (() => {
     placing = null;
     if (guest()) {
       // El anfitrión la planta (si aún se puede) y os la manda a todos.
-      G.Coop.toHost(['tp', dex, Math.round(x), Math.round(y), shiny ? 1 : 0]);
+      G.Coop.toHost(['tp', dex, Math.round(x), Math.round(y), shiny ? 1 : 0, isTrophy(dex) ? 1 : 0]);
       wantSelect = { x, y };
       G.Audio.sfx('confirm');
       refreshUI();
@@ -754,15 +858,20 @@ export const TD = (() => {
   /** Invitado: la torre que has pedido plantar; al llegar, se selecciona. */
   let wantSelect: { x: number; y: number } | null = null;
 
-  /** Planta una torre de `owner` si el sitio vale y le llega el dinero. → la torre, o null */
-  function plant(owner: string, dex: number, x: number, y: number, shiny: boolean): Tower | null {
+  /**
+   * Planta una torre de `owner` si el sitio vale y le llega el dinero. → la torre, o null
+   * @param trophy  (de un invitado) si para él es un trofeo: el precio depende de su tienda, no de la tuya
+   */
+  function plant(owner: string, dex: number, x: number, y: number, shiny: boolean, trophy?: boolean): Tower | null {
     if (!G.DEX_BY[dex] || !G.startMoveOf(dex) || !Number.isFinite(x) || !Number.isFinite(y)) return null;
     if (whyNot(x, y)) return null;
-    const cost = costOf(dex);
+    // Un trofeo sólo se puede pedir si de verdad se ha ganado en esta partida.
+    if (trophy && !trophies.includes(dex)) return null;
+    const cost = trophy === undefined ? costOf(dex) : trophy ? trophyCostOf(dex) : costFor(dex, G.DEX_BY[dex].rarity);
     if (!pay(owner, cost)) { if (owner === me) G.Spawner.say('Te faltan monedas', 1.4, true); return null; }
     const p = makeTower(dex, shiny);
     p.x = x; p.y = y;
-    const t: Tower = { id: nextTowerId++, owner, p, dex, shiny, level: 1, base: cost, spent: cost, mode: 'first', atk: p.atkMul, buff: noBuff() };
+    const t: Tower = { id: nextTowerId++, owner, p, dex, shiny, level: 1, base: cost, spent: cost, mode: 'first', atk: p.atkMul, buff: noBuff(), learned: [] };
     towers.push(t);
     G.FX.ring(x, y, 8, 110, G.U.TYPE_COLOR[G.DEX_BY[dex].types[0]], 0.6, 5);
     if (owner === me) G.Audio.sfx('confirm');
@@ -798,11 +907,48 @@ export const TD = (() => {
   const evoWait = new Map<number, number[]>();
   const evoOf = (t: Tower) => evoWait.get(t.id) || null;
 
-  /** Sube un nivel el movimiento activo (hasta el 5) y un poco el ataque. */
+  /** Sube un nivel sus ataques (hasta el 5; los aprendidos también) y un poco el ataque. */
   function levelMove(p) {
-    const m = p.activeMove();
-    if (m && m.lvl < 5) G.Moves.levelUp(m);
+    for (const m of p.activeGroup()) if (m.lvl < 5) G.Moves.levelUp(m);
     p.atkMul *= 1.12;
+  }
+
+  // ---------------- enseñar ataques ----------------
+  // Como subir una habilidad en Dota: con monedas, la torre aprende otro de los ataques de sus
+  // tipos. Van en el mismo hueco que el suyo (como un vínculo de las hordas: G.Combat los lanza
+  // todos, cada uno con su recarga) y suben de nivel con ella.
+
+  /** Ataques que se pueden enseñar como mucho a cada torre (además del suyo). */
+  const LEARN_MAX = 2;
+  /** Lo que cuesta enseñarle el siguiente: 1,5 veces lo que costó la torre, y medio más por cada uno ya aprendido. */
+  const learnCost = (t: Tower) => Math.round(t.base * (1.5 + 0.5 * t.learned.length));
+  /** Lo que le falta por aprender (de sus tipos); vacío si no puede aprender más. */
+  function learnable(t: Tower): string[] {
+    if (SUPPORT[t.dex] || t.learned.length >= LEARN_MAX) return [];
+    const known = new Set((t.p.activeGroup() as any[]).map(m => m.id));
+    return towerPool(t.dex).filter(id => !known.has(id));
+  }
+  /** Mete el ataque `id` en el hueco de la torre, al nivel de la torre. */
+  function teach(p, id: string, level: number) {
+    const def = G.Moves.BY_ID[id];
+    if (!def || (p.activeGroup() as any[]).some(m => m.id === id)) return;
+    const m = G.Moves.instance(id, Math.max(1, Math.min(level, def.maxLvl || 5, 5)));
+    p.moves.push(m);
+    p.activeGroup().push(m);
+  }
+  /** Enseña a la torre el ataque `id` (si es suyo, si puede y si le llega). */
+  function learn(t: Tower, id: string) {
+    if (guest()) { G.Coop.toHost(['tl', t.id, id]); return; }
+    if (!learnable(t).includes(id)) return;
+    const c = learnCost(t);
+    if (!pay(t.owner, c)) { if (mine(t)) G.Spawner.say('Te faltan monedas', 1.4, true); return; }
+    t.spent += c;
+    t.learned.push(id);
+    teach(t.p, id, t.level);
+    G.FX.ring(t.p.x, t.p.y, 8, 100, G.U.TYPE_COLOR[G.Moves.BY_ID[id].type] || '#ffffff', 0.7, 5);
+    if (mine(t)) { G.Audio.sfx('levelup'); G.Spawner.say('¡' + G.DEX_BY[t.dex].name + ' ha aprendido ' + G.Moves.BY_ID[id].name + '!', 2.4, true); }
+    sendTower(t);
+    refreshUI();
   }
 
   /** En qué puede evolucionar `dex` (datos de data/evolutions; sólo los que tienen sprite). */
@@ -828,6 +974,8 @@ export const TD = (() => {
     p.x = old.x; p.y = old.y;
     p.atkMul = old.atkMul;
     for (let l = 1; l < t.level; l++) { const m = p.activeMove(); if (m && m.lvl < 5) G.Moves.levelUp(m); }
+    // Lo aprendido no se olvida al evolucionar.
+    for (const id of t.learned) teach(p, id, t.level);
     G.Projectiles.clearOrbs(old);
     t.p = p; t.dex = to; t.shiny = !!p.shiny;
     evoWait.delete(t.id);
@@ -958,8 +1106,8 @@ export const TD = (() => {
    * torres. Vista Lince sube el tope, pero nunca más allá de lo que llega su ataque.
    */
   function rangeOf(p) {
-    const m = p.activeMove();
-    return m ? Math.min(RANGE_MAX * (1 + (p.tdRange || 0)), moveRange(m)) : 0;
+    const ms = p.activeGroup() as any[];
+    return ms.length ? Math.min(RANGE_MAX * (1 + (p.tdRange || 0)), Math.max(...ms.map(m => moveRange(m)))) : 0;
   }
 
   // ---------------- auras ----------------
@@ -1069,6 +1217,17 @@ export const TD = (() => {
 
   /** Tu héroe: se levanta solo al caer y no sale del claro. Y los compañeros (copias). */
   function heroStep(dt: number) {
+    // Espectador: su "héroe" no juega; está donde mira (el anfitrión le manda los enemigos de ahí).
+    if (watching()) {
+      const t = G.Spectate.target();
+      const fx = camFree ? camFree.x : t ? t.x : pl.x, fy = camFree ? camFree.y : t ? t.y : pl.y;
+      pl.x = fx; pl.y = fy; pl.hp = pl.maxHp; pl.dead = false; pl.frozen = true;
+      for (const p of G.Coop.puppets()) { p.netUpdate(dt); G.Combat.ghostOrbit(p, dt, time); }
+      G.Camera.follow(fx, fy, dt);
+      G.World.update(dt, G.Camera);
+      G.Spectate.tick();
+      return;
+    }
     // Héroe caído: se levanta solo al rato (la base aguanta mientras con las torres).
     if (pl.dead) {
       downT += dt;
@@ -1079,7 +1238,9 @@ export const TD = (() => {
     const far = Math.hypot(pl.x, pl.y);
     if (far > bound) { pl.x *= bound / far; pl.y *= bound / far; }
     if (coop && G.Coop.active) for (const p of G.Coop.puppets()) { p.netUpdate(dt); G.Combat.ghostOrbit(p, dt, time); }
-    G.Camera.follow(pl.x, pl.y, dt);
+    // La cámara sigue al héroe, salvo si la has llevado a otro sitio con el minimapa (al mover al héroe, vuelve).
+    if (pl.walking) camFree = null;
+    G.Camera.follow(camFree ? camFree.x : pl.x, camFree ? camFree.y : pl.y, dt);
     G.World.update(dt, G.Camera);
   }
 
@@ -1111,14 +1272,15 @@ export const TD = (() => {
       p.target = tg;
       if (tg) p.aim = Math.atan2(tg.y - p.y, tg.x - p.x);
       aimAhead(p);
-      const m = p.activeMove(), was = m && m.castAt;
+      const group = p.activeGroup() as any[], was = group.map(m => m.castAt);
       // Sin nadie a su alcance no ataca (las de área se lanzaban solas). Las órbitas sí: giran siempre.
-      if (tg || (m && m.kind === 'orbit')) G.Combat.tick(dt, p, time);
-      if (m && m.castAt !== was) {
+      if (tg || group.some(m => m.kind === 'orbit')) G.Combat.tick(dt, p, time);
+      group.forEach((m, i) => {
+        if (m.castAt === was[i]) return;
         shots.set(p, (shots.get(p) || 0) + 1);
         // Los invitados lo repiten sin daño.
         if (coop) G.Coop.broadcast(['tc', t.id, m.id, m.lvl, Math.round(p.aim * 100) / 100, m.evolved ? 1 : 0]);
-      }
+      });
     }
     critShots();
     G.Projectiles.update(dt, pl, G.EnemyMgr.all());
@@ -1145,8 +1307,7 @@ export const TD = (() => {
     G.EnemyMgr.rebuildGrid();
     trackEnemies(dt);
     if (placing && !ghostByPointer) { ghost.x = pl.x; ghost.y = pl.y; }
-    aimAhead(pl);
-    G.Combat.tick(dt, pl, time);
+    if (!watching()) { aimAhead(pl); G.Combat.tick(dt, pl, time); }
     applyAuras();
     for (const t of towers) {
       t.p.update(dt);
@@ -1156,7 +1317,7 @@ export const TD = (() => {
     G.Projectiles.update(dt, pl, G.EnemyMgr.all());
     G.Combat.resolve(dt, pl, time);
     G.Combat.updateFields(dt);
-    G.Pickups.update(dt, [pl], onCollect);
+    if (!watching()) G.Pickups.update(dt, [pl], onCollect);
     G.Hazards.update(dt);
     G.FX.update(dt);
     if (phase === 'break') phaseT = Math.max(0, phaseT - dt);
@@ -1168,7 +1329,7 @@ export const TD = (() => {
   // Ver la cabecera: qué manda cada uno y los mensajes.
 
   /** Anfitrión: una torre para los invitados (nueva o cambiada). */
-  const towerEv = (t: Tower) => ['tt', t.id, t.owner, t.dex, Math.round(t.p.x), Math.round(t.p.y), t.level, t.mode, t.shiny ? 1 : 0, t.base, t.spent];
+  const towerEv = (t: Tower) => ['tt', t.id, t.owner, t.dex, Math.round(t.p.x), Math.round(t.p.y), t.level, t.mode, t.shiny ? 1 : 0, t.base, t.spent, t.learned.slice()];
   function sendTower(t: Tower) { if (coop && G.Coop.isHost) G.Coop.broadcast(towerEv(t)); }
   /** Anfitrión: vidas, oleada, cuenta atrás, monedas de cada uno... */
   const stateEv = () => ['tg', lives, wave, phase === 'wave' ? 1 : 0, Math.round(phaseT * 10) / 10,
@@ -1190,7 +1351,7 @@ export const TD = (() => {
         const x = +ev[2], y = +ev[3];
         const why = Number.isFinite(x) && Number.isFinite(y) ? whyNot(x, y) : 'Ahí no';
         if (why) { G.Coop.broadcast(['tn', from, why]); break; }
-        if (!plant(from, ev[1] | 0, x, y, !!ev[4])) G.Coop.broadcast(['tn', from, 'Te faltan monedas']);
+        if (!plant(from, ev[1] | 0, x, y, !!ev[4], !!ev[5])) G.Coop.broadcast(['tn', from, 'Te faltan monedas']);
         break;
       }
       case 'tu': if (his) upgrade(t!); break;
@@ -1199,6 +1360,7 @@ export const TD = (() => {
       case 'te': if (his) { const o = evoOf(t!); if (o && o.includes(ev[2])) evolve(t!, ev[2]); } break;
       case 'th': heroUp(from); break;
       case 'tw': callWave(); break;
+      case 'tl': if (his && typeof ev[2] === 'string') learn(t!, ev[2]); break;
     }
   }
 
@@ -1229,18 +1391,20 @@ export const TD = (() => {
       case 'th': if (ev[1] === me) heroGot(ev[2]); break;
       case 'tn': if (ev[1] === me) { G.Spawner.say(ev[2], 1.6, true); G.Audio.sfx('back'); wantSelect = null; } break;
       case 'tx': G.FX.dmgText(ev[1], ev[2], ev[3], ev[4], true); break;
+      case 'tq': unlockTrophy(ev[1]); break;
     }
   }
 
   /** Invitado: una torre nueva o que ha cambiado (nivel, evolución, dueño, modo). */
   function upsertTower(a: any[]) {
     const [, id, owner, dex, x, y, level, mode, shiny, base, spent] = a;
+    const learned: string[] = Array.isArray(a[11]) ? a[11].filter((m: unknown) => typeof m === 'string' && G.Moves.BY_ID[m as string]) : [];
     if (!G.DEX_BY[dex]) return;
     let t = towerById(id);
     if (!t) {
       const p = makeTower(dex, !!shiny);
       p.x = x; p.y = y;
-      t = { id, owner, p, dex, shiny: !!shiny, level: 1, base, spent, mode, atk: p.atkMul, buff: noBuff() };
+      t = { id, owner, p, dex, shiny: !!shiny, level: 1, base, spent, mode, atk: p.atkMul, buff: noBuff(), learned: [] };
       towers.push(t);
       G.Sprites.preload([dex], 4000, p.shiny);
       G.FX.ring(x, y, 8, 110, G.U.TYPE_COLOR[G.DEX_BY[dex].types[0]], 0.6, 5);
@@ -1252,12 +1416,15 @@ export const TD = (() => {
       p.x = t.p.x; p.y = t.p.y;
       G.Projectiles.clearOrbs(t.p);
       t.p = p; t.dex = dex; t.level = 1; t.atk = p.atkMul;
+      t.learned = [];                                  // se le vuelven a enseñar abajo, al nivel de ahora
       G.Sprites.preload([dex], 4000, p.shiny);
       evolveFx(p);
       if (pendingEvo && pendingEvo.tower === t) pendingEvo = null;
     } else if (level > t.level) G.FX.ring(t.p.x, t.p.y, 8, 90, G.U.TYPE_COLOR[G.DEX_BY[dex].types[0]], 0.6, 5);
     while (t.level < level) { t.level++; levelMove(t.p); t.atk *= 1.12; }
     t.owner = owner; t.mode = mode; t.base = base; t.spent = spent; t.shiny = !!shiny;
+    // Los ataques aprendidos (la copia sólo los necesita para las órbitas y el panel).
+    for (const m of learned) if (!t.learned.includes(m)) { t.learned.push(m); teach(t.p, m, t.level); }
     refreshUI();
   }
   function dropTower(id: number) {
@@ -1272,7 +1439,7 @@ export const TD = (() => {
 
   /** Anfitrión: lo que necesita un invitado que vuelve tras un corte (va detrás de los enemigos). */
   function resyncFor(u: string): any[][] {
-    const evs: any[][] = [['tz']];
+    const evs: any[][] = [['tz'], ...trophies.map(d => ['tq', d])];
     for (const t of towers) evs.push(towerEv(t));
     for (const e of G.EnemyMgr.all()) if (!e.dead && e instanceof Walker && e.chief) evs.push(['tb', e.id, e.kind]);
     for (const t of towers) { const o = evoOf(t); if (o && t.owner === u) evs.push(['tv', t.id, o]); }
@@ -1322,9 +1489,18 @@ export const TD = (() => {
   }
 
   function keysPlay() {
+    // Espectador: cambiar a quién mira, y el minimapa.
+    if (watching()) {
+      G.Spectate.keys();
+      if (G.Input.tap('keyc')) camFree = null;
+      if (G.Input.tap('keym')) { mapOpen = !mapOpen; if (mapBox) mapBox.style.display = mapOpen ? '' : 'none'; }
+      return;
+    }
     if (placing && (G.Input.tap('enter') || G.Input.tap('space') || G.Input.tap('numpadenter'))) tryPlace(ghost.x, ghost.y);
     if (G.Input.tap('keyn')) callWave();
     if (G.Input.tap('keyf')) toggleFast();
+    if (G.Input.tap('keyc')) camFree = null;                                  // la cámara, de vuelta al héroe
+    if (G.Input.tap('keym')) { mapOpen = !mapOpen; if (mapBox) mapBox.style.display = mapOpen ? '' : 'none'; }
     for (let i = 0; i < 4; i++) {
       if (G.Input.tap('digit' + (i + 1)) || G.Input.tap('numpad' + (i + 1))) pl.setActive(i);
     }
@@ -1346,6 +1522,11 @@ export const TD = (() => {
   // seleccionada. Abajo: qué se está colocando y por qué no se puede ahí.
 
   let hud: HTMLElement | null = null, shop: HTMLElement | null = null, panel: HTMLElement | null = null, tip: HTMLElement | null = null;
+  /** El minimapa (abajo a la derecha) y su lienzo. */
+  let mapBox: HTMLElement | null = null, mapCv: HTMLCanvasElement | null = null;
+  let mapOpen = true;
+  /** Punto del mundo al que has llevado la cámara con el minimapa, o null (sigue al héroe). */
+  let camFree: { x: number; y: number } | null = null;
   /** Qué enseña la tienda: favoritos, todos, o un tipo. */
   let shopFilter = 'fav';
   let shopOpen = true;
@@ -1368,6 +1549,7 @@ export const TD = (() => {
       #td-hud .td-wave small { color: var(--muted); font-size: 12px; }
       #td-hud .td-team { display: flex; flex-direction: column; font-size: 12px; line-height: 1.2; }
       #td-hud .td-team b { color: var(--gold); }
+      #td-hud .td-watch-hide { display: none !important; }
       @keyframes td-bump { 0% { transform: scale(1); } 40% { transform: scale(1.35); } 100% { transform: scale(1); } }
       #td-shop { position: fixed; left: 8px; top: 96px; z-index: 30; width: 214px; padding: 8px; display: flex; flex-direction: column; gap: 6px; max-height: calc(100vh - 150px); }
       #td-shop h3 { margin: 0; font-size: 16px; display: flex; justify-content: space-between; align-items: center; }
@@ -1383,9 +1565,15 @@ export const TD = (() => {
       .td-slot span { display: flex; flex-direction: column; align-items: flex-start; line-height: 1.15; font-size: 13px; min-width: 0; }
       .td-slot span b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 130px; }
       .td-slot .td-cost { color: var(--gold); font-weight: 700; }
-      .td-type { display: inline-block; font-style: normal; font-size: 10px; padding: 0 5px; border-radius: 6px; color: #10131c; font-weight: 700; line-height: 15px; }
+      .td-slot .td-trophy { color: #ffb03b; font-size: 11px; }
+      .td-type { display: inline-block; font-style: normal; font-size: 11px; padding: 1px 6px; border-radius: 6px; font-weight: 700; line-height: 15px;
+                 text-shadow: none; letter-spacing: .3px; white-space: nowrap; }
       #td-shop .td-more { font-size: 12px; color: var(--muted); text-align: center; }
-      #td-panel { position: fixed; right: 8px; top: 96px; z-index: 30; width: min(270px, 46vw); padding: 12px; }
+      #td-panel { position: fixed; right: 8px; top: 96px; z-index: 30; width: min(270px, 46vw); padding: 12px;
+                  max-height: calc(100vh - 110px); overflow-y: auto; }
+      #td-map { position: fixed; right: 8px; bottom: 90px; z-index: 30; padding: 6px; display: flex; flex-direction: column; gap: 4px; align-items: stretch; }
+      #td-map canvas { width: 170px; height: 170px; cursor: crosshair; touch-action: none; display: block; }
+      #td-map button { font-size: 11px; padding: 2px 6px; }
       #td-panel h3 { margin: 0 0 4px; }
       #td-panel p { margin: 3px 0; font-size: 14px; color: var(--muted); }
       #td-panel p.role { color: inherit; }
@@ -1406,6 +1594,13 @@ export const TD = (() => {
         #td-hud { gap: 6px; }
         #td-hud .td-wave { max-width: 160px; }
         #td-panel { top: 120px; }
+        #td-map canvas { width: 120px; height: 120px; }
+      }
+      /* Móvil en horizontal: poco alto, el minimapa pequeño y pegado abajo. */
+      @media (max-height: 520px) {
+        #td-map { bottom: 8px; padding: 4px; }
+        #td-map canvas { width: 96px; height: 96px; }
+        #td-map button { font-size: 10px; padding: 1px 4px; }
       }
     `;
     document.head.appendChild(s);
@@ -1446,7 +1641,16 @@ export const TD = (() => {
     tip = document.createElement('div');
     tip.id = 'td-tip';
     tip.className = 'box';
-    for (const el of [hud, shop, panel, tip]) {
+    buildMap();
+    // Espectador: sólo se mira (sin tienda ni panel ni monedas propias).
+    if (watching()) {
+      shop.style.display = 'none'; panel.style.display = 'none'; tip.style.display = 'none';
+      for (const sel of ['.td-money', '[data-a=next]', '[data-a=fast]', '[data-a=won]']) {
+        const el = hud.querySelector(sel) as HTMLElement | null;
+        if (el) el.classList.add('td-watch-hide');
+      }
+    }
+    for (const el of [hud, shop, panel, tip, mapBox!]) {
       // Lo que se pulsa en la interfaz no llega al mapa.
       el.addEventListener('pointerdown', e => e.stopPropagation());
       document.body.appendChild(el);
@@ -1477,7 +1681,8 @@ export const TD = (() => {
     sel.onchange = () => { shopFilter = sel.value || 'all'; buildShop(); };
 
     const fav = (d: number) => team.indexOf(d);
-    let items = shopFilter === 'fav' ? team.map(dex => ({ dex, lent: false }))
+    // En favoritos salen también los trofeos que vas ganando.
+    let items = shopFilter === 'fav' ? [...team.map(dex => ({ dex, lent: false, trophy: false })), ...pool.filter(c => c.trophy)]
               : shopFilter === 'all' ? pool.slice()
               : shopFilter === 'support' ? pool.filter(c => SUPPORT[c.dex])
               : pool.filter(c => attackType(c.dex) === shopFilter);
@@ -1493,7 +1698,7 @@ export const TD = (() => {
       b.dataset.dex = String(c.dex);
       b.title = mon.name + (r ? ' · ' + r.name + ': ' + r.desc : '');
       b.appendChild(G.UI.spriteCanvas(c.dex, 40, 35, { scale: 1 }));
-      b.insertAdjacentHTML('beforeend', `<span><b>${mon.name}</b><em style="font-style:normal">${k ? auraChip(k) : typeChip(t)} <span class="td-cost" style="display:inline">${costOf(c.dex)}</span></em></span>`);
+      b.insertAdjacentHTML('beforeend', `<span><b>${mon.name}</b><em style="font-style:normal">${k ? auraChip(k) : typeChip(t)} <span class="td-cost" style="display:inline">${costOf(c.dex)}</span>${c.trophy ? ' <small class="td-trophy">trofeo</small>' : ''}</em></span>`);
       b.onclick = e => { e.stopPropagation(); startPlacing(c.dex); };
       list.appendChild(b);
     }
@@ -1502,8 +1707,106 @@ export const TD = (() => {
   }
 
   function hideUI() {
-    for (const id of ['td-hud', 'td-shop', 'td-panel', 'td-tip', 'td-bar']) { const el = document.getElementById(id); if (el) el.remove(); }
-    hud = shop = panel = tip = null;
+    for (const id of ['td-hud', 'td-shop', 'td-panel', 'td-tip', 'td-bar', 'td-map']) { const el = document.getElementById(id); if (el) el.remove(); }
+    hud = shop = panel = tip = mapBox = null; mapCv = null;
+  }
+
+  // ---------------- minimapa ----------------
+  // Todo el claro de un vistazo: el camino, las torres, los enemigos y los héroes, y un recuadro
+  // con lo que ves. Pulsando (o arrastrando) en él, la cámara va allí sin mover al héroe; vuelve
+  // al mover al héroe, con C o con el botón. M lo esconde.
+
+  /** Radio del mundo que cabe en el minimapa (el claro entero: la entrada queda un poco fuera del borde). */
+  const mapR = () => CLEAR * G.World.TS;
+
+  function buildMap() {
+    mapBox = document.createElement('div');
+    mapBox.id = 'td-map';
+    mapBox.className = 'box';
+    mapBox.style.display = mapOpen ? '' : 'none';
+    mapCv = document.createElement('canvas');
+    mapCv.title = 'Pulsa para mirar allí (M esconde el mapa)';
+    const back = document.createElement('button');
+    back.className = 'btn small ghost';
+    back.textContent = 'Volver al héroe (C)';
+    back.onclick = () => { camFree = null; };
+    mapBox.append(mapCv, back);
+    // Pulsar o arrastrar: la cámara a ese punto.
+    let dragging = false;
+    const go = (e: PointerEvent) => {
+      const r = mapCv!.getBoundingClientRect(), R = mapR();
+      let x = ((e.clientX - r.left) / r.width * 2 - 1) * R, y = ((e.clientY - r.top) / r.height * 2 - 1) * R;
+      const d = Math.hypot(x, y);
+      if (d > R) { x *= R / d; y *= R / d; }
+      camFree = { x, y };
+    };
+    mapCv.addEventListener('pointerdown', e => { dragging = true; mapCv!.setPointerCapture(e.pointerId); go(e); });
+    mapCv.addEventListener('pointermove', e => { if (dragging) go(e); });
+    const stop = () => { dragging = false; };
+    mapCv.addEventListener('pointerup', stop);
+    mapCv.addEventListener('pointercancel', stop);
+  }
+
+  /** Pinta el minimapa (cada fotograma: son unos pocos puntos). */
+  function drawMap() {
+    if (!mapCv || !mapOpen || !pl) return;
+    const css = mapCv.getBoundingClientRect().width || 170, dpr = Math.min(2, window.devicePixelRatio || 1);
+    const S = Math.round(css * dpr);
+    if (mapCv.width !== S) { mapCv.width = S; mapCv.height = S; }
+    const ctx = mapCv.getContext('2d')!, R = mapR(), k = S / (2 * R);
+    const X = (x: number) => S / 2 + x * k, Y = (y: number) => S / 2 + y * k;
+    ctx.clearRect(0, 0, S, S);
+    // El claro y su borde (hasta donde se puede construir).
+    ctx.fillStyle = 'rgba(40, 90, 50, 0.9)';
+    ctx.beginPath(); ctx.arc(S / 2, S / 2, S / 2, 0, 6.2832); ctx.fill();
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)'; ctx.lineWidth = 1; ctx.setLineDash([3 * dpr, 3 * dpr]);
+    ctx.beginPath(); ctx.arc(S / 2, S / 2, bound * k, 0, 6.2832); ctx.stroke(); ctx.setLineDash([]);
+    // El camino, la entrada y la base.
+    if (path.length > 1) {
+      ctx.strokeStyle = 'rgba(214, 186, 132, 0.95)'; ctx.lineWidth = Math.max(2, 42 * k); ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(X(path[0].x), Y(path[0].y)); for (const p of path) ctx.lineTo(X(p.x), Y(p.y)); ctx.stroke();
+      const a = path[0], b = path[path.length - 1];
+      ctx.fillStyle = '#ff5f6d'; ctx.beginPath(); ctx.arc(X(a.x), Y(a.y), 3.5 * dpr, 0, 6.2832); ctx.fill();
+      ctx.fillStyle = '#4fb4ff'; ctx.beginPath(); ctx.arc(X(b.x), Y(b.y), 4.5 * dpr, 0, 6.2832); ctx.fill();
+    }
+    // Las torres: del color de su ataque (los apoyos, dorados) y, en grupo, con el de su dueño alrededor.
+    for (const t of towers) {
+      const x = X(t.p.x), y = Y(t.p.y), s = 3 * dpr;
+      const oc = colorOf(t.owner);
+      if (oc) { ctx.fillStyle = oc; ctx.fillRect(x - s - dpr, y - s - dpr, (s + dpr) * 2, (s + dpr) * 2); }
+      ctx.fillStyle = SUPPORT[t.dex] ? '#ffd23f' : G.U.TYPE_COLOR[attackType(t.dex)] || '#ffffff';
+      ctx.fillRect(x - s, y - s, s * 2, s * 2);
+    }
+    // Los enemigos (los jefes, más grandes).
+    for (const e of G.EnemyMgr.all() as any[]) {
+      if (e.dead) continue;
+      const big = !!e.tdKind || (e instanceof Walker && e.chief);
+      ctx.fillStyle = big ? '#ffcb3d' : '#ff3b4e';
+      ctx.beginPath(); ctx.arc(X(e.x), Y(e.y), (big ? 4 : 2) * dpr, 0, 6.2832); ctx.fill();
+    }
+    // Los héroes: tú en blanco; los compañeros, de su color.
+    for (const h of everyone()) {
+      if (!h) continue;
+      ctx.fillStyle = h === pl ? '#ffffff' : (h.tagColor || '#9ae6ff');
+      ctx.strokeStyle = '#10131c'; ctx.lineWidth = dpr;
+      ctx.beginPath(); ctx.arc(X(h.x), Y(h.y), 3.5 * dpr, 0, 6.2832); ctx.fill(); ctx.stroke();
+    }
+    // Lo que se ve ahora.
+    ctx.strokeStyle = camFree ? '#ffd23f' : 'rgba(255, 255, 255, 0.8)'; ctx.lineWidth = 1.5 * dpr;
+    ctx.strokeRect(X(G.Camera.left()), Y(G.Camera.top()), G.Camera.w * k, G.Camera.h * k);
+    // Con el panel de una torre abierto, el minimapa se pone a su izquierda (si no, lo tapaba); en una
+    // pantalla estrecha (móvil) no cabe al lado: se esconde hasta que cierras el panel.
+    const open = !!panel && panel.style.display !== 'none';
+    const side = open ? panel!.offsetWidth + 16 : 8;
+    if (mapBox) {
+      if (mapBox.style.right !== side + 'px') mapBox.style.right = side + 'px';
+      const hide = open && window.innerWidth < 1000;
+      mapBox.style.opacity = hide ? '0' : '';
+      mapBox.style.pointerEvents = hide ? 'none' : '';
+    }
+    // El botón de volver, sólo si la cámara no está en el héroe.
+    const back = mapBox && mapBox.querySelector('button') as HTMLElement | null;
+    if (back) back.style.display = camFree ? '' : 'none';
   }
 
   /** Vuelve a pintar la tienda (qué se puede pagar), el panel y el marcador de monedas. */
@@ -1522,6 +1825,18 @@ export const TD = (() => {
     });
     paintPanel();
     tipKey = '-';                 // se repinta el aviso de abajo en el próximo fotograma
+  }
+
+  /** Botones para enseñar a la torre los ataques que le faltan (o por qué no puede). */
+  function learnButtons(t: Tower, money: number) {
+    if (t.learned.length >= LEARN_MAX) return `<p>Ya sabe todos los ataques que puede aprender</p>`;
+    const can = learnable(t);
+    if (!can.length) return `<p>No tiene más ataques que aprender</p>`;
+    const c = learnCost(t);
+    return `<p class="role"><b>Enseñarle (${t.learned.length}/${LEARN_MAX}):</b></p>` + can.map(id => {
+      const d = G.Moves.BY_ID[id];
+      return `<button class="btn small" data-learn="${id}"${money < c ? ' disabled' : ''} title="${d.desc || ''}">${d.name} · ${c}</button>`;
+    }).join('');
   }
 
   /** Panel de la derecha: elegir evolución > torre seleccionada > héroe > nada. */
@@ -1571,11 +1886,14 @@ export const TD = (() => {
         ${k && t.level < MAX_LEVEL ? `<p>Al mejorarlo: ${auraText(k, t.level + 1)}</p>` : ''}
         ${got.length ? `<p class="role" style="color:var(--gold)">Reforzada: ${got.join(', ')}</p>` : ''}
         ${own && nextEvo ? `<p class="gold">La próxima mejora lo hace evolucionar${evo.length > 1 ? ' (eliges en qué)' : ' a ' + G.DEX_BY[evo[0]].name}</p>` : ''}
+        ${k ? '' : `<p>Ataques: ${(t.p.activeGroup() as any[]).map(x => x.name).join(', ')}</p>`}
+        ${own && !k ? learnButtons(t, money) : ''}
         ${own ? `<button class="btn small gold" data-a="up"${c == null || money < c ? ' disabled' : ''}>${c == null ? 'Al máximo' : 'Mejorar · ' + c}</button>
         ${k ? '' : `<button class="btn small" data-a="mode">Ataca a: ${TARGET_NAME[t.mode]}</button>`}
         <button class="btn small" data-a="sell">Vender · +${sellValue(t.spent)}</button>` : (k ? '' : `<p>Ataca a: ${TARGET_NAME[t.mode]}</p>`)}
         <button class="btn small ghost" data-a="close">Cerrar</button>`;
       if (own) {
+        panel.querySelectorAll<HTMLElement>('[data-learn]').forEach(b => { b.onclick = () => learn(t, b.dataset.learn!); });
         (panel.querySelector('[data-a=up]') as HTMLElement).onclick = () => upgrade(t);
         if (!k) (panel.querySelector('[data-a=mode]') as HTMLElement).onclick = () => cycleMode(t);
         (panel.querySelector('[data-a=sell]') as HTMLElement).onclick = () => sell(t);
@@ -1752,7 +2070,7 @@ export const TD = (() => {
     const { ctx, w, h, dpr } = v;
     // La interfaz sólo se ve con la partida en marcha (no en la pausa ni en el resumen).
     const show = Run.state === 'playing';
-    for (const el of [hud, shop, panel, tip]) if (el) el.style.visibility = show ? '' : 'hidden';
+    for (const el of [hud, shop, panel, tip, mapBox]) if (el) el.style.visibility = show ? '' : 'hidden';
     if (show) paintHud();
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -1762,15 +2080,16 @@ export const TD = (() => {
     ctx.save();
     ctx.scale(G.Camera.scale, G.Camera.scale);
     G.Camera.apply(ctx);
-    v.drawScene(G.Camera, coop && G.Coop.active ? [pl, ...G.Coop.puppets()] : [pl]);
+    v.drawScene(G.Camera, coop && G.Coop.active ? (watching() ? G.Coop.puppets() : [pl, ...G.Coop.puppets()]) : [pl]);
     G.Projectiles.draw(ctx);
     G.Combat.drawAirFields(ctx);
     G.FX.draw(ctx);
     ctx.restore();
 
     G.World.drawVignette(ctx, w, h);
-    G.HUD.draw(ctx, w, h, pl, st);
+    G.HUD.draw(ctx, w, h, watching() ? G.Spectate.target() || pl : pl, st);
     G.Touch.draw(ctx);
+    if (show) drawMap();
   }
 
   return {
@@ -1797,9 +2116,31 @@ export const TD = (() => {
     debugSell(i: number) { if (towers[i]) sell(towers[i]); },
     debugMode(i: number, mode: TargetMode) { if (towers[i] && TARGET_MODES.includes(mode)) towers[i].mode = mode; },
     debugCallWave() { callWave(); },
+    /** Saca ya un jefe (`dex`); con `legend`, un legendario. → su id */
+    debugBoss(dex: number, legend = false) {
+      if (!hosting() || !G.DEX_BY[dex]) return null;
+      spawnEnemy(true, dex);
+      const e = G.EnemyMgr.all().filter((x: any) => x instanceof Walker && x.chief).pop() as any;
+      if (e && legend && e.kind !== 'legend') { e.kind = 'legend'; bigger(e, 'legend'); }
+      return e ? e.id : null;
+    },
+    get shop() { return pool.map(c => ({ dex: c.dex, lent: c.lent, trophy: !!c.trophy, cost: costOf(c.dex) })); },
+    /** El ataque que tendría `dex` como torre (pruebas). */
+    towerMove: (dex: number) => towerMoveOf(dex),
+    /** Enseña a la torre `i` el primer ataque que le falte (o `id`). → el ataque, o null */
+    debugLearn(i: number, id?: string) {
+      const t = towers[i];
+      if (!t) return null;
+      const m = id || learnable(t)[0];
+      if (m) learn(t, m);
+      return m || null;
+    },
     debugFast(on: boolean) { if (hosting()) { fast = !!on; sendState(); } },
     debugHpMul(k: number) { hpMul = k > 0 ? k : 1; if (hpMul !== 1) tampered = true; },
     canPlace(x: number, y: number) { return !whyNot(x, y); },
+    /** La cámara a (x, y), como al pulsar en el minimapa (null: de vuelta al héroe). */
+    debugCam(x: number | null, y = 0) { camFree = x == null ? null : { x, y }; },
+    get cam() { return { x: G.Camera.x, y: G.Camera.y, free: !!camFree }; },
     get route() { return path.map(p => ({ x: p.x, y: p.y })); },
     get placing() { return placing ? { dex: placing.dex, x: ghost.x, y: ghost.y } : null; },
     get info() {
@@ -1817,7 +2158,8 @@ export const TD = (() => {
       return {
         coop: !!coop, host: hosting(), me, map: map.id, purse: { ...purse }, cleared, won, flawless, fast, heroLv: { ...heroLv },
         left: guest() ? leftShown : toSpawn + bossLeft + G.EnemyMgr.all().filter(e => !e.dead).length,
-        towers: towers.map(t => ({ id: t.id, owner: t.owner, dex: t.dex, level: t.level, mode: t.mode, x: Math.round(t.p.x), y: Math.round(t.p.y), shots: shots.get(t.p) || 0 })),
+        towers: towers.map(t => ({ id: t.id, owner: t.owner, dex: t.dex, level: t.level, mode: t.mode, x: Math.round(t.p.x), y: Math.round(t.p.y), shots: shots.get(t.p) || 0,
+                                   moves: (t.p.activeGroup() as any[]).map(m => m.id), learned: t.learned.slice(), spent: t.spent })),
         evo: pendingEvo ? { id: pendingEvo.tower.id, options: pendingEvo.options.slice() } : null,
       };
     },

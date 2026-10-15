@@ -1,5 +1,6 @@
 import { G } from '../g';
 import { Link, type LinkStatus, type ServerMsg } from './link';
+import { roomMax } from '../modes/td-geom';
 /* ============ social.ts — amigos, en línea, invitaciones y salas ============
  * Sólo funciona con cuenta en el servidor (G.DB.online). Dos caminos hacia server/:
  *
@@ -13,8 +14,12 @@ import { Link, type LinkStatus, type ServerMsg } from './link';
  * la pantalla de apodo siguen ahí por si alguna vez hiciera falta. El `uid` de todos es el
  * id de la cuenta como texto.
  *
+ * Salas públicas (server/realtime.ts): el anfitrión la hace pública con `setPublic` y sale en
+ * `listRooms`; cualquiera entra sin invitación mientras están en la sala, y si ya juegan, sólo
+ * puede MIRAR (`watch`): `watching` es la sala que miras y la partida que mandó el anfitrión.
+ *
  * El resto del juego escucha los cambios con G.Social.on(fn): 'friends', 'presence',
- * 'invites', 'room', 'room-closed' y 'stop'.
+ * 'invites', 'room', 'room-closed', 'watch', 'watch-ended' y 'stop'.
  */
 
 /** Resultado de una acción: `msg` si salió bien, `error` si no. */
@@ -27,13 +32,24 @@ export interface Friend {
 }
 /** `away`: ha perdido la conexión y el servidor le guarda el sitio unos segundos. */
 export interface Member { uid: string; name: string; dex: number; shiny: boolean; away?: boolean }
-/** `started`: la partida en grupo ya ha empezado. */
-export interface Room { id: string; host: string; isHost: boolean; members: Member[]; open: boolean; started: boolean }
+/**
+ * `started`: la partida en grupo ya ha empezado. `pub`: sale en la lista de salas públicas, con
+ * su modo y mapa. `watchers`: los que la miran (no juegan).
+ */
+export interface Room {
+  id: string; host: string; isHost: boolean; members: Member[]; open: boolean; started: boolean;
+  pub: boolean; mode: 'survivor' | 'td'; map: string; watchers: { uid: string; name: string }[];
+  /** Cuántos caben (Survivor 4; Defensa, según el mapa). */
+  max: number;
+}
+/** Una sala de la lista de salas públicas. */
+export interface PublicRoom { id: string; host: string; hostName: string; mode: 'survivor' | 'td'; map: string; n: number; max: number; started: boolean; watchers: number }
 export interface Invite { from: string; name: string; room: string; at: number }
 type Presence = Pick<Friend, 'online' | 'play' | 'room' | 'seen'>;
 
 export const Social = (() => {
   const VALID = /^[A-Za-z0-9_ñÑáéíóúÁÉÍÓÚ]{3,16}$/;
+  /** Lo que cabe en una sala del Survivor (y en una sala recién creada). */
   const MAX_PLAYERS = 4;
   const INVITE_TTL = 3 * 60 * 1000;
   const PRES_TTL = 5 * 1000;            // refrescar la lista de amigos como mucho cada 5 s
@@ -42,6 +58,13 @@ export const Social = (() => {
   let me: { uid: string; name: string } | null = null;
   let friends = new Map<string, Friend>();
   let room: Room | null = null;
+  /**
+   * Anfitrión: lo último que pediste para tu sala (pública o no, modo y mapa). Las respuestas del
+   * servidor pueden llegar desordenadas respecto a lo que vas cambiando: mientras sea tu sala, manda esto.
+   */
+  let want: { id: string; pub: boolean; mode: 'survivor' | 'td'; map: string } | null = null;
+  /** La sala que miras como espectador y la partida que se juega en ella (o null). */
+  let watching: { room: Room; cfg: any } | null = null;
   const invites = new Map<string, Invite>();  // de quién -> invitación
   const listeners = new Set<(what: string) => void>();
   let started = false, playing = false, friendsAt = 0, loadSeq = 0, loading: Promise<void> | null = null;
@@ -90,7 +113,7 @@ export const Social = (() => {
     await leaveRoom().catch(() => {});
     Link.disconnect();
     friends.clear(); invites.clear(); profCache.clear(); friendsAt = 0;
-    me = null; started = false; uid = null; playing = false; pubLast = '';
+    me = null; started = false; uid = null; playing = false; pubLast = ''; watching = null;
     emit('stop');
   }
 
@@ -114,6 +137,8 @@ export const Social = (() => {
     if (!started) return;
     switch (m.k) {
       case 'hello': {
+        // Al reconectar ya no miras nada (el servidor saca a quien se desconecta mientras mira).
+        if (watching) { watching = null; Link.setEager(!!room); emit('watch-ended'); }
         // Tu sala tal y como la guardó el servidor (al reconectar, al recargar la página, tras un reinicio).
         if (m.room && m.room.started && !G.Coop.active) {
           // Había una partida en marcha y esta página ya no la está jugando (se recargó): no se puede volver.
@@ -142,6 +167,12 @@ export const Social = (() => {
       case 'room': {
         if (m.room) applyRoom(m.room);
         else if (room) closedRoom();
+        break;
+      }
+      case 'watch': {
+        if (!watching) break;
+        if (m.room) { watching.room = toRoom(m.room); emit('watch'); }
+        else { watching = null; Link.setEager(!!room); emit('watch-ended'); }
         break;
       }
     }
@@ -206,11 +237,59 @@ export const Social = (() => {
     return { dex: s.partner, shiny: !!s.partnerShiny && G.DB.ownsShiny(s.partner) };
   }
 
+  /** La sala tal y como la manda el servidor. */
+  function toRoom(r: any): Room {
+    return { id: r.id, host: r.host, isHost: r.host === uid, members: r.members || [], open: !!r.open, started: !!r.started,
+             pub: !!r.pub, mode: r.mode === 'td' ? 'td' : 'survivor', map: typeof r.map === 'string' ? r.map : 'random',
+             watchers: Array.isArray(r.watchers) ? r.watchers : [], max: Number.isInteger(r.max) && r.max > 0 ? r.max : MAX_PLAYERS };
+  }
   /** Aplica la sala tal y como la manda el servidor. */
-  function applyRoom(r: { id: string; host: string; open: boolean; started?: boolean; members: Member[] }) {
-    room = { id: r.id, host: r.host, isHost: r.host === uid, members: r.members, open: !!r.open, started: !!r.started };
+  function applyRoom(r: any) {
+    room = toRoom(r);
+    if (want && want.id === room.id && room.isHost) {
+      room.pub = want.pub; room.mode = want.mode; room.map = want.map; room.max = roomMax(want.mode, want.map);
+    } else if (want && want.id !== room.id) want = null;
     Link.setEager(true);
     emit('room');
+  }
+
+  // ---------------- salas públicas y espectadores ----------------
+
+  /** Anfitrión: la sala sale (o deja de salir) en la lista de públicas, con a qué se juega. */
+  function setPublic(v: boolean, mode: 'survivor' | 'td', map: string) {
+    if (!room || !room.isHost) return;
+    const m = /^[a-z]{1,20}$/.test(map) ? map : 'random';
+    // Ya, en local (el servidor lo confirmará): si no, lo que se pinte antes de su respuesta vería
+    // lo de antes y lo volvería a mandar, deshaciendo el cambio.
+    want = { id: room.id, pub: !!v, mode, map: m };
+    room.pub = !!v; room.mode = mode; room.map = m; room.max = roomMax(mode, m);
+    Link.send({ k: 'room.pub', v: !!v, mode, map: m });
+  }
+
+  /** Las salas públicas (las que esperan gente, primero). */
+  async function listRooms(): Promise<PublicRoom[]> {
+    const r = await Link.request({ k: 'rooms.list' }).catch(() => null);
+    return r && r.ok && Array.isArray(r.rooms) ? r.rooms : [];
+  }
+
+  /** Empiezas a mirar la partida de una sala pública. → la partida (cfg) o un error */
+  async function watch(id: string): Promise<{ ok: boolean; error?: string; cfg?: any }> {
+    if (room) return { ok: false, error: 'Sal de tu sala para mirar otra partida.' };
+    const r = await Link.request({ k: 'room.watch', id }).catch(() => null);
+    if (!r || !r.ok) return { ok: false, error: (r && r.error) || 'No se pudo entrar a mirar.' };
+    watching = { room: toRoom(r.room), cfg: r.cfg };
+    Link.setEager(true);
+    emit('watch');
+    return { ok: true, cfg: r.cfg };
+  }
+
+  /** Dejas de mirar. */
+  function unwatch() {
+    if (!watching) return;
+    watching = null;
+    Link.send({ k: 'room.unwatch' });
+    Link.setEager(!!room);
+    emit('watch');
   }
 
   async function createRoom(): Promise<Room | null> {
@@ -267,7 +346,7 @@ export const Social = (() => {
   async function invite(other: string): Promise<Result> {
     const f = friends.get(other);
     if (!f || f.status !== 'ok') return { ok: false, error: 'Sólo puedes invitar a tus amigos.' };
-    if (room && room.members.length >= MAX_PLAYERS) return { ok: false, error: 'La sala está llena.' };
+    if (room && room.members.length >= room.max) return { ok: false, error: 'La sala está llena.' };
     if (room && !room.isHost) return { ok: false, error: 'Sólo el anfitrión de la sala puede invitar.' };
     if (!room && !(await createRoom())) return { ok: false, error: 'No se pudo crear la sala.' };
     const r = await Link.request({ k: 'inv', to: other });
@@ -344,6 +423,7 @@ export const Social = (() => {
   return {
     start, stop, claimNick, request, accept, remove, publishProfile, getProfile, profileData,
     createRoom, joinRoom, leaveRoom, setOpen, refreshMember, setPlaying, refreshPresence,
+    setPublic, listRooms, watch, unwatch,
     invite, acceptInvite, declineInvite,
     on(fn: (what: string) => void) { listeners.add(fn); }, off(fn: (what: string) => void) { listeners.delete(fn); },
     get me() { return me; },
@@ -351,6 +431,7 @@ export const Social = (() => {
     get friends() { return [...friends.values()]; },
     get invites() { return [...invites.values()]; },
     get room() { return room; },
+    get watching() { return watching; },
     get uid() { return uid; },
     VALID, MAX_PLAYERS
   };

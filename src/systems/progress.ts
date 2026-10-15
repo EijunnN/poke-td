@@ -141,6 +141,8 @@ export const Progress = (() => {
   function event(kind, d: EventData = {}) {
     const s = G.DB.save;
     if (!s) return;
+    // Quien sólo mira una partida (espectador) no avanza misiones ni logros.
+    if (G.Coop.watching) return;
     ensure(s);
     const S = s.stats;
     switch (kind) {

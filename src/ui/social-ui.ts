@@ -150,7 +150,14 @@ import { G } from '../g';
      * cuenta a la sala con { k:'lobby', mode, map } (otra vez cuando entra alguien).
      */
     let game: { mode: 'hordas' | 'td'; map: string } = { mode: 'hordas', map: 'random' };
-    const tellGame = () => { if (G.Social.room && G.Social.room.isHost) G.Net.broadcast({ k: 'lobby', ...game }); };
+    const tellGame = () => {
+      const room = G.Social.room;
+      if (!room || !room.isHost) return;
+      G.Net.broadcast({ k: 'lobby', ...game });
+      // El servidor tiene que saber a qué se juega (de eso depende cuántos caben, y la lista de públicas lo enseña).
+      if (room.mode !== modeOf() || room.map !== game.map) G.Social.setPublic(room.pub, modeOf(), game.map);
+    };
+    const modeOf = (): 'survivor' | 'td' => (game.mode === 'td' ? 'td' : 'survivor');
 
     function init() {
       $('lobby-leave').onclick = async () => {
@@ -166,8 +173,10 @@ import { G } from '../g';
         const room = G.Social.room;
         if (room) {
           G.Net.open(room.id, room.isHost, room.host);
-          G.Net.syncMembers(room.members.map(m => m.uid), room.members.filter(m => m.away).map(m => m.uid));
-        } else if (G.Net.open_) G.Net.close();
+          // Los que miran también reciben del anfitrión (como compañeros que no juegan).
+          G.Net.syncMembers([...room.members.map(m => m.uid), ...room.watchers.map(w => w.uid)], room.members.filter(m => m.away).map(m => m.uid));
+          if (room.isHost && G.Coop.active) G.Coop.syncWatchers(room.watchers);
+        } else if (G.Net.open_ && !G.Social.watching) G.Net.close();
         if (what === 'room-closed') {
           G.UI.toast('La sala se ha cerrado', 2600);
           if (G.UI.isOpen('scr-lobby')) G.MenuUI.open();
@@ -189,10 +198,13 @@ import { G } from '../g';
     /** El modo (y el mapa de la Defensa): botones para el anfitrión; para los demás, lo que ha elegido. */
     function renderMode(room) {
       const box = $('lobby-mode');
+      document.querySelectorAll('.lobby-access').forEach(el => el.remove());
+      // Si la sala aún no sabe a qué se juega (recién creada), se le dice.
+      if (room.isHost && (room.mode !== modeOf() || room.map !== game.map)) tellGame();
       const maps = [...G.TD_MAPS.map(m => [m.id, m.name]), ['random', 'Al azar']];
       const mapName = (maps.find(m => m[0] === game.map) || maps[maps.length - 1])[1];
       if (!room.isHost) {
-        box.innerHTML = `<span class="sub">Modo: <b>${game.mode === 'td' ? 'Defensa · ' + esc(mapName) : 'Hordas'}</b></span>`;
+        box.innerHTML = `<span class="sub">Modo: <b>${game.mode === 'td' ? 'Defensa · ' + esc(mapName) : 'Survivor'}</b> · ${room.pub ? 'Sala pública' : 'Sala privada'} · caben ${room.max}</span>`;
         return;
       }
       box.innerHTML = '<b>Modo:</b>';
@@ -203,12 +215,27 @@ import { G } from '../g';
         b.onclick = () => { fn(); tellGame(); render(); };
         box.appendChild(b);
       };
-      chip('Hordas', game.mode === 'hordas', () => { game.mode = 'hordas'; });
+      chip('Survivor', game.mode === 'hordas', () => { game.mode = 'hordas'; });
       chip('Defensa', game.mode === 'td', () => { game.mode = 'td'; });
       if (game.mode === 'td') {
         box.insertAdjacentHTML('beforeend', '<b style="margin-left:8px">Mapa:</b>');
         for (const [id, name] of maps) chip(name, game.map === id, () => { game.map = id; });
       }
+      // Privada (sólo con invitación) o pública (sale en Salas públicas: cualquiera entra, o mira si ya jugáis).
+      const row = document.createElement('div');
+      row.className = 'row lobby-mode lobby-access';
+      row.innerHTML = '<b>Sala:</b>';
+      for (const [pub, label, tip] of [[false, 'Privada', 'Sólo entran tus amigos, con invitación'],
+                                       [true, 'Pública', 'Sale en Salas públicas: cualquiera puede entrar, o mirar si ya habéis empezado']] as const) {
+        const b = document.createElement('button');
+        b.className = 'btn small' + (room.pub === pub ? ' gold' : '');
+        b.textContent = label;
+        b.title = tip;
+        b.onclick = () => { if (room.pub !== pub) G.Social.setPublic(pub, modeOf(), game.map); };
+        row.appendChild(b);
+      }
+      row.insertAdjacentHTML('beforeend', `<span class="sub">Caben ${room.max}</span>`);
+      box.after(row);
     }
 
     function open() {
@@ -235,19 +262,20 @@ import { G } from '../g';
       const ms = room.members;
       renderMode(room);
       $('lobby-sub').textContent = room.isHost
-        ? 'Eres el anfitrión. Invita a tus amigos (hasta ' + G.Social.MAX_PLAYERS + ') y empezad cuando estéis.'
+        ? 'Eres el anfitrión. Invita a tus amigos (hasta ' + room.max + ') y empezad cuando estéis.'
         : 'Estás en la sala de ' + ((ms.find(m => m.uid === room.host) || {}).name || '…') + '. El anfitrión empezará la partida.';
 
       // Las tarjetas sólo se rehacen si cambian los miembros (los sprites no parpadean).
-      const key = ms.map(m => m.uid + ':' + m.dex + ':' + (m.shiny ? 1 : 0)).join('|');
+      const key = room.max + '#' + ms.map(m => m.uid + ':' + m.dex + ':' + (m.shiny ? 1 : 0)).join('|');
       const box = $('lobby-members');
       if (key !== membersKey) {
         membersKey = key;
         box.innerHTML = '';
-        for (let i = 0; i < G.Social.MAX_PLAYERS; i++) {
+        // Un hueco por plaza (Survivor 4; Defensa según el mapa); si sobra gente tras cambiar de modo, se ve.
+        for (let i = 0; i < Math.max(room.max, ms.length); i++) {
           const m = ms[i];
           const c = document.createElement('div');
-          c.className = 'lob-card' + (m ? '' : ' empty');
+          c.className = 'lob-card' + (m ? '' : ' empty') + (i >= room.max ? ' over' : '');
           if (m) {
             c.style.setProperty('--pc', G.Coop.COLORS[i]);
             c.appendChild(G.UI.spriteCanvas(m.dex, 120, 96, { scale: 2, lively: true, shiny: !!m.shiny }));
@@ -265,7 +293,7 @@ import { G } from '../g';
       });
 
       // Invitar (sólo el anfitrión y si queda sitio).
-      const canInvite = room.isHost && ms.length < G.Social.MAX_PLAYERS;
+      const canInvite = room.isHost && ms.length < room.max;
       $('lobby-inv-title').classList.toggle('hidden', !canInvite);
       const inv = $('lobby-invite');
       inv.classList.toggle('hidden', !canInvite);
@@ -288,16 +316,18 @@ import { G } from '../g';
       const btn = $('lobby-start');
       btn.classList.toggle('hidden', !room.isHost);
       const connecting = ms.some(m => m.uid !== room.host && G.Net.mode(m.uid) === 'connecting');
-      btn.disabled = !room.isHost || ms.length < 2 || connecting;
-      btn.textContent = 'Empezar partida (' + ms.length + '/' + G.Social.MAX_PLAYERS + ')';
+      const over = ms.length - room.max;
+      btn.disabled = !room.isHost || ms.length < 2 || connecting || over > 0;
+      btn.textContent = 'Empezar partida (' + ms.length + '/' + room.max + ')';
       $('lobby-note').textContent = !room.isHost ? 'Cuando el anfitrión empiece, entraréis todos a la vez.'
+        : over > 0 ? (game.mode === 'td' ? 'En este mapa caben ' + room.max : 'En el Survivor caben ' + room.max) + ': sobra' + (over > 1 ? 'n ' + over : ' 1') + '. Elige otro modo o mapa.'
         : ms.length < 2 ? 'Necesitas al menos un amigo en la sala.'
         : connecting ? 'Conectando con tus amigos…' : 'La partida empieza para todos a la vez.';
     }
 
     function start() {
       const room = G.Social.room;
-      if (!room || !room.isHost || room.members.length < 2) return;
+      if (!room || !room.isHost || room.members.length < 2 || room.members.length > room.max) return;
       const cfg: { k: string; [key: string]: any } = {
         k: 'start', seed: Math.floor(Math.random() * 1e6), host: room.host,
         members: room.members.map(m => ({ uid: m.uid, name: m.name, dex: m.dex, shiny: !!m.shiny }))

@@ -66,7 +66,7 @@
  *   - nivel entero entre 1 y 10 + t/4, derrotados entero entre 0 y 100 + 12·t
  *   - Pokémon entero entre 1 y 2000
  *   - la cuenta (y en grupo, ningún miembro) no puede estar marcada
- *   - grupo de 2 a 4 cuentas distintas y existentes, con el anfitrión dentro
+ *   - grupo de 2 a 4 cuentas distintas y existentes (en la Defensa, hasta 8), con el anfitrión dentro
  *   - Defensa: de 1 a 99 oleadas (tras la 30 sigue el sin fin) y de 0 a 30 vidas; los segundos de partida, al menos
  *     lo que tardan en salir los enemigos de esas oleadas y no más que el doble del
  *     tiempo real desde /start (se puede jugar a ×2) + 30 s; derrotados, no más de
@@ -79,6 +79,7 @@
 import type { Db } from './db';
 import { fail, json, limiter, readBody, type Module } from './http';
 import { MAX_WAVE, START_LIVES, defenseScore, maxDefenseKills, minDefenseTime } from '../src/modes/td-waves';
+import { MAX_ROOM } from '../src/modes/td-geom';
 
 export interface RankingOptions {
   /** Nombres de las cuentas admin; si falta, ADMIN_USERS. */
@@ -106,7 +107,9 @@ const MAX_T = 3600;
 /** Margen sobre el tiempo real transcurrido desde /start. */
 const GRACE_S = 30;
 const MAX_DEX = 2000;
+/** Lo más grande que puede ser un equipo: en el Survivor, 4; en la Defensa, los del mapa más grande. */
 const MAX_TEAM = 4;
+const MAX_TEAM_TD = MAX_ROOM;
 /** Los modos: solitario, grupo, Defensa y Defensa en grupo. */
 type Mode = 's' | 'g' | 'd' | 'e';
 const isMode = (m: unknown): m is Mode => m === 's' || m === 'g' || m === 'd' || m === 'e';
@@ -149,7 +152,7 @@ function validBoard(b: unknown): b is string {
   return !!m && (!m[3] || (!isDefense(m[1]) && m[2] === ALL && +m[3] <= MAX_DEX));
 }
 /** El id de una marca: un uid o varios (equipo) unidos con '_'. */
-const ENTRY_RE = /^[1-9]\d{0,12}(?:_[1-9]\d{0,12}){0,3}$/;
+const ENTRY_RE = /^[1-9]\d{0,12}(?:_[1-9]\d{0,12}){0,7}$/;
 const UID_RE = /^[1-9]\d{0,12}$/;
 
 // ---------------- tipos ----------------
@@ -365,7 +368,7 @@ export function createRanking(db: Db, opts: RankingOptions = {}): Module {
       team = [{ uid, dex: b.dex, shiny: b.shiny === true }];
     } else {
       const ms = b.members;
-      if (!Array.isArray(ms) || ms.length < 2 || ms.length > MAX_TEAM) return fail(400, 'Equipo no válido.');
+      if (!Array.isArray(ms) || ms.length < 2 || ms.length > (mode === 'e' ? MAX_TEAM_TD : MAX_TEAM)) return fail(400, 'Equipo no válido.');
       team = [];
       for (const m of ms) {
         if (!m || typeof m !== 'object' || typeof m.uid !== 'string' || !UID_RE.test(m.uid)) return fail(400, 'Equipo no válido.');
@@ -442,7 +445,7 @@ export function createRanking(db: Db, opts: RankingOptions = {}): Module {
     const row = rowsOf(b.board, [e])[0];
     if (row.uids.includes(String(uid))) return fail(400, 'No puedes reportar tu propia marca.');
     const r = raw.run('INSERT OR IGNORE INTO ranking_reports (board, entry, names, t, by, at) VALUES (?, ?, ?, ?, ?, ?)',
-      [b.board, b.e, JSON.stringify(row.names.slice(0, MAX_TEAM)), e.t, uid, now()]);
+      [b.board, b.e, JSON.stringify(row.names.slice(0, MAX_TEAM_TD)), e.t, uid, now()]);
     return json({ ok: true, dup: r.changes === 0 });
   }
 

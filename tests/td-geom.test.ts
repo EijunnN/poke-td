@@ -3,7 +3,7 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { leadAngle, distToPath, placementError, moveRange, PATH_CLEAR, TOWER_GAP } from '../src/modes/td-geom';
-import { MAPS, mapById, randomMap, distToSegment, pathLengths, ENDS_CLEAR } from '../src/modes/td-geom';
+import { MAPS, mapById, randomMap, distToSegment, pathLengths, ENDS_CLEAR, trophyCost, towerCost, costFor, SUPPORT_COST, roomMax, MAX_ROOM, SURVIVOR_PLAYERS } from '../src/modes/td-geom';
 
 /** Simula el disparo: ¿pasa el proyectil a menos de `hit` del blanco en algún momento? */
 function hits(sx: number, sy: number, tx: number, ty: number, vx: number, vy: number, speed: number, ang: number, hit = 12, life = 3) {
@@ -305,5 +305,29 @@ describe('mapas', () => {
       }
     }
     expect(ok).toBeGreaterThan(120);
+  });
+});
+
+describe('cuántos caben en una sala', () => {
+  test('Survivor 4; Defensa, el del mapa; al azar, el del más pequeño; y el tope de todo, el mayor', () => {
+    expect(roomMax('survivor', 'zigzag')).toBe(SURVIVOR_PLAYERS);
+    for (const m of MAPS) { expect(roomMax('td', m.id)).toBe(m.players); expect(m.players).toBeGreaterThanOrEqual(SURVIVOR_PLAYERS); }
+    expect(roomMax('td', 'random')).toBe(Math.min(...MAPS.map(m => m.players)));
+    expect(roomMax('td', 'noexiste')).toBe(Math.min(...MAPS.map(m => m.players)));
+    expect(MAX_ROOM).toBe(8);
+  });
+});
+
+describe('precios: apoyos y trofeos', () => {
+  test('un apoyo cuesta siempre lo mismo; los demás, según su rareza', () => {
+    expect(costFor(123, 4)).toBe(SUPPORT_COST);           // Scyther
+    expect(costFor(52, 1)).toBe(SUPPORT_COST);            // Meowth
+    expect(costFor(4, 1)).toBe(towerCost(1));
+    expect(costFor(484, 5)).toBe(towerCost(5));
+  });
+  test('un trofeo (derrotado en la partida) es más caro que comprarlo teniéndolo; un legendario, 300', () => {
+    for (let r = 1; r <= 5; r++) expect(trophyCost(r, false)).toBeGreaterThan(towerCost(r));
+    expect(trophyCost(5, true)).toBe(300);
+    expect(trophyCost(5, true)).toBeGreaterThan(towerCost(5));
   });
 });

@@ -27,13 +27,25 @@
  *   { k:'inv', to }                               (anfitrión) invita a un amigo
  *   { k:'inv.no', from }                          rechazas una invitación
  *   { k:'g', to?, d }                             mensaje de partida para otro miembro (o para todos si no hay `to`)
+ *   { k:'room.pub', v, mode, map }                (anfitrión) sala pública o privada, y a qué se juega (de eso
+ *                                                 depende cuántos caben: Survivor 4, Defensa según el mapa)
+ *   { k:'rooms.list' }                            -> ack { rooms: [{ id, host, hostName, mode, map, n, max, started, watchers }] }
+ *                                                 las salas públicas (para entrar sin invitación, o mirar si ya juegan)
+ *   { k:'room.watch', id }                        mirar como espectador la partida de una sala pública -> ack { room, cfg }
+ *   { k:'room.unwatch' }                          dejar de mirar
  *
  * Servidor -> cliente:
  *   { k:'hello', uid, name, room }                al conectar (room: la sala en la que ya estabas, o null)
  *   { k:'pres', uid, online, play, room, seen? }  un amigo cambia de estado
  *   { k:'fr' }                                    cambió la lista de amigos (pídela por REST)
  *   { k:'inv', from, name, room, at } · { k:'invx', from }   invitación recibida / retirada
- *   { k:'room', room: { id, host, open, started, members:[{uid,name,dex,shiny,away}] } | null, why? }
+ *   { k:'room', room: { id, host, open, started, pub, mode, map, members:[{uid,name,dex,shiny,away}], watchers:[{uid,name}] } | null, why? }
+ *   { k:'watch', room: <igual> | null, why? }     la sala que miras (null: se acabó la partida o se cerró)
+ *
+ * Salas públicas: cualquiera con cuenta entra sin invitación mientras están en el vestíbulo (sin
+ * ser amigos). Si ya juegan, sólo se puede MIRAR: el espectador no es miembro (no ocupa sitio ni
+ * cuenta para el ranking); recibe del anfitrión la partida como un invitado más, y sólo puede
+ * hablarle a él. Al acabar la partida (la sala se reabre) o cerrarse, los espectadores salen.
  *   { k:'g', f, d }                               mensaje de partida de `f`
  *   { k:'err', error }
  *
@@ -45,6 +57,7 @@
 import type { ServerWebSocket, WebSocketHandler } from 'bun';
 import type { Db, User } from './db';
 import { MAX_DEX, socialStore } from './social-store';
+import { roomMax, MAX_ROOM } from '../src/modes/td-geom';
 
 export interface WsData { user: User; c?: Conn }
 
@@ -80,7 +93,8 @@ export interface RealtimeOptions {
   clock?: Clock;
 }
 
-export const MAX_PLAYERS = 4;
+/** Lo más que puede tener una sala (Defensa en el mapa más grande); cada sala, según a qué se juega (roomMax). */
+export const MAX_PLAYERS = MAX_ROOM;
 const MAX_MSG = 64 * 1024;
 /** Cuántos pasos en falso (mensaje roto, sin permiso, a destiempo) aguanta una conexión antes de cerrarse. */
 const MAX_BAD = 40;
@@ -89,8 +103,32 @@ const MAX_OUT_INVITES = 8;
 const ID = /^[A-Za-z0-9_-]{8,32}$/;
 
 interface Member { uid: number; name: string; dex: number; shiny: boolean }
+/**
+ * Lo público de una sala: si sale en la lista, a qué se juega y la partida en curso (`cfg`, lo
+ * que mandó el anfitrión al empezar; el espectador lo necesita para montar la suya).
+ */
+interface RoomInfo { pub: boolean; mode: 'survivor' | 'td'; map: string; cfg: Record<string, unknown> | null }
 /** `started`: cuándo empezó la partida en grupo (0 si la sala sigue en el vestíbulo). */
-interface Room { id: string; host: number; open: boolean; started: number; created: number; members: Map<number, Member> }
+interface Room {
+  id: string; host: number; open: boolean; started: number; created: number; members: Map<number, Member>;
+  info: RoomInfo; watchers: Map<number, { uid: number; name: string }>;
+}
+/** Espectadores por sala, como mucho. */
+export const MAX_WATCHERS = 8;
+const newInfo = (): RoomInfo => ({ pub: false, mode: 'survivor', map: 'random', cfg: null });
+/** La información guardada (JSON) de una sala, con lo que falte por defecto. */
+function readInfo(s: string | undefined): RoomInfo {
+  const i = newInfo();
+  try {
+    const v = JSON.parse(s || '{}');
+    if (v && typeof v === 'object') {
+      i.pub = v.pub === true; i.mode = v.mode === 'td' ? 'td' : 'survivor';
+      if (typeof v.map === 'string' && v.map.length <= 20) i.map = v.map;
+      if (v.cfg && typeof v.cfg === 'object') i.cfg = v.cfg;
+    }
+  } catch { /* JSON roto: por defecto */ }
+  return i;
+}
 /** Las salas guardadas más viejas que esto se descartan al arrancar. */
 const ROOM_MAX_AGE = 3 * 3600_000;
 /** Una partida en grupo ya no sirve para validar una marca pasado esto (el tope de una partida es 1 h). */
@@ -128,6 +166,8 @@ export function createRealtime(db: Db, opts: RealtimeOptions = {}) {
   const conns = new Map<number, Conn>();
   const rooms = new Map<string, Room>();
   const roomOf = new Map<number, Room>();
+  /** Espectador -> la sala que mira. */
+  const watchOf = new Map<number, Room>();
   const invites = new Map<number, Map<number, Invite>>();   // para -> de -> invitación
   const sentBy = new Map<number, Set<number>>();            // de -> a quién
   const awayT = new Map<number, TimerHandle>();   // desconectado de su sala -> cuándo se le saca
@@ -183,18 +223,42 @@ export function createRealtime(db: Db, opts: RealtimeOptions = {}) {
 
   // ---------------- salas ----------------
 
+  /** Cuántos caben en la sala: Survivor, 4; Defensa, según el mapa (td-geom.ts, roomMax). */
+  const maxOf = (r: Room) => roomMax(r.info.mode, r.info.map);
   const snapshot = (r: Room) => ({
-    id: r.id, host: String(r.host), open: r.open, started: r.started > 0,
+    id: r.id, host: String(r.host), open: r.open, started: r.started > 0, pub: r.info.pub, mode: r.info.mode, map: r.info.map, max: maxOf(r),
     members: [...r.members.values()].map(m => ({ uid: String(m.uid), name: m.name, dex: m.dex, shiny: m.shiny, away: !conns.has(m.uid) })),
+    watchers: [...r.watchers.values()].map(w => ({ uid: String(w.uid), name: w.name })),
   });
   const tellRoom = (r: Room, except?: number) => {
-    const s = text({ k: 'room', room: snapshot(r) });
+    const snap = snapshot(r);
+    const s = text({ k: 'room', room: snap });
     for (const id of r.members.keys()) { const c = conns.get(id); if (c && id !== except) raw(c, s); }
+    const w = text({ k: 'watch', room: snap });
+    for (const id of r.watchers.keys()) { const c = conns.get(id); if (c && id !== except) raw(c, w); }
   };
   const persist = (r: Room) => store.saveRoom({
     id: r.id, host: r.host, open: r.open, started: r.started, created: r.created,
     members: [...r.members.values()].map(m => ({ uid: m.uid, dex: m.dex, shiny: m.shiny })),
+    info: JSON.stringify(r.info),
   }, now());
+
+  // ---------------- espectadores ----------------
+
+  /** `id` deja de mirar (sin avisarle: se lo pide él, o se ha ido). */
+  function unwatch(id: number) {
+    const r = watchOf.get(id);
+    if (!r) return;
+    watchOf.delete(id);
+    r.watchers.delete(id);
+    tellRoom(r);
+  }
+  /** Fuera todos los espectadores de `r` (la partida ha acabado o la sala se cierra). */
+  function dropWatchers(r: Room, why: string) {
+    const s = text({ k: 'watch', room: null, why });
+    for (const id of [...r.watchers.keys()]) { watchOf.delete(id); const c = conns.get(id); if (c) raw(c, s); }
+    r.watchers.clear();
+  }
 
   // Quien se desconecta de una sala tiene `roomGrace` para volver.
   function clearAway(id: number) { const t = awayT.get(id); if (t) { clock.clearTimeout(t); awayT.delete(id); } }
@@ -206,6 +270,7 @@ export function createRealtime(db: Db, opts: RealtimeOptions = {}) {
   }
 
   function closeRoom(r: Room, why: string, except?: number) {
+    dropWatchers(r, why);
     rooms.delete(r.id);
     store.deleteRoom(r.id);
     dropSent(r.host);
@@ -241,7 +306,8 @@ export function createRealtime(db: Db, opts: RealtimeOptions = {}) {
       if (u) members.set(m.uid, { uid: m.uid, name: u.name, dex: m.dex, shiny: m.shiny });
     }
     if (!members.has(rec.host)) { store.deleteRoom(rec.id); continue; }
-    const r: Room = { id: rec.id, host: rec.host, open: rec.open, started: rec.started, created: rec.created, members };
+    const r: Room = { id: rec.id, host: rec.host, open: rec.open, started: rec.started, created: rec.created, members,
+                      info: readInfo(rec.info), watchers: new Map() };
     rooms.set(r.id, r);
     for (const id of members.keys()) { roomOf.set(id, r); markAway(id); }
   }
@@ -277,6 +343,8 @@ export function createRealtime(db: Db, opts: RealtimeOptions = {}) {
     if (stopped || !c || c.gone) return;         // servidor parado, o sustituida por otra pestaña: nada que limpiar
     c.gone = true;
     conns.delete(c.id);
+    // Quien mira deja de mirar (al volver, que vuelva a pedirlo).
+    unwatch(c.id);
     // Sigue en su sala un rato por si vuelve (corte de red, reinicio del servidor).
     const r = roomOf.get(c.id);
     if (r) { markAway(c.id); tellRoom(r); }
@@ -335,7 +403,8 @@ export function createRealtime(db: Db, opts: RealtimeOptions = {}) {
         if (!validDex(m.dex) || typeof m.shiny !== 'boolean') return bad('Pokémon no válido.');
         const cur = roomOf.get(c.id);
         if (cur) return reply(true, { room: snapshot(cur) });
-        const r: Room = { id: newRoomId(), host: c.id, open: true, started: 0, created: now(), members: new Map() };
+        unwatch(c.id);
+        const r: Room = { id: newRoomId(), host: c.id, open: true, started: 0, created: now(), members: new Map(), info: newInfo(), watchers: new Map() };
         r.members.set(c.id, { uid: c.id, name: c.name, dex: m.dex, shiny: m.shiny });
         rooms.set(r.id, r); roomOf.set(c.id, r);
         persist(r);
@@ -348,12 +417,16 @@ export function createRealtime(db: Db, opts: RealtimeOptions = {}) {
         const cur = roomOf.get(c.id);
         if (cur && cur.id === m.id) return reply(true, { room: snapshot(cur) });
         const r = rooms.get(m.id);
-        const iv = r && invites.get(c.id)?.get(r.host);
-        if (!r || !iv || iv.room !== r.id) return no('Esa sala ya no existe o no te han invitado.');
-        if (!live(iv)) { dropInvite(c.id, r.host); return no('La invitación ha caducado.'); }
-        if (!store.isFriend(c.id, r.host)) { dropInvite(c.id, r.host); return no('Sólo puedes entrar en la sala de un amigo.'); }
+        // En una sala pública se entra sin invitación (y sin ser amigos); en una privada, sólo invitado por un amigo.
+        if (!r || !r.info.pub) {
+          const iv = r && invites.get(c.id)?.get(r.host);
+          if (!r || !iv || iv.room !== r.id) return no('Esa sala ya no existe o no te han invitado.');
+          if (!live(iv)) { dropInvite(c.id, r.host); return no('La invitación ha caducado.'); }
+          if (!store.isFriend(c.id, r.host)) { dropInvite(c.id, r.host); return no('Sólo puedes entrar en la sala de un amigo.'); }
+        }
         if (!r.open) return no('La partida de esa sala ya ha empezado.');
-        if (r.members.size >= MAX_PLAYERS) return no(`La sala está llena (máximo ${MAX_PLAYERS}).`);
+        unwatch(c.id);
+        if (r.members.size >= maxOf(r)) return no(`La sala está llena (máximo ${maxOf(r)}).`);
         if (cur) leaveRoom(c.id);
         dropInvite(c.id, r.host, false);
         r.members.set(c.id, { uid: c.id, name: c.name, dex: m.dex, shiny: m.shiny });
@@ -376,10 +449,53 @@ export function createRealtime(db: Db, opts: RealtimeOptions = {}) {
         if (r.host !== c.id) return bad('Sólo el anfitrión gobierna la sala.');
         if (r.open !== m.v) {
           r.open = m.v;
-          if (m.v) r.started = 0;                            // la sala se reabre: la partida ha terminado
+          if (m.v) { r.started = 0; r.info.cfg = null; dropWatchers(r, 'ended'); }   // la sala se reabre: la partida ha terminado
           persist(r);
           tellRoom(r);
         }
+        return reply(true);
+      }
+
+      case 'room.pub': {
+        if (typeof m.v !== 'boolean' || (m.mode !== 'survivor' && m.mode !== 'td') || typeof m.map !== 'string' || !/^[a-z]{1,20}$/.test(m.map)) return bad('Mensaje no válido.');
+        const r = roomOf.get(c.id);
+        if (!r) return no('No estás en ninguna sala.');
+        if (r.host !== c.id) return bad('Sólo el anfitrión gobierna la sala.');
+        if (r.info.pub !== m.v || r.info.mode !== m.mode || r.info.map !== m.map) {
+          r.info.pub = m.v; r.info.mode = m.mode; r.info.map = m.map;
+          persist(r);
+          tellRoom(r);
+        }
+        return reply(true);
+      }
+
+      case 'rooms.list': {
+        // Las públicas, primero las que esperan gente; nada de quién está dentro salvo el anfitrión.
+        const out = [...rooms.values()].filter(r => r.info.pub && conns.has(r.host)).map(r => ({
+          id: r.id, host: String(r.host), hostName: r.members.get(r.host)?.name ?? '?', mode: r.info.mode, map: r.info.map,
+          n: r.members.size, max: maxOf(r), started: r.started > 0, watchers: r.watchers.size,
+        }));
+        out.sort((a, b) => Number(a.started) - Number(b.started) || b.n - a.n);
+        return reply(true, { rooms: out.slice(0, 50) });
+      }
+
+      case 'room.watch': {
+        if (typeof m.id !== 'string' || !ID.test(m.id)) return bad('Mensaje no válido.');
+        const r = rooms.get(m.id);
+        if (!r || !r.info.pub) return no('Esa sala ya no existe o no es pública.');
+        if (roomOf.get(c.id) === r) return no('Ya juegas en esa sala.');
+        if (roomOf.has(c.id)) return no('Sal de tu sala para mirar otra partida.');
+        if (!r.started || !r.info.cfg) return no('Esa sala aún no ha empezado: puedes entrar a jugar.');
+        if (!r.watchers.has(c.id) && r.watchers.size >= MAX_WATCHERS) return no(`Ya hay ${MAX_WATCHERS} mirando esa partida.`);
+        if (watchOf.get(c.id) !== r) unwatch(c.id);
+        r.watchers.set(c.id, { uid: c.id, name: c.name });
+        watchOf.set(c.id, r);
+        tellRoom(r, c.id);
+        return reply(true, { room: snapshot(r), cfg: r.info.cfg });
+      }
+
+      case 'room.unwatch': {
+        unwatch(c.id);
         return reply(true);
       }
 
@@ -401,7 +517,7 @@ export function createRealtime(db: Db, opts: RealtimeOptions = {}) {
         if (to === c.id || !store.isFriend(c.id, to)) return bad('Sólo puedes invitar a tus amigos.');
         if (!r.open) return no('La partida de la sala ya ha empezado.');
         if (r.members.has(to)) return no('Ya está en tu sala.');
-        if (r.members.size >= MAX_PLAYERS) return no('La sala está llena.');
+        if (r.members.size >= maxOf(r)) return no('La sala está llena.');
         if (!invites.get(to)?.has(c.id) && (sentBy.get(c.id)?.size ?? 0) >= MAX_OUT_INVITES) return no('Tienes demasiadas invitaciones pendientes.');
         const iv: Invite = { room: r.id, at: now() };
         if (!invites.has(to)) invites.set(to, new Map());
@@ -422,6 +538,14 @@ export function createRealtime(db: Db, opts: RealtimeOptions = {}) {
       case 'g': {
         const d = m.d;
         if (!d || typeof d !== 'object' || Array.isArray(d)) return bad('Mensaje de partida no válido.');
+        // Un espectador sólo le habla al anfitrión (dónde está mirando), y nunca empieza nada.
+        const w = watchOf.get(c.id);
+        if (w && !roomOf.has(c.id)) {
+          if (d.k === 'start' || parseUid(m.to) !== w.host) return no('Un espectador sólo habla con el anfitrión.');
+          const hc = conns.get(w.host);
+          if (hc) raw(hc, text({ k: 'g', f: String(c.id), d }));
+          return;
+        }
         // Empezar la partida sólo lo manda el anfitrión (los invitados se lo creerían).
         const r = roomOf.get(c.id);
         if (!r) return no('No estás en ninguna sala.');
@@ -434,7 +558,8 @@ export function createRealtime(db: Db, opts: RealtimeOptions = {}) {
         else {
           const to = parseUid(m.to);
           if (to === null || to === c.id) return bad('Destinatario no válido.');
-          if (!r.members.has(to)) return no('Ese jugador no está en tu sala.');
+          // A un espectador sólo le habla el anfitrión (le manda la partida).
+          if (!r.members.has(to) && !(r.watchers.has(to) && r.host === c.id)) return no('Ese jugador no está en tu sala.');
           targets = [to];
         }
         const s = text({ k: 'g', f: String(c.id), d });
@@ -459,6 +584,16 @@ export function createRealtime(db: Db, opts: RealtimeOptions = {}) {
     const team = [...new Set([r.host, ...listed.filter((u: number | null): u is number => u !== null && r.members.has(u))])].sort((a, b) => a - b);
     r.started = at;
     r.open = false;
+    // Lo que necesita un espectador para montar la partida (los nombres, los de la base).
+    r.info.cfg = {
+      k: 'start', seed: Number.isInteger(d.seed) ? d.seed : 0, host: String(r.host),
+      mode: d.mode === 'td' ? 'td' : undefined, map: typeof d.map === 'string' && d.map.length <= 20 ? d.map : undefined,
+      // En el orden de la partida (de él salen los colores de cada uno).
+      members: [...new Set<number>([...listed.filter((u: number | null): u is number => u !== null && r.members.has(u)), r.host])].map(u => {
+        const mm = r.members.get(u)!;
+        return { uid: String(u), name: mm.name, dex: mm.dex, shiny: mm.shiny };
+      }),
+    };
     persist(r);
     if (team.length >= 2) store.saveGroupStart(r.host, team, at);
     tellRoom(r);
@@ -488,6 +623,7 @@ export function createRealtime(db: Db, opts: RealtimeOptions = {}) {
   db.deleteUser = (id: number) => {
     const friends = store.friendIds(id);
     leaveRoom(id);
+    unwatch(id);
     dropAll(id);
     const c = conns.get(id);
     if (c) { c.gone = true; conns.delete(id); c.ws.close(4002, 'Cuenta borrada'); }

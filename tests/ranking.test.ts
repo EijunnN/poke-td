@@ -1214,6 +1214,15 @@ describe('Defensa en grupo (modo e)', () => {
     expect(count('ranking_entries', "board LIKE 'e!_%' ESCAPE '!' AND (id LIKE ? OR id LIKE ?)", '%' + c.uid + '%', a.uid + '_%')).toBe(0);
   });
 
+  test('en Defensa un equipo puede ser de hasta 8 (en el Survivor, de 4); de 9, no', async () => {
+    const big = Array.from({ length: 8 }, () => mkUser());
+    expect((await tdTeam(big[0], big, 6, 10)).status).toBe(200);
+    const nine = Array.from({ length: 9 }, () => mkUser());
+    expect((await tdTeam(nine[0], nine, 6, 10)).status).toBe(400);
+    const six = Array.from({ length: 6 }, () => mkUser());
+    expect((await team(six[0], six, 120)).status).toBe(400);           // Survivor en grupo: hasta 4
+  });
+
   test('las mismas reglas de Defensa: oleadas, vidas, tiempo y derrotados', async () => {
     const a = mkUser(), b = mkUser();
     for (const m of [{ waves: 0 }, { waves: MAX_WAVE + 1 }, { lives: 31 }, { secs: 1 }, { kills: maxDefenseKills(12) + 1 }]) {

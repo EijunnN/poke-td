@@ -5,7 +5,8 @@
  *   friendships  una fila por pareja (a < b): solicitud pendiente (from_id la envió) o amistad
  *   last_seen    cuándo se vio por última vez a cada cuenta (al cerrarse su WebSocket)
  *   rooms        salas en curso (para que sobrevivan a un reinicio del servidor): anfitrión, si admite
- *                gente y desde cuándo juegan; room_members, sus miembros con el Pokémon (una cuenta, una sala)
+ *                gente y desde cuándo juegan, y `info` (JSON: si es pública, el modo, el mapa y la partida
+ *                en curso, para los espectadores); room_members, sus miembros con el Pokémon (una cuenta, una sala)
  *   group_starts el equipo real de la última partida en grupo que empezó cada anfitrión (lo comprueba el ranking)
  *
  * Todas con ON DELETE CASCADE: al borrar la cuenta desaparecen de golpe.
@@ -68,8 +69,8 @@ export function parseProfile(b: Record<string, any>): Profile | string {
   return out;
 }
 
-export interface RoomRecord { id: string; host: number; open: boolean; started: number; created: number; members: { uid: number; dex: number; shiny: boolean }[] }
-interface RoomRow { id: string; host_id: number; open: number; started: number; created: number }
+export interface RoomRecord { id: string; host: number; open: boolean; started: number; created: number; members: { uid: number; dex: number; shiny: boolean }[]; info?: string }
+interface RoomRow { id: string; host_id: number; open: number; started: number; created: number; info: string }
 interface RoomMemberRow { user_id: number; dex: number; shiny: number }
 
 const stores = new WeakMap<Db, ReturnType<typeof build>>();
@@ -127,6 +128,10 @@ function build(db: Db) {
       started INTEGER NOT NULL
     );
   `);
+  // Bases de antes de las salas públicas: la columna `info` se añade (las salas que hubiera, privadas).
+  if (!raw.query<{ name: string }, []>('PRAGMA table_info(rooms)').all().some(c => c.name === 'info')) {
+    raw.exec("ALTER TABLE rooms ADD COLUMN info TEXT NOT NULL DEFAULT '{}'");
+  }
 
   const q = {
     getProfile: raw.query<{ data: string }, [number]>('SELECT data FROM profiles WHERE user_id = ?'),
@@ -158,10 +163,10 @@ function build(db: Db) {
       'INSERT INTO last_seen (user_id, seen) VALUES (?1, ?2) ON CONFLICT(user_id) DO UPDATE SET seen = excluded.seen'),
   };
   const room = {
-    all: raw.query<RoomRow, []>('SELECT id, host_id, open, started, created FROM rooms'),
+    all: raw.query<RoomRow, []>('SELECT id, host_id, open, started, created, info FROM rooms'),
     members: raw.query<RoomMemberRow, [string]>('SELECT user_id, dex, shiny FROM room_members WHERE room_id = ? ORDER BY joined'),
-    put: raw.query<unknown, [string, number, number, number, number, number]>(
-      'INSERT INTO rooms (id, host_id, open, started, created, updated) VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT(id) DO UPDATE SET open = excluded.open, started = excluded.started, updated = excluded.updated'),
+    put: raw.query<unknown, [string, number, number, number, number, number, string]>(
+      'INSERT INTO rooms (id, host_id, open, started, created, updated, info) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) ON CONFLICT(id) DO UPDATE SET open = excluded.open, started = excluded.started, updated = excluded.updated, info = excluded.info'),
     delMembers: raw.query<unknown, [string]>('DELETE FROM room_members WHERE room_id = ?'),
     addMember: raw.query<unknown, [string, number, number, number, number]>(
       'INSERT INTO room_members (room_id, user_id, dex, shiny, joined) VALUES (?, ?, ?, ?, ?)'),
@@ -174,7 +179,7 @@ function build(db: Db) {
     pruneStarts: raw.query<unknown, [number]>('DELETE FROM group_starts WHERE started < ?'),
   };
   const saveRoom = raw.transaction((r: RoomRecord, at: number) => {
-    room.put.run(r.id, r.host, r.open ? 1 : 0, r.started, r.created, at);
+    room.put.run(r.id, r.host, r.open ? 1 : 0, r.started, r.created, at, r.info ?? '{}');
     room.delMembers.run(r.id);
     r.members.forEach((m, i) => room.addMember.run(r.id, m.uid, m.dex, m.shiny ? 1 : 0, i));
   });
@@ -205,7 +210,7 @@ function build(db: Db) {
     loadRooms(olderThan: number): RoomRecord[] {
       room.prune.run(olderThan);
       return room.all.all().map(r => ({
-        id: r.id, host: r.host_id, open: !!r.open, started: r.started, created: r.created,
+        id: r.id, host: r.host_id, open: !!r.open, started: r.started, created: r.created, info: r.info,
         members: room.members.all(r.id).map(m => ({ uid: m.user_id, dex: m.dex, shiny: !!m.shiny })),
       }));
     },

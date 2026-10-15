@@ -19,6 +19,14 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { d: '2026-10-14', title: ['Salas públicas y espectadores', 'Public rooms and spectators'], new: [
+    ['Salas públicas: el anfitrión marca «Sala pública» y su sala sale en «Salas públicas» (en el menú), con su modo y su mapa. Cualquiera entra sin invitación ni ser amigos.',
+     'Public rooms: the host ticks “Public room” and the room shows in “Public rooms” (in the menu), with its mode and map. Anyone can join without an invitation or being friends.'],
+     ['Si la partida ya ha empezado, se puede mirar como espectador, en Survivor y en Defensa: la cámara sigue al jugador que elijas (Tab) y no se juega ni se gana nada.',
+     'If the game has already started, you can watch it as a spectator, in Survivor and Defense: the camera follows the player you choose (Tab), and you do not play or earn anything.'],
+    ['Minimapa en la Defensa: pulsa en él para mirar cualquier parte del mapa sin mover a tu héroe.',
+     'Minimap in Defense: click it to look at any part of the map without moving your hero.']
+  ] },
   { d: '2026-10-14', title: ['Defensa en grupo', 'Group Defense'], new: [
     ['Defensa en grupo, de 2 a 4: desde una sala, el anfitrión elige Defensa y el mapa. Las vidas son de todos y las monedas de cada uno; cada torre es de quien la compra.',
      'Group Defense, for 2 to 4 players: from a room, the host chooses Defense and the map. Lives are shared and coins are each player\'s own; each tower belongs to whoever buys it.'],
@@ -27,9 +35,16 @@ export const CHANGELOG: ChangelogEntry[] = [
     ['Tras ganar las 30 oleadas sigue el modo sin fin: ¿hasta dónde llegas?',
      'After winning all 30 waves, endless mode follows: how far can you go?'],
     ['La Defensa da Pokémonedas al acabar (por oleadas, derrotados y victoria), tiene misiones y logros propios, y ranking en solitario y en grupo.',
-     'Defense gives Pokécoins when it ends (for waves, defeated enemies and winning), has its own missions and achievements, and solo and group leaderboards.']
+     'Defense gives Pokécoins when it ends (for waves, defeated enemies and winning), has its own missions and achievements, and solo and group leaderboards.'],
+    ['Cada torre ataca a su manera: un ataque de sus tipos (proyectil, rayo, onda, órbita, minas...) que cambia al evolucionar. Con monedas puedes enseñarle hasta 2 más.',
+     'Each tower attacks in its own way: an attack of its types (projectile, beam, wave, orbit, mines...) that changes when it evolves. With coins you can teach it up to 2 more.'],
+    ['Trofeos: el jefe o legendario que derrotas se une a tu tienda para el resto de la partida (caro).',
+     'Trophies: the boss or legendary you defeat joins your shop for the rest of the game (expensive).'],
+    ['Si no tienes ningún Pokémon de apoyo de una clase, la tienda te presta uno.',
+     'If you have no support Pokémon of a kind, the shop lends you one.']
   ], chg: [
     ['La Defensa se puede jugar entera en inglés.', 'Defense can be played fully in English.'],
+    ['Las etiquetas de tipo se leen bien sobre cualquier color.', 'Type labels are readable on any colour.'],
     ['Los Pokémon de apoyo cuestan siempre 90 monedas, y sus auras son más fuertes y llegan más lejos: antes no compensaban.',
      'Support Pokémon always cost 90 coins, and their auras are stronger and reach further: before, they were not worth it.'],
     ['El resumen de la Defensa enseña oleadas superadas y vidas.', 'The Defense summary shows waves cleared and lives.']

@@ -160,13 +160,29 @@ export function stepBack(x: number, y: number, wp: number, d: number, path: Pt[]
 
 // ---------------- mapas ----------------
 
-/** Un mapa: su camino en tiles, de la entrada a la base. Todos miden más o menos lo mismo. */
-export interface TdMap { id: string; name: string; en: string; route: [number, number][] }
+/**
+ * Un mapa: su camino en tiles, de la entrada a la base (todos miden más o menos lo mismo), y
+ * cuántos pueden jugarlo en grupo (`players`: en Valle hay menos sitio para torres).
+ */
+export interface TdMap { id: string; name: string; en: string; players: number; route: [number, number][] }
 export const MAPS: TdMap[] = [
-  { id: 'valle', name: 'Valle', en: 'Valley', route: [[-20, -8], [-8, -8], [-8, 6], [4, 6], [4, -6], [14, -6], [14, 8], [19, 8]] },
-  { id: 'zigzag', name: 'Zigzag', en: 'Zigzag', route: [[-20, -10], [10, -10], [10, 0], [-10, 0], [-10, 10], [19, 10]] },
-  { id: 'espiral', name: 'Espiral', en: 'Spiral', route: [[-20, 4], [-12, -12], [10, -12], [14, 6], [-4, 10], [-6, -3], [4, -3]] },
+  { id: 'valle', name: 'Valle', en: 'Valley', players: 6, route: [[-20, -8], [-8, -8], [-8, 6], [4, 6], [4, -6], [14, -6], [14, 8], [19, 8]] },
+  { id: 'zigzag', name: 'Zigzag', en: 'Zigzag', players: 8, route: [[-20, -10], [10, -10], [10, 0], [-10, 0], [-10, 10], [19, 10]] },
+  { id: 'espiral', name: 'Espiral', en: 'Spiral', players: 8, route: [[-20, 4], [-12, -12], [10, -12], [14, 6], [-4, 10], [-6, -3], [4, -3]] },
 ];
+/** Jugadores en una sala del Survivor (está hecho para 4: colores, cartas de nivel compartidas, dificultad). */
+export const SURVIVOR_PLAYERS = 4;
+/**
+ * Cuántos caben en una sala según a qué se juega: Survivor, 4; Defensa, los del mapa (con el
+ * mapa al azar, los del más pequeño: tiene que caber en el que salga).
+ */
+export function roomMax(mode: string, map: string): number {
+  if (mode !== 'td') return SURVIVOR_PLAYERS;
+  const m = MAPS.find(x => x.id === map);
+  return m ? m.players : Math.min(...MAPS.map(x => x.players));
+}
+/** Lo más que puede tener una sala (el mapa más grande). */
+export const MAX_ROOM = Math.max(SURVIVOR_PLAYERS, ...MAPS.map(m => m.players));
 /** El mapa con ese id (el primero si no existe). */
 export const mapById = (id: unknown) => MAPS.find(m => m.id === id) || MAPS[0];
 /** Uno al azar. */
@@ -320,6 +336,12 @@ export const SUPPORT: Record<number, AuraKind> = {
 export const SUPPORT_COST = 90;
 /** Lo que cuesta una torre de ese Pokémon: los de apoyo, SUPPORT_COST; los demás, según su rareza. */
 export const costFor = (dex: number, rarity: number) => (SUPPORT[dex] ? SUPPORT_COST : towerCost(rarity));
+
+/**
+ * Lo que cuesta un trofeo: el jefe o legendario que acabas de derrotar en la partida, que
+ * pasa a la tienda aunque no lo tengas. Caro: un legendario, 300; un jefe, 60 más que por su rareza.
+ */
+export const trophyCost = (rarity: number, legend: boolean) => (legend ? 300 : towerCost(rarity) + 60);
 
 /** Fuerza del aura en el nivel `level` (1-5). */
 export function auraStrength(kind: AuraKind, level: number): number {

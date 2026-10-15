@@ -53,7 +53,10 @@ G.I18n.add({
   'Toca para plantar aquí': 'Tap to place it here', 'Clic para plantar aquí': 'Click to place it here', 'Cancelar (Esc)': 'Cancel (Esc)',
   'Fuera del mapa': 'Off the map', 'Demasiado cerca de la entrada o de la base': 'Too close to the entrance or the base',
   'Encima del camino': 'On the path', 'Pegada a otra torre': 'Right next to another tower', 'Ahí no': 'Not there',
-  'Te faltan monedas': 'Not enough coins',
+  'Te faltan monedas': 'Not enough coins', 'Volver al héroe (C)': 'Back to hero (C)',
+  'Pulsa para mirar allí (M esconde el mapa)': 'Click to look there (M hides the map)', 'Ataques: {x}': 'Attacks: {x}', 'Enseñarle ({x}):': 'Teach it ({x}):',
+  'Ya sabe todos los ataques que puede aprender': 'It already knows all the attacks it can learn',
+  'No tiene más ataques que aprender': 'It has no more attacks to learn', '¡{x} ha aprendido {x}!': '{x} learned {x}!', 'trofeo': 'trophy', '¡{x} se une a la tienda!': '{x} joins the shop!',
 
   // ---------------- avisos de la partida ----------------
   '¡Congelado!': 'Frozen!', '¡Paralizado!': 'Paralyzed!', '¡Aturdido!': 'Stunned!', '¡Confuso!': 'Confused!',
@@ -71,6 +74,22 @@ G.I18n.add({
   'oleadas {x} · derrotados {x} · victoria {x}': 'waves {x} · defeated {x} · victory {x}', 'oleadas {x} · derrotados {x}': 'waves {x} · defeated {x}',
   'Partida tocada desde la consola: sin premio': 'Game modified from the console: no reward',
   'Oleadas superadas': 'Waves cleared',
+
+  // ---------------- salas públicas y espectadores ----------------
+  'Salas públicas': 'Public rooms', 'Crear sala pública': 'Create public room', 'Ir a tu sala': 'Go to your room', 'Únete a una partida o mírala': 'Join a game or watch it', 'Actualizar': 'Refresh',
+  'Entra en una sala que espera jugadores, o mira una partida que ya ha empezado.': 'Join a room that is waiting for players, or watch a game that has already started.',
+  'Todas': 'All', 'Unirse': 'Join', 'Llena': 'Full', 'Mirar': 'Watch', 'Jugando': 'Playing', 'En la sala': 'In the room', '{x} mirando': '{x} watching',
+  'No hay salas públicas ahora mismo. Crea la tuya con «Crear sala pública».': 'There are no public rooms right now. Create yours with “Create public room”.',
+  'Ya estás en una sala: al unirte a otra, sales de la tuya. Para mirar una partida, sal antes de tu sala.': 'You are already in a room: joining another one takes you out of yours. To watch a game, leave your room first.',
+  'Sala pública': 'Public room', 'Sala privada': 'Private room', 'Sala:': 'Room:', 'Privada': 'Private', 'Pública': 'Public',
+  'Caben {x}': 'Up to {x}', 'caben {x}': 'up to {x}', 'Sólo entran tus amigos, con invitación': 'Only your friends can join, with an invitation',
+  'En este mapa caben {x}': 'This map fits {x}', 'En el Survivor caben {x}': 'Survivor fits {x}',
+  '{x}: sobra 1. Elige otro modo o mapa.': '{x}: one player too many. Choose another mode or map.',
+  '{x}: sobran {x}. Elige otro modo o mapa.': '{x}: {x} players too many. Choose another mode or map.',
+  'Sale en Salas públicas: cualquiera puede entrar, o mirar si ya habéis empezado': 'Shows in Public rooms: anyone can join, or watch if you have already started',
+  'Espectador': 'Spectator', 'Mirando a': 'Watching', 'Esperando a los jugadores…': 'Waiting for the players…', 'Salir': 'Leave',
+  'Anterior (Q)': 'Previous (Q)', 'Siguiente (Tab)': 'Next (Tab)', 'La partida que mirabas ha terminado': 'The game you were watching has ended',
+  'No se pudo entrar a mirar.': 'Could not start watching.', 'Sal de tu sala para mirar otra partida.': 'Leave your room to watch another game.',
 
   // ---------------- sala ----------------
   'Modo:': 'Mode:', 'Hordas': 'Hordes', 'Modo: {x}': 'Mode: {x}', 'Defensa · {x}': 'Defense · {x}',
