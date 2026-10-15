@@ -25,15 +25,41 @@ import type { PokeType } from '../data/types';
  *   'rift' x y ttl · 'riftx' · 'arena' cfg · 'aw' (ganada) · 'al' (perdida)
  *   y del invitado al anfitrión 're' (he entrado en la grieta).
  */
+/** Tipo de arena: uno de los temas de G.Tiles.ARENA_THEMES. */
+type ArenaType = keyof typeof G.Tiles.ARENA_THEMES;
+/** Lo que se manda por red para abrir una arena. */
+interface ArenaCfg { tx: number; ty: number; r: number; dex: number; shiny: boolean; type: ArenaType; id: string }
+type ArenaPhase = 'fight' | 'won' | 'lost';
+interface Arena extends ArenaCfg {
+  x: number; y: number;
+  back: { x: number; y: number };
+  biome: number;
+  t: number;
+  phase: ArenaPhase;
+  endT: number;
+  bossId: number;
+}
+/** Mensajes de red de la grieta (ver la cabecera). */
+type RiftEvent = ['rift', number, number, number] | ['riftx'] | ['arena', ArenaCfg] | ['aw'] | ['al'];
+interface RiftSpot { x: number; y: number; ttl: number; t: number }
+/** Resultado de la última arena que acabó. */
+interface LastArena { id: string; won: boolean; dex: number; type: string; shiny: boolean }
+/** Estado que el anfitrión reenvía a quien vuelve tras un corte (ver snapshot/restore). */
+interface RiftSnapshot {
+  last?: LastArena | null;
+  rift?: [number, number, number] | null;
+  arena?: { cfg: ArenaCfg; phase: ArenaPhase; t: number } | null;
+}
+
 export const Rift = (() => {
   // (0.14 hasta el 11-10-2026: más grietas para que se vean los vínculos)
   // Menos azar (12-10-2026): cada vez que no sale, la siguiente es más
   // probable (20 %, 40 %, 60 %, 80 %, 100 %): como mucho 2,5 min sin grieta.
   // Desde 2 min antes de la Sentencia de Arceus (minuto 30) ya no se abren.
   const CHECK = 30, CHANCE = 0.2, TTL = 45;
-  const ARENA_R = 11, ARENA_TIME = 120, FROM = 75;
-  let rift = null;          // { x, y, ttl, t }
-  let arena = null;         // { tx, ty, r, dex, shiny, x, y, back, biome, t, phase, endT, bossId }
+  const ARENA_R = 11, ARENA_TIME = 120, FROM = 75, BOSS_NEAR = 900;
+  let rift: RiftSpot | null = null;
+  let arena: Arena | null = null;
   let checkT = CHECK, asked = false, downT = 0, misses = 0;
   let arenaN = 0;                                       // arenas abiertas aquí (para dar un id a cada una)
   const paid = new Set<string>();                       // arenas ganadas cuyo premio ya se ha dado en este ordenador
@@ -59,14 +85,22 @@ export const Rift = (() => {
       checkT -= dt;
       if (checkT <= 0) {
         checkT = CHECK;
-        if (G.EnemyMgr.bossAlive()) return;           // con un jefe vivo no cuenta como intento
-        if (Math.random() < CHANCE * (1 + misses)) { misses = 0; open(); }
+        if (bossNear()) return;                       // con un jefe cerca no cuenta como intento
+        if (Math.random() < CHANCE * (1 + misses)) { if (open()) misses = 0; }
         else misses++;
       }
     }
     if (arena) arenaTick(dt, pl);
   }
 
+  /** ¿Hay un jefe vivo a menos de BOSS_NEAR px de algún jugador? Uno rezagado y lejano no bloquea las grietas. */
+  function bossNear() {
+    if (!G.EnemyMgr.bossAlive()) return false;
+    const ps = G.Game.everyone();
+    return G.EnemyMgr.all().some(e => e.boss && !e.dead && ps.some(p => G.U.dist2(p.x, p.y, e.x, e.y) < BOSS_NEAR * BOSS_NEAR));
+  }
+
+  /** @returns si ha abierto la grieta (false si no ha encontrado sitio libre) */
   function open() {
     const alive = G.Game.everyone().filter(p => !p.dead);
     const near = G.U.pick(alive.length ? alive : [G.Game.player]);
@@ -76,8 +110,9 @@ export const Rift = (() => {
       if (!G.World.isFree(x, y, 22)) continue;
       show(x, y, TTL);
       if (G.Coop.isHost) G.Coop.broadcast(['rift', Math.round(x), Math.round(y), TTL]);
-      return;
+      return true;
     }
+    return false;
   }
 
   /** Aparece la grieta (también la que manda el anfitrión). */
@@ -234,7 +269,9 @@ export const Rift = (() => {
     if (a.id) last = { id: a.id, won: a.phase === 'won', dex: a.dex, type: a.type, shiny: !!a.shiny };
     G.World.setBiome(a.biome, true);
     G.Weather.clear();
-    if (authority()) G.EnemyMgr.restore(); else G.EnemyMgr.clearRemote();
+    // El invitado no borra nada: al restaurar, el anfitrión avisa de los de la arena ('eg') y de los
+    // del mapa ('ne'); borrar aquí se llevaba por delante los que ya habían llegado (y quedaban invisibles).
+    if (authority()) G.EnemyMgr.restore();
     G.Projectiles.clear();
     G.Combat.clearFields();
     G.Hazards.clear();
