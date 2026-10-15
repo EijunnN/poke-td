@@ -271,7 +271,7 @@ G.I18n.add({
   'Proyecto de fan sin ánimo de lucro · Sprites: SpriteCollab (CC BY-NC 4.0) · Pokémon © Nintendo/Creatures/GAME FREAK ·': 'Non-profit fan project · Sprites: SpriteCollab (CC BY-NC 4.0) · Pokémon © Nintendo/Creatures/GAME FREAK ·',
   'Aviso legal': 'Legal notice',
   // colección
-  'Volver': 'Back', 'Todos': 'All', 'Tengo': 'Owned', 'Me faltan': 'Missing', 'Legendaria': 'Legendary', 'Épica': 'Epic', 'Rara': 'Rare',
+  'Volver': 'Back', 'Todos': 'All', 'Tengo': 'Owned', 'Me faltan': 'Missing', 'Legendaria': 'Legendary', 'Élite': 'Elite', 'Legendario': 'Legendary', 'Épica': 'Epic', 'Rara': 'Rare',
   'Poco común': 'Uncommon', 'Común': 'Common', 'Ninguno con este filtro.': 'None with this filter.', 'Ataque': 'Attack', 'Vida': 'HP', 'Velocidad': 'Speed',
   'Empieza con': 'Starts with', 'Es tu compañero': 'It\'s your partner', 'Elegir de compañero{x}': 'Choose as partner{x}', '(shiny)': '(shiny)',
   'Aún no lo tienes.': 'You don\'t have it yet.', 'Consíguelo en el banner de': 'Get it from the banner of', 'o derrotándolo cuando salga shiny.': 'or by defeating it when it shows up shiny.',
@@ -280,8 +280,8 @@ G.I18n.add({
   // gacha
   'Gacha': 'Gacha', 'Misterioso': 'Mystery', 'Los {x} Pokémon de la generación {x}. ¡Los legendarios esperan!': 'The {x} Pokémon of generation {x}. The legendaries await!',
   'Tienes {x} de {x}': 'You have {x} of {x}', 'Tienes {x}': 'You have {x}', 'Gen {x}': 'Gen {x}', 'Probabilidades': 'Odds',
-  'Tiradas sin legendaria en {x}: {x} / {x}': 'Pulls without a legendary in {x}: {x} / {x}',
-  '· A las {x} tiradas sin Legendaria en un banner, la siguiente lo es.': '· After {x} pulls without a Legendary on a banner, the next one is.',
+  'Tiradas sin 5★ en {x}: {x} / {x}': 'Pulls without a 5★ in {x}: {x} / {x}',
+  '· A las {x} tiradas sin 5★ en un banner, la siguiente lo es.': '· After {x} pulls without a 5★ on a banner, the next one is.',
   '· La tirada ×10 garantiza al menos una Épica.': '· The ×10 pull guarantees at least one Epic.',
   '· Los repetidos dan Pokémonedas. Los shiny no se repiten.': '· Duplicates give PokéCoins. Shinies never repeat.',
   '· Los tickets se consiguen jugando: algunos Pokémon los sueltan al caer, y los jefes y los legendarios de las grietas, a veces, tickets ×10.': '· Tickets are earned by playing: some Pokémon drop them when defeated, and bosses and rift legendaries sometimes give ×10 tickets.',

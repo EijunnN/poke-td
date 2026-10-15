@@ -28,8 +28,15 @@ export const Gacha = (() => {
   const REFUND = { 1: 15, 2: 30, 3: 60, 4: 120, 5: 300 };
   let forceShiny = 0;           // para pruebas y vídeos: las N próximas salen shiny
 
-  const RARITY_NAME = { 1: 'Común', 2: 'Poco común', 3: 'Rara', 4: 'Épica', 5: 'Legendaria' };
-  const RARITY_COLOR = { 1: '#9fb1c9', 2: '#5fe08a', 3: '#4fb4ff', 4: '#c47bff', 5: '#ffcb3d' };
+  // 5★ es un nivel de rareza: lo componen los legendarios y los pseudolegendarios (Garchomp...),
+  // así que el nombre del nivel no puede ser "Legendaria"; ese se lo da rarityLabel a quien lo es.
+  const RARITY_NAME: Record<number, string> = { 1: 'Común', 2: 'Poco común', 3: 'Rara', 4: 'Épica', 5: 'Élite' };
+  /** Etiqueta de un Pokémon concreto: "Legendario" sólo si lo es de verdad (marca `leg` de la Pokédex). */
+  function rarityLabel(rarity: number, dex?: number) {
+    const p = dex != null ? G.DEX_BY[dex] : null;
+    return rarity === 5 && p && p.leg ? 'Legendario' : RARITY_NAME[rarity];
+  }
+  const RARITY_COLOR: Record<number, string> = { 1: '#9fb1c9', 2: '#5fe08a', 3: '#4fb4ff', 4: '#c47bff', 5: '#ffcb3d' };
 
   const BANNERS = [
     { gen: 1, name: 'Kanto',   color: ['#3a1d6e', '#1b2f78', '#0f4d6e'] },
@@ -126,7 +133,7 @@ export const Gacha = (() => {
   }
 
   return { debugForceShiny(n = 1) { forceShiny = n; },
-           costOf, RATES, PITY_5, SHINY_RATE, REFUND, RARITY_NAME, RARITY_COLOR, BANNERS,
+           costOf, RATES, PITY_5, SHINY_RATE, REFUND, RARITY_NAME, rarityLabel, RARITY_COLOR, BANNERS,
            pool, featured, pull };
 })();
 G.Gacha = Gacha;

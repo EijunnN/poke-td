@@ -62,10 +62,10 @@ export const Slots = (() => {
       for (let k = 0; k < 3; k++) {
         if (k === 2 && big) {
           // Suspense: el último rodillo frena despacio y las luces parpadean.
-          st.frenzy = 1;
-          st.led = r.shiny ? '¡¿SHINY?!' : r.rarity === 5 ? '¡¿LEGENDARIO?!' : '¡¿ÉPICO?!';
-          st.ledCol = colOf(r);
-          await tween(v => { st.reels[2].speed = v; }, 520, 120, ten ? 0.5 : 1.1);
+          st!.frenzy = 1;
+          st!.led = r.shiny ? '¡¿SHINY?!' : G.Gacha.rarityLabel(r.rarity, r.dex) === 'Legendario' ? '¡¿LEGENDARIO?!' : '¡¿ÉPICO?!';
+          st!.ledCol = colOf(r);
+          await tween(v => { st!.reels[2].speed = v; }, 520, 120, ten ? 0.5 : 1.1);
         }
         stopReel(st.reels[k], symOf(r));
         G.Audio.sfx('shake');
@@ -73,9 +73,9 @@ export const Slots = (() => {
       }
       st.frenzy = 0;
       // Premio.
-      st.win = { col: colOf(r), t: 0 };
-      st.led = (r.shiny ? 'SHINY · ' : '') + G.Gacha.RARITY_NAME[r.rarity].toUpperCase();
-      st.ledCol = colOf(r);
+      st!.win = { col: colOf(r), t: 0 };
+      st!.led = (r.shiny ? 'SHINY · ' : '') + G.Gacha.rarityLabel(r.rarity, r.dex).toUpperCase();
+      st!.ledCol = colOf(r);
       G.Audio.sfx('reveal', { rarity: r.rarity });
       if (r.rarity === 5) G.Audio.sfx('legend');
       if (r.shiny) G.Audio.sfx('shiny');
