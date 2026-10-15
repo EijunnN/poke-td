@@ -15,7 +15,8 @@ export class Player {
   declare anim: InstanceType<typeof G.Sprites.Animator>;
   declare x: number;
   declare y: number;
-  declare r: number;
+  declare r: number;                  // radio de colisión / contacto (acotado)
+  declare visR: number;               // radio visual, según el sprite (sólo para dibujar)
   declare bodyH: number;
 
   declare atkMul: number;
@@ -96,7 +97,10 @@ export class Player {
     this.shiny = shiny && G.Sprites.hasShiny(mon.dex);
     this.anim = new G.Sprites.Animator(mon.dex, 1, this.shiny);
     this.x = 0; this.y = 0;
-    this.r = G.Sprites.bodyRadius(mon.dex);
+    // El hueco que ocupas no crece con el sprite (Moltres 35 px, la mediana 14):
+    // si no, los grandes chocan con todo y los pequeños son casi imposibles de tocar.
+    this.visR = G.Sprites.bodyRadius(mon.dex);
+    this.r = G.U.clamp(this.visR, 10, 16);
     this.bodyH = G.Sprites.bodyHeight(mon.dex);
 
     this.atkMul = perks.atkMul || 1;
@@ -230,7 +234,7 @@ export class Player {
     G.Audio.sfx('select');
     for (const m of this.slots[i]) m.t = Math.min(m.t, m.cd * 0.35);
     const m = this.slots[i][0];
-    G.FX.ring(this.x, this.y - G.LIFT * 0.5, 6, this.r * 3.4, G.U.TYPE_COLOR[m.type], 0.3, 3);
+    G.FX.ring(this.x, this.y - G.LIFT * 0.5, 6, this.visR * 3.4, G.U.TYPE_COLOR[m.type], 0.3, 3);
   }
 
   cycle(dir) {
@@ -525,7 +529,7 @@ export class Player {
       ctx.globalAlpha = 0.22;
       ctx.strokeStyle = G.U.TYPE_COLOR[m.type];
       ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.ellipse(this.x, this.y, this.r * 1.5, this.r * 0.6, 0, 0, 6.2832); ctx.stroke();
+      ctx.beginPath(); ctx.ellipse(this.x, this.y, this.visR * 1.5, this.visR * 0.6, 0, 0, 6.2832); ctx.stroke();
       ctx.restore();
     }
     G.Sprites.drawShadow(ctx, this.dex, this.x, this.y);
@@ -534,7 +538,7 @@ export class Player {
       ctx.save();
       ctx.globalAlpha = 0.35 + Math.sin(performance.now() / 120) * 0.15;
       ctx.strokeStyle = this.power.def.color; ctx.lineWidth = 3;
-      ctx.beginPath(); ctx.ellipse(this.x, this.y, this.r * 2.1, this.r * 0.85, 0, 0, 6.2832); ctx.stroke();
+      ctx.beginPath(); ctx.ellipse(this.x, this.y, this.visR * 2.1, this.visR * 0.85, 0, 0, 6.2832); ctx.stroke();
       ctx.restore();
     }
 
@@ -553,7 +557,7 @@ export class Player {
       ctx.strokeStyle = COL[k];
       ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.ellipse(this.x, this.y, this.r * 1.8 + i * 5, (this.r * 1.8 + i * 5) * 0.42, 0, 0, 6.2832 * (b.n / 5));
+      ctx.ellipse(this.x, this.y, this.visR * 1.8 + i * 5, (this.visR * 1.8 + i * 5) * 0.42, 0, 0, 6.2832 * (b.n / 5));
       ctx.stroke();
       ctx.restore();
       i++;
@@ -565,7 +569,7 @@ export class Player {
       ctx.strokeStyle = '#5fe08a';
       ctx.lineWidth = 3;
       ctx.beginPath();
-      ctx.ellipse(this.x, this.y, this.r * 2.4, this.r * 1.0, 0, -Math.PI / 2, -Math.PI / 2 + 6.2832 * Math.min(1, this.reviveT / G.Player.REVIVE_TIME));
+      ctx.ellipse(this.x, this.y, this.visR * 2.4, this.visR * 1.0, 0, -Math.PI / 2, -Math.PI / 2 + 6.2832 * Math.min(1, this.reviveT / G.Player.REVIVE_TIME));
       ctx.stroke();
       ctx.restore();
     }

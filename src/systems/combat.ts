@@ -100,7 +100,7 @@ export const Combat = (() => {
         hits: new Set(), vis, ghost, owner: pl
       }, payload(m)));
     }
-    G.FX.spark(pl.x + Math.cos(pl.aim) * pl.r, pl.y - G.LIFT + Math.sin(pl.aim) * pl.r,
+    G.FX.spark(pl.x + Math.cos(pl.aim) * (pl.visR || pl.r), pl.y - G.LIFT + Math.sin(pl.aim) * (pl.visR || pl.r),
                col, Math.cos(pl.aim), Math.sin(pl.aim), 3);
   }
 
@@ -118,7 +118,7 @@ export const Combat = (() => {
         hits: new Set(), vis, ghost, owner: pl
       }, payload(m)));
     }
-    G.FX.ring(pl.x, pl.y, pl.r, pl.r * 4, col, 0.3, 3);
+    G.FX.ring(pl.x, pl.y, (pl.visR || pl.r), (pl.visR || pl.r) * 4, col, 0.3, 3);
   }
 
   function inArc(px, py, x, y, aim, half) {
@@ -199,10 +199,10 @@ export const Combat = (() => {
   function buff(pl, m) {
     pl.addBuff(m.stat, m.amount, m.dur, m.stacks | 0);
     const col = G.U.TYPE_COLOR[m.type];
-    G.FX.ring(pl.x, pl.y, pl.r * 2.4, pl.r * 1.1, col, 0.35, 2.5);
+    G.FX.ring(pl.x, pl.y, (pl.visR || pl.r) * 2.4, (pl.visR || pl.r) * 1.1, col, 0.35, 2.5);
     const vis = G.VFX.forMove(m);
     for (let i = 0; i < 3; i++) {
-      G.FX.sp(vis.buff || 'arrow', vis.pal, pl.x + G.U.rand(-pl.r * 1.4, pl.r * 1.4),
+      G.FX.sp(vis.buff || 'arrow', vis.pal, pl.x + G.U.rand(-(pl.visR || pl.r) * 1.4, (pl.visR || pl.r) * 1.4),
               pl.y - G.U.rand(0, pl.bodyH * 0.8), { vy: -70, life: 0.6 });
     }
   }
@@ -350,7 +350,7 @@ export const Combat = (() => {
         hits: new Set(), vis, ghost, owner: pl
       }, payload(m)));
     }
-    G.FX.spark(pl.x + Math.cos(pl.aim) * pl.r, pl.y - G.LIFT + Math.sin(pl.aim) * pl.r, col, Math.cos(pl.aim), Math.sin(pl.aim), 5);
+    G.FX.spark(pl.x + Math.cos(pl.aim) * (pl.visR || pl.r), pl.y - G.LIFT + Math.sin(pl.aim) * (pl.visR || pl.r), col, Math.cos(pl.aim), Math.sin(pl.aim), 5);
   }
 
   /** Daño de un campo (mina, meteoro, charco) a todo lo que hay en su círculo. */
