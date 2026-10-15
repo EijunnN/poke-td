@@ -53,7 +53,7 @@ G.I18n.add({
   'Toca para plantar aquí': 'Tap to place it here', 'Clic para plantar aquí': 'Click to place it here', 'Cancelar (Esc)': 'Cancel (Esc)',
   'Fuera del mapa': 'Off the map', 'Demasiado cerca de la entrada o de la base': 'Too close to the entrance or the base',
   'Encima del camino': 'On the path', 'Pegada a otra torre': 'Right next to another tower', 'Ahí no': 'Not there',
-  'Te faltan monedas': 'Not enough coins', 'Mayús + clic: plantar varias · R: repetir la última': 'Shift + click: place several · R: repeat the last one', 'Volver al héroe (C)': 'Back to hero (C)',
+  'Te faltan monedas': 'Not enough coins', 'Ocultar mapa (M)': 'Hide map (M)', 'Mapa (M)': 'Map (M)', 'Ocultar mapa': 'Hide map', 'Mapa': 'Map', 'Mayús + clic: plantar varias · R: repetir la última': 'Shift + click: place several · R: repeat the last one', 'Volver al héroe (C)': 'Back to hero (C)', 'Volver al héroe': 'Back to hero',
   'Pulsa para mirar allí (M esconde el mapa)': 'Click to look there (M hides the map)', 'Ataques: {x}': 'Attacks: {x}', 'Enseñarle ({x}):': 'Teach it ({x}):',
   'Ya sabe todos los ataques que puede aprender': 'It already knows all the attacks it can learn',
   'No tiene más ataques que aprender': 'It has no more attacks to learn', '¡{x} ha aprendido {x}!': '{x} learned {x}!', 'trofeo': 'trophy', '¡{x} se une a la tienda!': '{x} joins the shop!',

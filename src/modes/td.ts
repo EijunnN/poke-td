@@ -1516,7 +1516,7 @@ export const TD = (() => {
     if (watching()) {
       G.Spectate.keys();
       if (G.Input.tap('keyc')) camFree = null;
-      if (G.Input.tap('keym')) { mapOpen = !mapOpen; if (mapBox) mapBox.style.display = mapOpen ? '' : 'none'; }
+      if (G.Input.tap('keym')) toggleMap();
       return;
     }
     if (placing && (G.Input.tap('enter') || G.Input.tap('space') || G.Input.tap('numpadenter'))) tryPlace(ghost.x, ghost.y, shiftHeld());
@@ -1525,7 +1525,7 @@ export const TD = (() => {
     if (G.Input.tap('keyn')) callWave();
     if (G.Input.tap('keyf')) toggleFast();
     if (G.Input.tap('keyc')) camFree = null;                                  // la cámara, de vuelta al héroe
-    if (G.Input.tap('keym')) { mapOpen = !mapOpen; if (mapBox) mapBox.style.display = mapOpen ? '' : 'none'; }
+    if (G.Input.tap('keym')) toggleMap();
     for (let i = 0; i < 4; i++) {
       if (G.Input.tap('digit' + (i + 1)) || G.Input.tap('numpad' + (i + 1))) pl.setActive(i);
     }
@@ -1599,6 +1599,8 @@ export const TD = (() => {
       #td-map { position: fixed; right: 8px; bottom: 90px; z-index: 30; padding: 6px; display: flex; flex-direction: column; gap: 4px; align-items: stretch; }
       #td-map canvas { width: 170px; height: 170px; cursor: crosshair; touch-action: none; display: block; }
       #td-map button { font-size: 11px; padding: 2px 6px; }
+      #td-map.closed { padding: 4px; }
+      #td-map.closed canvas, #td-map.closed button:not(.td-map-toggle) { display: none !important; }
       #td-panel h3 { margin: 0 0 4px; }
       #td-panel p { margin: 3px 0; font-size: 14px; color: var(--muted); }
       #td-panel p.role { color: inherit; }
@@ -1748,14 +1750,19 @@ export const TD = (() => {
     mapBox = document.createElement('div');
     mapBox.id = 'td-map';
     mapBox.className = 'box';
-    mapBox.style.display = mapOpen ? '' : 'none';
     mapCv = document.createElement('canvas');
     mapCv.title = 'Pulsa para mirar allí (M esconde el mapa)';
     const back = document.createElement('button');
     back.className = 'btn small ghost';
-    back.textContent = 'Volver al héroe (C)';
+    back.textContent = G.Touch.active ? 'Volver al héroe' : 'Volver al héroe (C)';
     back.onclick = () => { camFree = null; };
-    mapBox.append(mapCv, back);
+    // Esconderlo y volver a sacarlo con un botón (en el móvil no hay tecla M).
+    const hide = document.createElement('button');
+    hide.className = 'btn small ghost td-map-toggle';
+    hide.onclick = () => toggleMap();
+    mapBox.append(mapCv, back, hide);
+    paintMap();
+    mapBox.addEventListener('pointerdown', e => e.stopPropagation());
     // Pulsar o arrastrar: la cámara a ese punto.
     let dragging = false;
     const go = (e: PointerEvent) => {
@@ -1770,6 +1777,15 @@ export const TD = (() => {
     const stop = () => { dragging = false; };
     mapCv.addEventListener('pointerup', stop);
     mapCv.addEventListener('pointercancel', stop);
+  }
+
+  /** Abre o esconde el minimapa: escondido, sólo queda un botón «Mapa». */
+  function toggleMap() { mapOpen = !mapOpen; paintMap(); }
+  function paintMap() {
+    if (!mapBox) return;
+    mapBox.classList.toggle('closed', !mapOpen);
+    const b = mapBox.querySelector('.td-map-toggle');
+    if (b) b.textContent = (mapOpen ? 'Ocultar mapa' : 'Mapa') + (G.Touch.active ? '' : ' (M)');
   }
 
   /** Pinta el minimapa (cada fotograma: son unos pocos puntos). */
