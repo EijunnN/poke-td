@@ -20,15 +20,30 @@ cd poke-td
 sudo bash deploy/install.sh tu-dominio.com TuNombreDeJugador
 ```
 
-El segundo argumento (opcional) es la cuenta que podrá moderar el ranking. El script:
+El segundo argumento (opcional) es la cuenta que podrá moderar el ranking, y el tercero
+(opcional, sólo la primera vez) el puerto local del juego, 8080 si no se dice. El script:
 
 - instala Caddy y Bun si faltan;
 - crea el usuario de sistema `poketd` y copia el juego a `/opt/poke-td`;
 - construye el juego (`bun run build`);
-- crea `/etc/poke-td.env` (configuración) y `/etc/caddy/Caddyfile`;
+- crea `/etc/poke-td.env` (configuración) y la configuración de Caddy (ver abajo);
 - activa el servicio `poke-td` y la copia de seguridad diaria (`poke-td-backup.timer`).
 
 Al acabar, el juego está en `https://tu-dominio.com`.
+
+### Si la VPS ya sirve otras webs con Caddy
+
+Si su `/etc/caddy/Caddyfile` incluye `import sites/*.caddy`, el script NO lo toca: escribe
+sólo `/etc/caddy/sites/poke-td.caddy` (y, si `/etc/caddy/caddy.env` trae `CF_API_TOKEN`, pide
+el certificado por DNS de Cloudflare, como las demás webs). Elige un puerto libre:
+
+```bash
+sudo bash deploy/install.sh poke.ejemplo.com TuNombre 4070
+```
+
+Así está desplegado ahora: `https://poke.bezenti.com`, código en `/srv/poke-td`, juego en
+`/opt/poke-td` y puerto 4070 (el 8080 lo usa otra web de esa VPS). El registro DNS va sin el
+proxy de Cloudflare: las salas, el chat y la partida en grupo van por WebSocket.
 
 ## Actualizar
 
@@ -36,6 +51,8 @@ Al acabar, el juego está en `https://tu-dominio.com`.
 cd poke-td && git pull
 sudo bash deploy/install.sh tu-dominio.com
 ```
+
+(En la VPS actual: `cd /srv/poke-td && git pull && sudo bash deploy/install.sh poke.bezenti.com`.)
 
 La base de datos y `/etc/poke-td.env` no se tocan. Los jugadores que estén en el menú
 pasan a la versión nueva solos; los que estén en partida, al acabarla.
