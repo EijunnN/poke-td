@@ -288,6 +288,7 @@ G.I18n.add({
   'El servidor ha fallado.': 'The server failed.', 'No se ha podido confirmar si la marca llegó al servidor.': 'Could not confirm whether the score reached the server.',
   'El servidor no registró el inicio de la partida.': 'The server did not register the start of the run.', 'El servidor la ha rechazado.': 'The server rejected it.',
   'Esta partida dura más de {x} minutos y el ranking no la admite.': 'This run lasts more than {x} minutes and the ranking does not accept it.',
+  'Has abierto el juego en otra pestaña: aquí ya no te llegan invitaciones. Recarga para usar ésta.': 'You opened the game in another tab: invitations no longer reach this one. Reload to use this one.',
   '<b>Normal</b> dibuja menos píxeles: va más fluido en móviles y pantallas de alta densidad.': '<b>Normal</b> draws fewer pixels: smoother on phones and high-density screens.',
   '· La tirada ×10 garantiza al menos una Épica.': '· The ×10 pull guarantees at least one Epic.',
   '· Los repetidos dan Pokémonedas. Los shiny no se repiten.': '· Duplicates give PokéCoins. Shinies never repeat.',

@@ -119,6 +119,9 @@ export const Social = (() => {
 
   // ---------------- tiempo real ----------------
 
+  // Otra pestaña con la misma cuenta se ha quedado la conexión: ésta ya no recibe invitaciones.
+  Link.onTaken(t => { if (t && G.UI) G.UI.toast('Has abierto el juego en otra pestaña: aquí ya no te llegan invitaciones. Recarga para usar ésta.', 7000); });
+
   Link.onStatus((s: LinkStatus) => {
     if (!started) return;
     if (s === 'open') {

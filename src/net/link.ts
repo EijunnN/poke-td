@@ -4,6 +4,10 @@
  * comparten. Reconecta sola con espera creciente mientras se quiera estar conectado
  * (con `eager`, p. ej. dentro de una sala o partida, esperando como mucho 3 s entre intentos:
  * el servidor sólo guarda el sitio unos segundos, ver server/realtime.ts).
+ *
+ * Una segunda pestaña con la misma cuenta toma la sesión y el servidor cierra la
+ * primera con 4001: esa NO reconecta (se pelearían en bucle). Se avisa con `onTaken`
+ * (y `taken`) para que la interfaz lo diga, y `resume()` la recupera a petición.
  */
 
 export type LinkStatus = 'closed' | 'connecting' | 'open';
@@ -20,10 +24,17 @@ const PING_EVERY = 20_000, DEAD_AFTER = 55_000, REQUEST_TIMEOUT = 8_000;
 export const Link = (() => {
   let ws: WebSocket | null = null;
   let token = '', want = false, status: LinkStatus = 'closed';
-  let tries = 0, retryT = 0, beatT = 0, lastRx = 0, seq = 0, eager = false;
+  let tries = 0, retryT = 0, beatT = 0, lastRx = 0, seq = 0, eager = false, taken = false;
   const waiting = new Map<number, { done: (r: Reply) => void; timer: number }>();
   const msgFns = new Set<(m: ServerMsg) => void>();
   const statusFns = new Set<(s: LinkStatus, code?: number) => void>();
+  const takenFns = new Set<(taken: boolean) => void>();
+
+  function setTaken(v: boolean) {
+    if (taken === v) return;
+    taken = v;
+    takenFns.forEach(fn => { try { fn(v); } catch (e) { console.warn(e); } });
+  }
 
   function setStatus(s: LinkStatus, code?: number) {
     if (status === s) return;
@@ -71,6 +82,7 @@ export const Link = (() => {
       setStatus('closed', e.code);
       if (want && !NO_RETRY.has(e.code)) retry();
       else want = false;
+      if (e.code === 4001) setTaken(true);
     };
   }
 
@@ -94,11 +106,19 @@ export const Link = (() => {
       if (want && tok === token) return;
       Link.disconnect();
       token = tok; want = true; tries = 0;
+      setTaken(false);
+      open();
+    },
+    /** Tras perder la sesión por otra pestaña (4001): la recupera, y esa otra pestaña pasa a ser la desplazada. */
+    resume() {
+      if (!taken || !token) return;
+      want = true; tries = 0;
+      setTaken(false);
       open();
     },
     /** Cierra y deja de reconectar. */
     disconnect() {
-      want = false; token = '';
+      want = false; token = ''; setTaken(false);
       clearTimeout(retryT); clearInterval(beatT);
       const s = ws; ws = null;
       if (s) { try { s.close(); } catch (e) { /* nada */ } }
@@ -119,6 +139,10 @@ export const Link = (() => {
     },
     on(fn: (m: ServerMsg) => void) { msgFns.add(fn); },
     onStatus(fn: (s: LinkStatus, code?: number) => void) { statusFns.add(fn); },
+    /** Avisa cuando otra pestaña (o dispositivo) abre la misma cuenta y esta pierde las invitaciones (true), y al recuperarla (false). */
+    onTaken(fn: (taken: boolean) => void) { takenFns.add(fn); },
+    /** ¿Otra pestaña tiene la sesión en directo? (esta no recibe invitaciones ni salas) */
+    get taken() { return taken; },
     get status() { return status; },
     /** Bytes que el navegador aún no ha podido enviar (la red va lenta). */
     get buffered() { return ws ? ws.bufferedAmount : 0; },
