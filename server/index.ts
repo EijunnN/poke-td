@@ -1,6 +1,7 @@
 /* ============ server/index.ts — servidor del juego (Bun) ============
  * Sirve lo que deja `bun run build` en dist/ y la API de cuentas y guardado
- * (server/api.ts) sobre SQLite (server/db.ts).
+ * (server/api.ts) sobre SQLite (server/db.ts). El panel interno (public/admin.html) lee
+ * sus métricas de server/stats.ts.
  *
  *   bun run build && bun run start          producción
  *   bun run server                          sólo la API, para `bun run dev`
@@ -19,6 +20,7 @@ import { createRealtime, type RealtimeOptions } from './realtime';
 import { createRanking } from './ranking';
 import { createSocial } from './social';
 import { createAccount } from './account';
+import { createStats } from './stats';
 
 const ROOT = join(import.meta.dir, '..');
 
@@ -49,7 +51,9 @@ export function startServer(o: ServerOptions = {}) {
   // Con el mismo reloj que el tiempo real (en las pruebas, uno falso): verifyTeam compara sus horas.
   const clock = o.realtime?.clock;
   const ranking = createRanking(db, { verifyTeam: rt.verifyTeam, now: clock ? () => clock.now() : undefined });
-  const modules: Module[] = [createAccount(db, { perIp: o.loginLimit }), ranking, createSocial(db, rt)];
+  // Métricas del panel interno (/admin.html): después del ranking y del tiempo real, que crean las tablas que lee.
+  const stats = createStats(db, rt, { clock });
+  const modules: Module[] = [createAccount(db, { perIp: o.loginLimit }), ranking, createSocial(db, rt), stats.module];
   const api = createApi(db, { loginLimit: o.loginLimit, saveGapMs: o.saveGapMs, modules });
 
   async function serveFile(pathname: string) {
@@ -85,7 +89,7 @@ export function startServer(o: ServerOptions = {}) {
     },
   });
 
-  return { server, db, rt, stop() { rt.stop(); server.stop(true); db.close(); } };
+  return { server, db, rt, stats, stop() { stats.stop(); rt.stop(); server.stop(true); db.close(); } };
 }
 
 if (import.meta.main) {

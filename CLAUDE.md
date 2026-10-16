@@ -15,6 +15,8 @@ servidores, dominio ni cuentas con el original.
   Sirve `dist/`, la API de cuentas y guardado (`api.ts`), el ranking (`ranking.ts`), perfiles
   y amigos (`social.ts`) y, por WebSocket en `/ws`, presencia, invitaciones, salas y el relé
   del cooperativo (`realtime.ts`). Admins del ranking: variable `ADMIN_USERS` (nombres).
+  Panel interno para esos admins: `public/admin.html` (conectados, salas, métricas), que lee
+  `GET /api/admin/stats` (`stats.ts`).
 - `tests/` — pruebas adversariales diferenciales (`golden.json` es la referencia).
 - `tools/` — scripts de datos (PokeAPI, SpriteCollab). `docs/GDD.md` — diseño.
 

@@ -1,0 +1,185 @@
+<!doctype html>
+<!-- ============ admin.html — panel interno: quién está conectado y métricas ============
+     Sólo para las cuentas de ADMIN_USERS. Usa la sesión del juego (la de este navegador, en
+     localStorage 'ps.token'): primero se entra en el juego con la cuenta admin y luego se abre
+     /admin.html. Los datos vienen de GET /api/admin/stats (server/stats.ts). -->
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>PokéTD · Panel</title>
+<style>
+  :root { --bg: #11131a; --card: #1b1e29; --line: #2c3142; --text: #e8eaf2; --sub: #8d93a8; --gold: #ffd23f; --green: #5fe08a; --blue: #4fb4ff; --red: #ff6b6b; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; padding: 20px 16px 40px; }
+  header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+  h1 { font-size: 20px; margin: 0; }
+  h2 { font-size: 15px; margin: 0 0 10px; }
+  .sub { color: var(--sub); font-size: 12px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+  .kpi b { display: block; font-size: 26px; font-variant-numeric: tabular-nums; }
+  .kpi.on b { color: var(--green); }
+  .section { margin-bottom: 14px; overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { color: var(--sub); font-weight: 500; font-size: 12px; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: var(--green); }
+  .dot.play { background: var(--gold); }
+  .dot.away { background: var(--sub); }
+  .tag { display: inline-block; padding: 1px 7px; border-radius: 99px; font-size: 11px; background: var(--line); margin-right: 4px; }
+  .tag.gold { background: #4a3d10; color: var(--gold); }
+  .tag.blue { background: #123247; color: var(--blue); }
+  .msg { padding: 40px 0; text-align: center; color: var(--sub); }
+  .msg a { color: var(--gold); }
+  svg { width: 100%; height: auto; display: block; }
+  .legend { display: flex; gap: 14px; font-size: 12px; color: var(--sub); margin-top: 6px; }
+  .legend i { display: inline-block; width: 10px; height: 3px; vertical-align: middle; margin-right: 5px; }
+  .tabs button { background: none; border: 1px solid var(--line); color: var(--sub); border-radius: 6px; padding: 2px 9px; cursor: pointer; font: inherit; font-size: 12px; }
+  .tabs button.on { color: var(--text); border-color: var(--sub); }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 760px) { .row2 { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>PokéTD · Panel</h1>
+    <span class="sub" id="upd"></span>
+  </header>
+  <div id="app"><p class="msg">Cargando…</p></div>
+</main>
+<script>
+(() => {
+  const app = document.getElementById('app');
+  const upd = document.getElementById('upd');
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const MODES = { s: 'Survivor', g: 'Survivor en grupo', d: 'Defensa', e: 'Defensa en grupo' };
+  let range = 1;           // días del gráfico de conectados (1 o 7)
+  let last = null;
+
+  function token() {
+    try { const v = JSON.parse(localStorage.getItem('ps.token') || 'null'); return v && v.token; } catch { return null; }
+  }
+  const ago = t => {
+    const s = Math.max(0, Math.round((Date.now() - t) / 1000));
+    if (s < 60) return s + ' s';
+    if (s < 3600) return Math.floor(s / 60) + ' min';
+    if (s < 86400) return Math.floor(s / 3600) + ' h ' + Math.floor(s % 3600 / 60) + ' min';
+    return Math.floor(s / 86400) + ' d';
+  };
+  const when = t => new Date(t).toLocaleString('es', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+
+  async function load() {
+    const tk = token();
+    if (!tk) return stop('No hay sesión en este navegador. <a href="/">Entra en el juego</a> con tu cuenta de administrador y vuelve a abrir esta página.');
+    let r;
+    try { r = await fetch('/api/admin/stats', { headers: { Authorization: 'Bearer ' + tk }, cache: 'no-store' }); }
+    catch { upd.textContent = 'Sin conexión con el servidor; reintentando…'; return; }
+    if (r.status === 401) return stop('La sesión ha caducado. <a href="/">Vuelve a entrar en el juego</a>.');
+    if (r.status === 403) return stop('Esta cuenta no es de administrador (ADMIN_USERS).');
+    if (!r.ok) { upd.textContent = 'Error ' + r.status + '; reintentando…'; return; }
+    last = await r.json();
+    render(last);
+    upd.textContent = 'Actualizado ' + new Date().toLocaleTimeString('es') + ' · se refresca cada 15 s';
+  }
+  let timer = null;
+  function stop(html) { app.innerHTML = '<p class="msg">' + html + '</p>'; upd.textContent = ''; clearInterval(timer); }
+
+  function kpi(label, value, cls = '', note = '') {
+    return `<div class="card kpi ${cls}"><span class="sub">${label}</span><b>${value}</b>${note ? `<span class="sub">${note}</span>` : ''}</div>`;
+  }
+
+  /** Líneas (conectados y en partida) de las muestras de los últimos `days` días. */
+  function lineChart(hist, days, nowT) {
+    const W = 700, H = 180, P = 26;
+    const from = nowT - days * 86400000;
+    const pts = hist.filter(h => h.t >= from);
+    if (pts.length < 2) return '<p class="sub">Aún no hay suficientes muestras (se toma una cada 5 min).</p>';
+    const max = Math.max(1, ...pts.map(p => p.n));
+    const x = t => P + (t - from) / (nowT - from) * (W - P - 6);
+    const y = v => H - P + 4 - v / max * (H - P - 10);
+    const path = k => pts.map((p, i) => (i ? 'L' : 'M') + x(p.t).toFixed(1) + ' ' + y(p[k]).toFixed(1)).join(' ');
+    let grid = '';
+    for (const v of [0, Math.round(max / 2), max]) grid += `<line x1="${P}" x2="${W - 6}" y1="${y(v)}" y2="${y(v)}" stroke="#2c3142"/><text x="${P - 6}" y="${y(v) + 4}" fill="#8d93a8" font-size="11" text-anchor="end">${v}</text>`;
+    // Marcas de hora (1 día) o de día (7 días).
+    const step = days === 1 ? 4 * 3600000 : 86400000;
+    for (let t = Math.ceil(from / step) * step; t < nowT; t += step) {
+      const d = new Date(t);
+      const label = days === 1 ? d.getHours() + ':00' : d.toLocaleDateString('es', { weekday: 'short', day: 'numeric' });
+      grid += `<text x="${x(t)}" y="${H - 6}" fill="#8d93a8" font-size="11" text-anchor="middle">${label}</text>`;
+    }
+    return `<svg viewBox="0 0 ${W} ${H}">${grid}
+      <path d="${path('n')}" fill="none" stroke="#5fe08a" stroke-width="2"/>
+      <path d="${path('play')}" fill="none" stroke="#ffd23f" stroke-width="1.5"/></svg>
+      <div class="legend"><span><i style="background:#5fe08a"></i>Conectados</span><span><i style="background:#ffd23f"></i>En partida</span></div>`;
+  }
+
+  /** Barras: jugadores distintos por día. */
+  function barChart(daily) {
+    if (!daily.length) return '<p class="sub">Aún no hay datos.</p>';
+    const W = 700, H = 160, P = 22;
+    const max = Math.max(1, ...daily.map(d => d.n));
+    const bw = (W - P) / daily.length;
+    let s = '';
+    daily.forEach((d, i) => {
+      const h = d.n / max * (H - P - 16);
+      const x = P + i * bw;
+      s += `<rect x="${x + 2}" y="${H - P - h}" width="${Math.max(2, bw - 4)}" height="${h}" fill="#4fb4ff" rx="2"><title>${new Date(d.day).toLocaleDateString('es', { timeZone: 'UTC' })}: ${d.n}</title></rect>`;
+      if (daily.length <= 14 || i % 3 === 0) s += `<text x="${x + bw / 2}" y="${H - 6}" fill="#8d93a8" font-size="10" text-anchor="middle">${new Date(d.day).getUTCDate()}</text>`;
+      s += `<text x="${x + bw / 2}" y="${H - P - h - 3}" fill="#e8eaf2" font-size="10" text-anchor="middle">${d.n}</text>`;
+    });
+    return `<svg viewBox="0 0 ${W} ${H}">${s}</svg>`;
+  }
+
+  function render(d) {
+    const c = d.counts;
+    const playing = d.online.filter(o => o.play).length;
+    const inRoom = d.online.filter(o => o.room).length;
+    const modes = Object.entries(MODES).map(([k, n]) => `<span class="tag">${n}: <b>${d.modes24h[k] || 0}</b></span>`).join('');
+
+    const online = d.online.length ? `<table><tr><th>Jugador</th><th>Estado</th><th>Conectado</th><th>Sala</th></tr>${d.online.map(o => {
+      const room = d.rooms.find(r => r.id === o.room);
+      const state = o.play ? '<span class="dot play"></span>En partida' : o.watching ? '<span class="dot"></span>Mirando una sala' : '<span class="dot"></span>En el menú';
+      return `<tr><td translate="no"><b>${esc(o.name)}</b></td><td>${state}</td><td>${ago(o.since)}</td><td>${room ? `${esc(room.host)} · ${room.mode === 'td' ? 'Defensa' : 'Survivor'}` : '<span class="sub">—</span>'}</td></tr>`;
+    }).join('')}</table>` : '<p class="sub">Nadie conectado ahora mismo.</p>';
+
+    const rooms = d.rooms.length ? `<table><tr><th>Anfitrión</th><th>Modo</th><th>Estado</th><th>Jugadores</th><th>Abierta hace</th></tr>${d.rooms.map(r => `<tr>
+      <td translate="no"><b>${esc(r.host)}</b> ${r.pub ? '<span class="tag blue">pública</span>' : '<span class="tag">privada</span>'}</td>
+      <td>${r.mode === 'td' ? 'Defensa · ' + esc(r.map) : 'Survivor'}</td>
+      <td>${r.started ? '<span class="tag gold">jugando ' + ago(r.started) + '</span>' : 'En el vestíbulo'}${r.watchers ? ` <span class="sub">· ${r.watchers} mirando</span>` : ''}</td>
+      <td translate="no">${r.members.filter(m => !m.spec).length}/${r.max} · ${r.members.map(m => `<span class="dot ${m.away ? 'away' : ''}"></span>${esc(m.name)}${m.spec ? ' (mira)' : ''}`).join(' ')}</td>
+      <td>${ago(r.created)}</td></tr>`).join('')}</table>` : '<p class="sub">No hay salas abiertas.</p>';
+
+    const recent = `<table><tr><th>Cuenta</th><th>Creada</th></tr>${d.recent.map(u => `<tr><td translate="no">${esc(u.name)}</td><td>${when(u.created)} <span class="sub">(hace ${ago(u.created)})</span></td></tr>`).join('')}</table>`;
+
+    app.innerHTML = `
+      <div class="grid">
+        ${kpi('Conectados ahora', d.online.length, 'on', `máx. ${c.peak} desde el arranque`)}
+        ${kpi('En partida', playing)}
+        ${kpi('En una sala', inRoom, '', d.rooms.length + ' salas abiertas')}
+        ${kpi('Activos 24 h', c.active24h, '', `${c.active7d} en 7 días · ${c.active30d} en 30`)}
+        ${kpi('Cuentas', c.accounts, '', `+${c.new24h} hoy · +${c.new7d} en 7 días · +${c.new30d} en 30`)}
+      </div>
+      <div class="card section"><h2>Partidas empezadas en 24 h <span class="sub">(cuentas distintas, por modo)</span></h2>${modes}</div>
+      <div class="card section"><h2>Conectados ahora</h2>${online}</div>
+      <div class="card section"><h2>Salas</h2>${rooms}</div>
+      <div class="card section">
+        <h2>Conectados <span class="tabs"><button data-r="1" class="${range === 1 ? 'on' : ''}">24 h</button> <button data-r="7" class="${range === 7 ? 'on' : ''}">7 días</button></span></h2>
+        ${lineChart(d.history, range, d.now)}
+      </div>
+      <div class="row2">
+        <div class="card section"><h2>Jugadores distintos por día <span class="sub">(días en UTC)</span></h2>${barChart(d.daily)}</div>
+        <div class="card section"><h2>Últimas cuentas</h2>${recent}</div>
+      </div>`;
+    app.querySelectorAll('.tabs button').forEach(b => { b.onclick = () => { range = +b.dataset.r; render(last); }; });
+  }
+
+  load();
+  timer = setInterval(load, 15000);
+})();
+</script>
+</body>
+</html>

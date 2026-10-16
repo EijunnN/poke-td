@@ -165,6 +165,8 @@ export interface Conn {
   name: string;
   play: boolean;
   gone: boolean;
+  /** Cuándo abrió esta conexión (para el panel interno, server/stats.ts). */
+  since: number;
   msgs: number; bytes: number; t: number;
   bad: number; badT: number;
   /** Chat: cuándo mandó sus últimos mensajes, y el último texto. */
@@ -190,6 +192,8 @@ export function createRealtime(db: Db, opts: RealtimeOptions = {}) {
   const now = clock.now;
   /** Parado el servidor: las conexiones que se cierran ya no tocan la base (las salas se quedan como estaban para el próximo arranque). */
   let stopped = false;
+  /** Quién se entera de cada conexión nueva (server/stats.ts: jugadores distintos por día). */
+  const onOpen: ((id: number) => void)[] = [];
 
   const conns = new Map<number, Conn>();
   const rooms = new Map<string, Room>();
@@ -348,7 +352,7 @@ export function createRealtime(db: Db, opts: RealtimeOptions = {}) {
 
   function open(ws: ServerWebSocket<WsData>) {
     const u = ws.data.user;
-    const c: Conn = { ws, id: u.id, name: u.name, play: false, gone: false, msgs: msgBurst, bytes: byteBurst, t: now(), bad: 0, badT: 0,
+    const c: Conn = { ws, id: u.id, name: u.name, play: false, gone: false, since: now(), msgs: msgBurst, bytes: byteBurst, t: now(), bad: 0, badT: 0,
                       chatAt: [], lastChat: '', lastChatAt: 0, pingAt: [] };
     ws.data.c = c;
     const old = conns.get(u.id);
@@ -368,6 +372,7 @@ export function createRealtime(db: Db, opts: RealtimeOptions = {}) {
       if (live(iv)) raw(c, text({ k: 'inv', from: String(from), name: db.userById(from)?.name ?? '?', room: iv.room, at: iv.at }));
     }
     pushPresence(u.id);
+    for (const fn of onOpen) fn(u.id);
   }
 
   function close(ws: ServerWebSocket<WsData>) {
@@ -743,6 +748,22 @@ export function createRealtime(db: Db, opts: RealtimeOptions = {}) {
     /** Retira las invitaciones entre dos cuentas (al romper su amistad). */
     dropInvitesBetween(x: number, y: number) { dropInvite(x, y); dropInvite(y, x); },
     verifyTeam,
+    /** Avisa de cada cuenta que se conecta. */
+    onConnect(fn: (id: number) => void) { onOpen.push(fn); },
+    /** Foto de ahora para el panel interno (server/stats.ts): quién está conectado y las salas. */
+    overview() {
+      const online = [...conns.values()].map(c => ({
+        uid: String(c.id), name: c.name, play: c.play, since: c.since,
+        room: roomOf.get(c.id)?.id ?? '', watching: watchOf.get(c.id)?.id ?? '',
+      }));
+      const list = [...rooms.values()].map(r => ({
+        id: r.id, host: r.members.get(r.host)?.name ?? '?', pub: r.info.pub, mode: r.info.mode, map: r.info.map,
+        started: r.started, created: r.created, max: maxOf(r),
+        members: [...r.members.values()].map(m => ({ name: m.name, dex: m.dex, away: !conns.has(m.uid), spec: !!m.spec })),
+        watchers: r.watchers.size,
+      }));
+      return { online, rooms: list };
+    },
     stop() { stopped = true; clock.clearInterval(sweep); clock.clearInterval(keep); for (const t of awayT.values()) clock.clearTimeout(t); awayT.clear(); },
   };
 }
