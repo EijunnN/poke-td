@@ -65,6 +65,14 @@ export const Game = (() => {
     G.Touch.init(cv);
     // En móvil: al cambiar de app o girarlo en vertical, la partida se pausa.
     document.addEventListener('visibilitychange', () => { if (document.hidden) autoPause(); else settle(); });
+    // Recargar o cerrar la pestaña sin querer en mitad de una partida la pierde: aviso estándar del
+    // navegador (en móvil casi nunca sale). Sólo en partida: ni en menús ni en el resumen ('over'); el
+    // actualizador (updater.ts) y el cambio de idioma sólo recargan en menús, así que no lo disparan.
+    addEventListener('beforeunload', e => {
+      if (!player() || Run.state === 'ui' || Run.state === 'over') return;
+      e.preventDefault();
+      e.returnValue = '';
+    });
     G.RunUI.wirePause(() => { Run.state = 'playing'; G.UI.hideAll(); }, () => Run.mode!.quit());
     Backdrop.init();
     last = performance.now();

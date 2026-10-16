@@ -224,10 +224,16 @@ export class Player {
     const group = [m];
     this.slots.push(group);
     this.arrange();
-    // Se cambia al nuevo, salvo si estás usando un vínculo (no te quita el grupo).
-    if (!(this.slots[this.active] && this.slots[this.active].length > 1)) this.setActive(this.slots.indexOf(group));
+    // No se cambia al nuevo (si es de potenciar te dejaría indefenso: sólo se lanza el
+    // hueco activo). Sólo si el actual es de potenciar y el nuevo ataca; y nunca si
+    // estás usando un vínculo (no te quita el grupo).
+    const cur = this.slots[this.active];
+    if (!cur || (cur.length === 1 && Player.isBuffGroup(cur) && !Player.isBuffGroup(group))) this.setActive(this.slots.indexOf(group));
     return true;
   }
+
+  /** Un hueco de puro potenciar (no hace daño): todos sus movimientos son `buff`. */
+  static isBuffGroup(g: MoveInstance[]) { return g.length > 0 && g.every(m => m.kind === 'buff'); }
 
   /**
    * Huecos fijos (Mejoras → Atajos): cada movimiento con hueco elegido se pone
@@ -257,8 +263,10 @@ export class Player {
 
   setActive(i: number) {
     if (i < 0 || i >= this.slots.length || i === this.active) return;
-    // Cinta Elección: no se puede cambiar de movimiento.
-    if (this.hasItem('choiceband') && this.slots[this.active]) {
+    // Cinta Elección: no se puede cambiar de movimiento (salvo para salir de uno de
+    // potenciar a uno que ataque: si no, te quedarías sin atacar nada).
+    const stuck = this.slots[this.active];
+    if (this.hasItem('choiceband') && stuck && !(Player.isBuffGroup(stuck) && !Player.isBuffGroup(this.slots[i]))) {
       G.FX.dmgText(this.x, this.y - this.bodyH - 8, 'Cinta Elección', '#ff8ad8');
       return;
     }
@@ -452,6 +460,12 @@ export class Player {
     if (this.item) G.Items.BY[this.item].off(this);
     this.item = id;
     if (id) G.Items.BY[id].on(this);
+    // Cinta Elección: si el hueco activo es de potenciar, pasa al primer movimiento
+    // que ataque (si no, quedarías fijado sin atacar hasta encontrar otro objeto).
+    if (id === 'choiceband' && Player.isBuffGroup(this.slots[this.active] || [])) {
+      const k = this.slots.findIndex(g => !Player.isBuffGroup(g));
+      if (k >= 0) this.setActive(k);
+    }
   }
 
   /** Cascabel Concha: un poco de vida por el daño que haces (tope 4/s). */

@@ -266,6 +266,22 @@ export const Rift = (() => {
     G.Audio.sfx('back');
   }
 
+  const RETURN_SHIELD = 2;      // s de invulnerabilidad al volver de la arena
+  const RETURN_PUSH_R = 150;    // px: los enemigos más cerca que esto del punto de vuelta se apartan
+
+  /** Aparta de (x, y) a los enemigos del mapa (menos jefes, como el retroceso de los golpes) hasta el borde del radio. */
+  function pushAway(x: number, y: number) {
+    for (const e of G.EnemyMgr.all()) {
+      if (e.dead || e.boss || e.remote) continue;
+      const d = Math.hypot(e.x - x, e.y - y);
+      if (d >= RETURN_PUSH_R) continue;
+      // Justo encima: dirección según el id, para que no se amontonen todos hacia el mismo lado.
+      const [nx, ny] = d > 1 ? [(e.x - x) / d, (e.y - y) / d] : [Math.cos(e.id), Math.sin(e.id)];
+      e.x = x + nx * RETURN_PUSH_R; e.y = y + ny * RETURN_PUSH_R;
+      e.kx = nx * 120; e.ky = ny * 120;
+    }
+  }
+
   /** En cada ordenador: vuelta al mapa. */
   function finish() {
     const pl = G.Game.player;
@@ -283,6 +299,16 @@ export const Rift = (() => {
     for (const p of G.Game.everyone()) { p.x = a.back.x; p.y = a.back.y; }
     pl.x = a.back.x; pl.y = a.back.y;
     if (pl.dead) pl.revive(0.3);
+    // Los enemigos del mapa vuelven exactamente donde estaban (encima de quien entró): protección de
+    // vuelta para todos los que se levantan (reviveShield no la anula ni el golpe de trampas / lava)
+    // y, quien manda sobre los enemigos (anfitrión o solo), onda de empuje que los aparta.
+    for (const p of G.Game.everyone()) {
+      if (p.dead) continue;
+      p.invuln = Math.max(p.invuln, RETURN_SHIELD);
+      p.reviveShield = Math.max(p.reviveShield, RETURN_SHIELD);
+    }
+    if (authority()) pushAway(a.back.x, a.back.y);
+    G.FX.ring(pl.x, pl.y, 10, RETURN_PUSH_R, '#c9a6ff', 0.6, 5);
     G.Camera.x = pl.x; G.Camera.y = pl.y;
     G.Game.flash('#c9a6ff', 0.8);
     if (pl.bonds > 0) G.Game.offerBond();

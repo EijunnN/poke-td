@@ -19,7 +19,16 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
-  { d: '2026-10-16', title: ['Códigos de sala', 'Room codes'], new: [
+  { d: '2026-10-16', title: ['Códigos de sala y arreglos', 'Room codes and fixes'], fix: [
+    ['Survivor: al salir de una grieta tienes 2 s de protección y los enemigos de alrededor se apartan; antes volvías en medio del grupo que te seguía.',
+     'Survivor: when you leave a rift you get 2 s of protection and nearby enemies are pushed away; before, you came back in the middle of the crowd that was following you.'],
+    ['Las pantallas de subir de nivel, de objeto y de vínculo ignoran las pulsaciones del primer instante: ya no eliges carta sin querer por estar cambiando de movimiento con 1-4.',
+     'The level-up, item and bond screens ignore presses in the first instant: you no longer pick a card by accident while switching moves with 1-4.'],
+    ['Al aprender un movimiento ya no se cambia solo a él (te podía dejar con uno que no ataca), y con la Cinta Elección ya no te quedas fijado en un movimiento de potenciar.',
+     'Learning a move no longer switches to it on its own (it could leave you with one that does not attack), and with the Choice Band you no longer get stuck on a boosting move.'],
+    ['Si recargas o cierras la pestaña en mitad de una partida, el navegador te pregunta antes.',
+     'If you reload or close the tab in the middle of a game, the browser asks you first.'],
+  ], new: [
     ['Cada sala tiene un código (p. ej. K7QM4X) y un enlace para compartir: quien lo tenga entra en la sala aunque no sea tu amigo, también si es privada. Se escribe en «Salas públicas» → «Entrar con código», o se abre el enlace.',
      'Every room has a code (e.g. K7QM4X) and a link to share: whoever has it joins the room even if they are not your friend, private rooms too. Type it in “Public rooms” → “Join with code”, or open the link.'],
     ['El anfitrión puede cambiar el código (el de antes deja de valer) y sacar a alguien de la sala antes de empezar.',

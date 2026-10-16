@@ -17,9 +17,20 @@ export const RunUI = (() => {
   const $ = G.UI.$;
   let offers: Card[] | null = null, offerCb: ((c: Card) => void) | null = null, coopMode = false;
 
+  /**
+   * Las teclas 1-4 también cambian de movimiento al jugar: si la pantalla acepta la elección nada
+   * más abrirse, una pulsación sin querer elige carta. Durante este margen se ignora la entrada
+   * (teclado y clic/toque) de las pantallas de nivel, objeto y vínculo.
+   */
+  const GUARD_MS = 400;
+  let openedAt = 0;
+  const armGuard = () => { openedAt = performance.now(); };
+  const guarded = () => performance.now() - openedAt < GUARD_MS;
+
   /** @param coop  en grupo: tras elegir, se queda esperando a los demás */
   function showLevelUp(level: number, list: Card[], cb: (c: Card) => void, coop = false) {
     offerCb = cb; coopMode = coop;
+    armGuard();
     $('lvl-num').textContent = String(level);
     $('lvl-wait').textContent = '';
     $('lvl-wait').classList.toggle('hidden', !coop);
@@ -74,7 +85,7 @@ export const RunUI = (() => {
   }
 
   function pick(i: number) {
-    if (!offers || !offers[i]) return;
+    if (!offers || !offers[i] || guarded()) return;
     const c = offers[i], cb = offerCb;
     offers = null; offerCb = null;
     $('lvl-reroll').classList.add('hidden');
@@ -155,6 +166,7 @@ export const RunUI = (() => {
 
   /** Has encontrado un objeto llevando ya otro: ¿con cuál te quedas? */
   function showItemChoice(cur: string, next: string, cb: (id: string) => void) {
+    armGuard();
     const box = $('item-cards');
     box.innerHTML = '';
     ([[cur, 'Quedarme con'], [next, 'Cambiar a']] as [string, string][]).forEach(([id, verb], i) => {
@@ -164,7 +176,7 @@ export const RunUI = (() => {
       el.innerHTML = `<div class="ico">${G.Icons.html(id, 36)}</div>
         <div class="txt"><div class="nm">${verb} ${it.name}</div><div class="ds">${it.desc}</div></div>
         <div class="key">${i + 1}</div>`;
-      el.onclick = () => { G.UI.hide('scr-item'); cb(id); };
+      el.onclick = () => { if (guarded()) return; G.UI.hide('scr-item'); cb(id); };
       box.appendChild(el);
     });
     G.UI.show('scr-item');
@@ -180,6 +192,7 @@ export const RunUI = (() => {
    */
   function showBond(opt: BondOption, cb: (list: MoveInstance[]) => void) {
     bond = { opt, cb, first: null, list: [] };
+    armGuard();
     $('bond-back').onclick = bondBack;
     renderBond();
     G.UI.show('scr-bond');
@@ -214,7 +227,7 @@ export const RunUI = (() => {
   }
 
   function pickBond(i: number) {
-    if (!bond || !bond.list[i]) return;
+    if (!bond || !bond.list[i] || guarded()) return;
     const m = bond.list[i];
     if (bond.opt.mode === 'pair' && !bond.first) {
       bond.first = m;

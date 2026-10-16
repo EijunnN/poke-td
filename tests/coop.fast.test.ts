@@ -306,7 +306,11 @@ async function newPlayer(d: Dev, name: string, dex: number) {
 
 // ---------------- utilidades de las pruebas ----------------
 
-const click = (d: Dev, sel: string) => d.eval(q => { (document.querySelector(q) as HTMLElement).click(); }, sel);
+const click = async (d: Dev, sel: string) => {
+  // Las pantallas de elegir carta/objeto/vínculo ignoran la entrada los primeros 400 ms (RunUI): se deja pasar ese rato del reloj simulado.
+  if (/cards/.test(sel)) await rig.round(30);
+  await d.eval(q => { (document.querySelector(q) as HTMLElement).click(); }, sel);
+};
 const state = (d: Dev) => d.eval(() => G.Game.state as string);
 /** Juega `n` pasos y comprueba que una condición de la página se cumple al final. */
 const waitPage = (d: Dev, what: string, fn: (a: any) => any, arg?: any, max = 300) => rig.until(what, () => d.eval(fn as any, arg), max);
