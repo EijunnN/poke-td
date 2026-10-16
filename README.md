@@ -1,6 +1,8 @@
-# poke-td
+# PokéTD
 
-Juego de Pokémon para navegador y móvil con dos modos:
+**Juega en [poke.bezenti.com](https://poke.bezenti.com)** · gratis, en PC y móvil, sin descargas ni anuncios.
+
+Fan game de Pokémon para navegador y móvil con dos modos:
 
 - **Supervivencia** (bullet-heaven / roguelike, estilo Survivor.io): llevas a tu
   compañero, que ataca solo, y aguantas oleadas cada vez más duras, con jefes,
@@ -16,8 +18,9 @@ Juego de Pokémon para navegador y móvil con dos modos:
   propio y **en grupo de 2 a 4** (vidas compartidas, monedas y torres de cada uno).
 
 Sprites de *Pokémon Mundo Misterioso*, **966 Pokémon de las 9 generaciones**,
-shinies, gacha por región, misiones, logros, ranking, amigos y partidas en grupo
-de hasta 4. Música y efectos compuestos para el juego.
+shinies, gacha por región, misiones, logros, ranking, amigos, partidas en grupo
+de hasta 4 con chat y señales en el mapa, salas públicas y modo espectador. Música
+y efectos compuestos para el juego.
 
 Nació como fork de [PokéSurvivor](https://github.com/JPTER78/pokesurvivor) y es un
 proyecto aparte: TypeScript, servidor propio con Bun y SQLite, sin Firebase.
@@ -41,9 +44,13 @@ la partida se guardan sólo en ese navegador, sin ranking ni amigos.
 | `1` `2` `3` `4` | Elegir el movimiento activo (o carta, cuando salen) |
 | `Q` / `E` | Ciclar movimientos |
 | `Esc` / `P` | Pausa |
+| `Enter` / `T` | Abrir el chat (en grupo) |
+| `V` y luego `1`-`8` | Frases rápidas del chat |
+| `Alt` + clic | Marcar un punto del mapa para el grupo |
 
 En móvil o tablet (en horizontal): arrastra el dedo para moverte (el joystick sale
-donde tocas) y toca un ataque para cambiarlo. Se puede instalar como app.
+donde tocas) y toca un ataque para cambiarlo; el chat va con 💬 y las señales con 📍.
+Se puede instalar como app.
 
 ## Cuentas y partida
 
@@ -58,12 +65,17 @@ donde tocas) y toca un ataque para cambiarlo. Se puede instalar como app.
 
 ## Online
 
-- **Ranking** de tiempo aguantado: solo o en grupo; diario, semanal, mensual,
-  histórico y por Pokémon. El servidor comprueba que las marcas sean posibles.
+- **Ranking** de Supervivencia (tiempo aguantado) y de Defensa (oleadas y vidas):
+  solo o en grupo; diario, semanal, mensual, histórico y por Pokémon. El servidor
+  comprueba que las marcas sean posibles.
 - **Amigos** por nombre, con perfil público, y quién está en línea.
 - **Partidas en grupo** de hasta 4: invitas a tus amigos a tu sala y el anfitrión
   empieza la partida. Todo el tráfico va por el servidor, así que nadie ve la IP
   de nadie y funciona en cualquier red.
+- **Salas públicas** a las que se puede unir cualquiera, y **modo espectador** para
+  mirar una partida en curso sin jugar.
+- **Chat** de la sala con frases rápidas. Es libre; quien quiera puede activar
+  «Censurar palabrotas» en Ajustes (sólo cambia lo que ve cada uno).
 
 ## Desarrollo
 
