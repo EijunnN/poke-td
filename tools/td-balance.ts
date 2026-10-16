@@ -7,6 +7,8 @@
  *   node tools/td-balance.ts --seed 7 --seed 8
  *   node tools/td-balance.ts --support        también compra Pokémon de apoyo (Scyther, Togepi, Meowth)
  *   node tools/td-balance.ts --map espiral    en otro mapa (td-geom.ts, MAPS; por defecto, valle)
+ *   node tools/td-balance.ts --cover          planta donde más camino cubre, en vez de en las esquinas
+ *                                             (para comparar mapas de una y de varias entradas)
  *   node tools/td-balance.ts --smart          juega con cabeza: apoyos bien puestos, enseña ataques a sus
  *                                             mejores torres, compra los trofeos y mejora al héroe
  * La dificultad se afina para que el --smart sufra (gane justo o caiga cerca del final) y el
@@ -32,9 +34,11 @@ const hpMuls = (process.argv.includes('--hp') ? process.argv[process.argv.indexO
 const smart = process.argv.includes('--smart');
 const support = smart || process.argv.includes('--support');
 const mapId = process.argv.includes('--map') ? process.argv[process.argv.indexOf('--map') + 1] : 'valle';
+/** --cover: planta donde más camino cubre (ver play). */
+const cover = process.argv.includes('--cover');
 
 /** Dentro de la página: juega hasta ganar o perder y devuelve una línea por oleada. */
-async function play(seed: number, hpMul: number, support: boolean, mapId: string, smart: boolean) {
+async function play(seed: number, hpMul: number, support: boolean, mapId: string, smart: boolean, cover: boolean) {
   const h = window.__h;
   h.freeze();
   if (G.Game.state !== 'ui') { G.Game.quit(); G.Game.toUI(); }
@@ -50,11 +54,33 @@ async function play(seed: number, hpMul: number, support: boolean, mapId: string
   G.TD.debugFast(true);
   G.TD.debugHpMul(hpMul);
 
-  const route = G.TD.route;
-  // Sitios junto a las esquinas del camino (por dentro de la curva cubren dos tramos).
+  // Sitios junto a las esquinas de los caminos (por dentro de la curva cubren dos tramos). Con
+  // varias entradas, por turnos: la primera esquina de cada camino, luego la segunda...
+  const routes: { x: number; y: number }[][] = G.TD.routes;
   const spots: { x: number; y: number }[] = [];
-  for (let i = 1; i < route.length - 1; i++) {
-    for (const [dx, dy] of [[1, 1], [-1, -1], [1, -1], [-1, 1]]) spots.push({ x: route[i].x + dx * 60, y: route[i].y + dy * 60 });
+  const corners = Math.max(...routes.map(r => r.length));
+  for (let i = 1; i < corners - 1; i++) {
+    for (const [dx, dy] of [[1, 1], [-1, -1], [1, -1], [-1, 1]]) {
+      for (const route of routes) if (i < route.length - 1) spots.push({ x: route[i].x + dx * 60, y: route[i].y + dy * 60 });
+    }
+  }
+  // Con --cover, como lo haría alguien que mira el mapa: primero donde más camino queda a tiro
+  // (cada camino cuenta por los enemigos que lo recorren: con 3 entradas, un tercio; el tramo
+  // que comparten antes de la base, entero). Así se comparan bien mapas con una y con varias entradas.
+  if (cover) {
+    const R = 150, scored: { x: number; y: number; s: number }[] = [];
+    for (let x = -640; x <= 640; x += 24) for (let y = -640; y <= 640; y += 24) {
+      if (!G.TD.canPlace(x, y)) continue;
+      let s = 0;
+      for (const r of routes) for (let i = 1; i < r.length; i++) {
+        const a = r[i - 1], b = r[i], len = Math.hypot(b.x - a.x, b.y - a.y);
+        for (let d = 0; d < len; d += 8) if (Math.hypot(a.x + (b.x - a.x) * d / len - x, a.y + (b.y - a.y) * d / len - y) < R) s += 8 / routes.length;
+      }
+      scored.push({ x, y, s });
+    }
+    scored.sort((p, q) => q.s - p.s);
+    spots.length = 0;
+    spots.push(...scored);
   }
   const rows: any[] = [];
   let lastWave = 0, buy = 0;
@@ -132,7 +158,7 @@ async function main() {
   for (const hpMul of hpMuls) for (const seed of seeds) {
     await page.waitForLoadState('networkidle');
     const t0 = Date.now();
-    const rows = await page.evaluate(`(${play})(${seed}, ${hpMul}, ${support}, ${JSON.stringify(mapId)}, ${smart})`) as any[];
+    const rows = await page.evaluate(`(${play})(${seed}, ${hpMul}, ${support}, ${JSON.stringify(mapId)}, ${smart}, ${cover})`) as any[];
     console.log(`\n== semilla ${seed}, vida ×${hpMul}, mapa ${mapId}${smart ? ', con cabeza' : support ? ', con apoyos' : ''} (${Math.round((Date.now() - t0) / 1000)} s) ==`);
     for (const r of rows) console.log(r.end ? JSON.stringify(r) : `oleada ${String(r.wave).padStart(2)} · vidas ${String(r.lives).padStart(2)} · llega al ${String(Math.round(r.reach * 100)).padStart(3)}% · monedas ${String(r.money).padStart(4)} · ${r.towers}`);
   }

@@ -61,6 +61,9 @@ G.I18n.add({
   // ---------------- avisos de la partida ----------------
   '¡Congelado!': 'Frozen!', '¡Paralizado!': 'Paralyzed!', '¡Aturdido!': 'Stunned!', '¡Confuso!': 'Confused!',
   '¡{x} derrotado!': '{x} defeated!', '¡Llega {x}!': 'Here comes {x}!', '{x} ha llegado a la base': '{x} reached the base',
+  // Por qué entrada llega un jefe (mapas con varias: td-geom.ts, MAPS, gates).
+  '¡Llega {x} por {x}!': 'Here comes {x} from {x}!',
+  'el norte': 'the north', 'el sur': 'the south', 'el oeste': 'the west', 'el noroeste': 'the northwest', 'el suroeste': 'the southwest',
   '¡Oleada {x} superada!': 'Wave {x} cleared!', '¡{x} ha evolucionado a {x}!': '{x} evolved into {x}!',
   '¡Habéis defendido la base! Ahora, sin fin: ¿hasta dónde llegáis?': 'You defended the base! Now it is endless: how far can you go?',
   'Compra torres en la tienda y plántalas junto al camino': 'Buy towers in the shop and place them along the path',

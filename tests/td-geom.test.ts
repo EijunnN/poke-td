@@ -3,7 +3,7 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { leadAngle, distToPath, placementError, moveRange, PATH_CLEAR, TOWER_GAP } from '../src/modes/td-geom';
-import { MAPS, mapById, randomMap, distToSegment, pathLengths, ENDS_CLEAR, trophyCost, towerCost, costFor, SUPPORT_COST, roomMax, MAX_ROOM, SURVIVOR_PLAYERS } from '../src/modes/td-geom';
+import { MAPS, mapById, randomMap, distToSegment, pathLengths, ENDS_CLEAR, trophyCost, towerCost, costFor, SUPPORT_COST, roomMax, MAX_ROOM, SURVIVOR_PLAYERS, bossGate } from '../src/modes/td-geom';
 
 /** Simula el disparo: ¿pasa el proyectil a menos de `hit` del blanco en algún momento? */
 function hits(sx: number, sy: number, tx: number, ty: number, vx: number, vy: number, speed: number, ang: number, hit = 12, life = 3) {
@@ -53,7 +53,7 @@ describe('apuntar a donde va a estar el enemigo', () => {
 
 describe('dónde se puede plantar una torre', () => {
   const path = [{ x: -600, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 400 }];
-  const base = { path, towers: [] as { x: number; y: number }[], bound: 700 };
+  const base = { paths: [path], towers: [] as { x: number; y: number }[], bound: 700 };
 
   test('distancia al camino', () => {
     expect(distToPath(-300, 50, path)).toBeCloseTo(50);
@@ -78,6 +78,15 @@ describe('dónde se puede plantar una torre', () => {
     expect(placementError(NaN, 0, base)).toBe('Fuera del mapa');
     expect(placementError(-600, 50, base)).toBe('Demasiado cerca de la entrada o de la base');
     expect(placementError(50, 400, base)).toBe('Demasiado cerca de la entrada o de la base');
+  });
+
+  test('con varias entradas: ni encima de ninguno de los caminos ni junto a ninguna entrada', () => {
+    const second = [{ x: 0, y: -600 }, { x: 0, y: 0 }];
+    const o = { ...base, paths: [path, second] };
+    expect(placementError(0, -300, o)).toBe('Encima del camino');
+    expect(placementError(0, -300, base)).toBe('');                 // (sin el segundo camino, se podía)
+    expect(placementError(50, -600, o)).toBe('Demasiado cerca de la entrada o de la base');
+    expect(placementError(-300, PATH_CLEAR + 10, o)).toBe('');
   });
 });
 
@@ -250,8 +259,20 @@ describe('Pokémon de apoyo', () => {
 
 describe('mapas', () => {
   const TS = 32, BOUND = 20 * TS, CLEAR = 24;          // como en modes/td.ts (tile de 32, claro de 24 tiles)
-  const ptsOf = (m: typeof MAPS[number]) => m.route.map(([x, y]) => ({ x: x * TS, y: y * TS }));
-  const lenOf = (m: typeof MAPS[number]) => { const l = pathLengths(ptsOf(m)); return l[l.length - 1]; };
+  type Map = typeof MAPS[number];
+  type Route = Map['routes'][number];
+  const ptsOf = (r: Route) => r.map(([x, y]) => ({ x: x * TS, y: y * TS }));
+  const lenOf = (r: Route) => { const l = pathLengths(ptsOf(r)); return l[l.length - 1]; };
+  /** Distancia mínima entre dos segmentos (por sus puntos y muestras). */
+  const segDist = (a: { x: number; y: number }, b: { x: number; y: number }, c: { x: number; y: number }, d: { x: number; y: number }) => {
+    let r = Infinity;
+    for (let k = 0; k <= 20; k++) {
+      const t = k / 20;
+      r = Math.min(r, distToSegment(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, c, d));
+      r = Math.min(r, distToSegment(c.x + (d.x - c.x) * t, c.y + (d.y - c.y) * t, a, b));
+    }
+    return r;
+  };
 
   test('ids únicos, nombre en los dos idiomas, y mapById / randomMap', () => {
     expect(new Set(MAPS.map(m => m.id)).size).toBe(MAPS.length);
@@ -266,42 +287,66 @@ describe('mapas', () => {
     expect(randomMap(() => 0.9999999).id).toBe(MAPS[MAPS.length - 1].id);
   });
 
-  test.each(MAPS.map(m => [m.id, m] as const))('%s: cabe en el claro, y la entrada y la base quedan lejos', (_, m) => {
-    for (const [x, y] of m.route) expect(Math.hypot(x, y)).toBeLessThanOrEqual(CLEAR - 0.5);
-    const p = ptsOf(m), a = p[0], b = p[p.length - 1];
-    expect(Math.hypot(a.x - b.x, a.y - b.y)).toBeGreaterThan(2 * ENDS_CLEAR + 200);
+  test.each(MAPS.map(m => [m.id, m] as const))('%s: cabe en el claro, y cada entrada queda lejos de la base', (_, m) => {
+    for (const r of m.routes) {
+      for (const [x, y] of r) expect(Math.hypot(x, y)).toBeLessThanOrEqual(CLEAR - 0.5);
+      const p = ptsOf(r), a = p[0], b = p[p.length - 1];
+      expect(Math.hypot(a.x - b.x, a.y - b.y)).toBeGreaterThan(2 * ENDS_CLEAR + 200);
+    }
+  });
+
+  test.each(MAPS.map(m => [m.id, m] as const))('%s: con varias entradas, todas llevan a la misma base, cada una con su nombre y separadas', (_, m) => {
+    const ends = new Set(m.routes.map(r => r[r.length - 1].join(',')));
+    expect(ends.size).toBe(1);
+    if (m.routes.length === 1) return;
+    expect(m.gates && m.gates.length).toBe(m.routes.length);
+    const starts = m.routes.map(r => ptsOf(r)[0]);
+    for (let i = 0; i < starts.length; i++) for (let j = i + 1; j < starts.length; j++)
+      expect(Math.hypot(starts[i].x - starts[j].x, starts[i].y - starts[j].y)).toBeGreaterThan(2 * ENDS_CLEAR + 200);
   });
 
   test.each(MAPS.map(m => [m.id, m] as const))('%s: los tramos que no se tocan quedan separados (cabe una torre entre ellos)', (_, m) => {
-    const p = ptsOf(m);
-    // Entre dos tramos no seguidos: los dos bordes del camino y sitio para una torre.
+    // Todos los tramos de todos los caminos, sin repetir los que comparten antes de la base.
+    const segs = new Map<string, [{ x: number; y: number }, { x: number; y: number }]>();
+    for (const r of m.routes) {
+      const p = ptsOf(r);
+      for (let i = 0; i + 1 < p.length; i++) segs.set([p[i].x, p[i].y, p[i + 1].x, p[i + 1].y].join(','), [p[i], p[i + 1]]);
+    }
+    const list = [...segs.entries()];
+    const same = (a: { x: number; y: number }, b: { x: number; y: number }) => a.x === b.x && a.y === b.y;
+    // Entre dos tramos que no se tocan: los dos bordes del camino y sitio para una torre.
     const need = 2 * PATH_CLEAR + TOWER_GAP;
-    for (let i = 0; i + 1 < p.length; i++) {
-      for (let j = i + 2; j + 1 < p.length; j++) {
-        // Distancia mínima entre los dos segmentos (por sus puntos y muestras).
-        let d = Infinity;
-        for (let k = 0; k <= 20; k++) {
-          const t = k / 20;
-          d = Math.min(d, distToSegment(p[i].x + (p[i + 1].x - p[i].x) * t, p[i].y + (p[i + 1].y - p[i].y) * t, p[j], p[j + 1]));
-          d = Math.min(d, distToSegment(p[j].x + (p[j + 1].x - p[j].x) * t, p[j].y + (p[j + 1].y - p[j].y) * t, p[i], p[i + 1]));
-        }
-        expect([i, j, Math.round(d)]).toEqual([i, j, Math.max(Math.round(d), need)]);
+    for (let i = 0; i < list.length; i++) {
+      for (let j = i + 1; j < list.length; j++) {
+        const [a, b] = list[i][1], [c, d] = list[j][1];
+        if (same(a, c) || same(a, d) || same(b, c) || same(b, d)) continue;    // seguidos, o donde se juntan
+        const dist = Math.round(segDist(a, b, c, d));
+        expect([list[i][0], list[j][0], dist]).toEqual([list[i][0], list[j][0], Math.max(dist, need)]);
       }
     }
   });
 
-  test('todos miden parecido (la dificultad y el ranking valen para cualquiera)', () => {
-    const base = lenOf(MAPS[0]);
-    for (const m of MAPS) expect([m.id, Math.abs(lenOf(m) / base - 1) < 0.35]).toEqual([m.id, true]);
+  test('todos los caminos miden parecido (la dificultad y el ranking valen para cualquiera)', () => {
+    const base = lenOf(MAPS[0].routes[0]);
+    for (const m of MAPS) for (const r of m.routes) expect([m.id, Math.abs(lenOf(r) / base - 1) < 0.35]).toEqual([m.id, true]);
+  });
+
+  test('el jefe va cambiando de entrada, y los legendarios también pasan por todas; con una sola, por ella', () => {
+    for (let w = 1; w <= 40; w++) expect(bossGate(w, 1)).toBe(0);
+    for (const g of [2, 3]) {
+      const bosses = [5, 15, 25].map(w => bossGate(w, g)), legends = [10, 20, 30].map(w => bossGate(w, g));
+      for (const x of [...bosses, ...legends]) { expect(x).toBeGreaterThanOrEqual(0); expect(x).toBeLessThan(g); }
+      expect([g, new Set(bosses).size, new Set(legends).size]).toEqual([g, g, g]);
+    }
   });
 
   test.each(MAPS.map(m => [m.id, m] as const))('%s: hay sitio de sobra para construir junto al camino', (_, m) => {
-    const path = ptsOf(m);
+    const paths = m.routes.map(ptsOf), path = paths[0];
     let ok = 0;
     for (let x = -BOUND; x <= BOUND; x += TS) {
       for (let y = -BOUND; y <= BOUND; y += TS) {
         if (distToPath(x, y, path) > 160) continue;         // al alcance del camino
-        if (!placementError(x, y, { path, towers: [], bound: BOUND })) ok++;
+        if (!placementError(x, y, { paths, towers: [], bound: BOUND })) ok++;
       }
     }
     expect(ok).toBeGreaterThan(120);

@@ -6,7 +6,7 @@ import {
   evolvesAt, START_MONEY, MAX_LEVEL, PATH_CLEAR, TOWER_GAP, ENDS_CLEAR,
   pathLengths, pathProgress, stepBack, pickTarget, TARGET_MODES, TARGET_NAME, type TargetMode,
   ROLES, roleHit, SUPPORT, AURAS, AURA_KINDS, auraStrength, auraRadius, aurasAt, type AuraKind, type AuraTotals,
-  MAPS, mapById, randomMap, costFor, trophyCost, type TdMap
+  MAPS, mapById, randomMap, costFor, trophyCost, bossGate, type TdMap
 } from './td-geom';
 import { START_LIVES, LAST_WAVE, MAX_WAVE, WIN_COINS, waveAt, waveHp, waveCount, waveGap, bossHpMul, leakCost, defenseCoins } from './td-waves';
 import type { CoopConfig, HostEv, Mate, TdGuestEv, TdHostEv, TeamState } from '../net/coop';
@@ -39,7 +39,8 @@ import type { Player } from '../entities/player';
  * enemigos son de la clase Walker: van al siguiente punto del camino en vez de
  * perseguir al jugador, y en ellos se aplican los poderes de cada tipo.
  *
- * Hay tres mapas (td-geom.ts, MAPS). Tras la oleada 30 (la victoria) sigue el modo
+ * Hay cinco mapas (td-geom.ts, MAPS); Cruce y Tridente, con varias entradas: los normales salen
+ * por todas a la vez y cada jefe por una (bossGate). Tras la oleada 30 (la victoria) sigue el modo
  * sin fin, hasta que caiga la base o abandones. Al acabar se cobran monedas de la
  * cuenta (td-waves.ts, defenseCoins), cuentan las misiones y logros (evento tdEnd) y
  * la marca sube al ranking de Defensa (modo 'd', o 'e' en grupo).
@@ -156,9 +157,23 @@ export const TD = (() => {
   let flawless = false;
   /** ×1 o ×2: todo pasa el doble de deprisa. */
   let fast = false;
-  /** Puntos del camino en unidades de mundo (los comparten todos los enemigos como destino). */
-  let path: { x: number; y: number; r: number; level: number }[] = [];
-  let lens: number[] = [];
+  /**
+   * Los caminos en unidades de mundo, uno por entrada (todos acaban en la base). Sus puntos los
+   * comparten como destino los enemigos de esa entrada. `lens`: lo que mide cada uno hasta cada punto.
+   */
+  type PathPt = { x: number; y: number; r: number; level: number };
+  let paths: PathPt[][] = [];
+  let lens: number[][] = [];
+  /** Lo que mide el camino más largo (para comparar quién va primero entre caminos distintos). */
+  let longest = 0;
+  /**
+   * Cuánto ha avanzado `e` hacia la base, comparable entre entradas: lo más largo que hay menos
+   * lo que le falta (con un solo camino, lo andado, como siempre).
+   */
+  function progressOf(e: Walker) {
+    const p = paths[e.lane], l = lens[e.lane], done = pathProgress(e.x, e.y, e.wp, p, l);
+    return paths.length === 1 ? done : longest - (l[l.length - 1] - done);
+  }
   /** El héroe no sale de este radio (unidades de mundo): el mapa es el claro. */
   let bound = 0;
   /** Poderes de tipo que se han disparado (para las pruebas). */
@@ -182,7 +197,9 @@ export const TD = (() => {
   type TdEnemy = Enemy & { tdKind?: string };
 
   class Walker extends Enemy {
-    /** Índice en `path` del punto al que va. */
+    /** Por qué entrada ha salido (su camino es paths[lane]). */
+    lane = 0;
+    /** Índice en su camino del punto al que va. */
     wp = 1;
     /** 'boss' (jefe de cada 5) o 'legend' (legendario de cada 10). */
     kind: 'normal' | 'boss' | 'legend' = 'normal';
@@ -209,6 +226,7 @@ export const TD = (() => {
         this.chillCd -= dt; this.frozenT -= dt; this.stunT -= dt; this.confuseT -= dt; this.curseT -= dt; this.textCd -= dt; this.ccT -= dt;
       }
       // Confundido: anda hacia atrás.
+      const path = paths[this.lane];
       const to = this.confuseT > 0 && this.wp > 1 ? path[this.wp - 1] : path[this.wp];
       super.update(dt, to);
     }
@@ -237,7 +255,7 @@ export const TD = (() => {
       if (fx.stun > 0 && cc()) this.freeze(fx.stun, 'stun', type === 'electric' ? '¡Paralizado!' : '¡Aturdido!', '#ffe14d');
       if (fx.confuse > 0 && cc()) { this.confuseT = Math.max(this.confuseT, fx.confuse); this.say('¡Confuso!', '#ff8ac4'); note('psychic'); }
       if (fx.push > 0 && cc()) {
-        const b = stepBack(this.x, this.y, this.wp, fx.push, path);
+        const b = stepBack(this.x, this.y, this.wp, fx.push, paths[this.lane]);
         this.x = b.x; this.y = b.y; this.wp = b.wp;
         note('water');
       }
@@ -571,8 +589,9 @@ export const TD = (() => {
 
     const TS = G.World.TS;
     map = mapById(coop ? coop.map : opts && opts.map);
-    path = map.route.map(([tx, ty]) => ({ x: tx * TS, y: ty * TS, r: 0, level: 1 }));
-    lens = pathLengths(path);
+    paths = map.routes.map(r => r.map(([tx, ty]) => ({ x: tx * TS, y: ty * TS, r: 0, level: 1 })));
+    lens = paths.map(p => pathLengths(p));
+    longest = Math.max(...lens.map(l => l[l.length - 1]));
     bound = 20 * TS;
     time = 0; lives = START_LIVES; wave = 0; leaked = 0; downT = 0; won = false; flawless = false; fast = false; cleared = 0; tampered = false; hostAway = null;
     heroLevel = 1; reach = 0; hpMul = 1; bossLeft = 0; toSpawn = 0; leftShown = 0; stateT = 0; camFree = null;
@@ -707,8 +726,12 @@ export const TD = (() => {
   const groupHp = () => (coop && G.Coop.active ? 1 + 0.85 * (G.Coop.players().length - 1) : 1);
 
   /** Saca un enemigo de la oleada (los normales primero; el jefe, al final). */
-  /** @param bossDex  (pruebas) el jefe que sale, en vez del de la oleada */
-  function spawnEnemy(chief: boolean, bossDex = 0) {
+  /**
+   * @param bossDex  (pruebas) el jefe que sale, en vez del de la oleada
+   * @param lane     por qué entrada (el jefe, por la que le toque: bossGate)
+   */
+  function spawnEnemy(chief: boolean, bossDex = 0, lane = chief ? bossGate(wave, paths.length) : 0) {
+    const path = paths[lane];
     const w = waveAt(wave);
     const dex = chief ? bossDex || w.boss! : w.pool[Math.floor(Math.random() * w.pool.length)];
     const mon = G.DEX_BY[dex];
@@ -722,10 +745,12 @@ export const TD = (() => {
     const e = new Walker(def, path[0].x + G.U.rand(-10, 10), path[0].y + G.U.rand(-10, 10), { hp: 1, spd: 1, dmg: 1 });
     e.kind = kind;
     e.wave = wave;
+    e.lane = lane;
     G.EnemyMgr.add(e);
     if (chief) {
       bigger(e, kind);
-      announce('¡Llega ' + mon.name + '!', 2.6);
+      // Con varias entradas, por cuál: que vaya a ayudar quien no la defiende.
+      announce(paths.length > 1 && map.gates ? '¡Llega ' + mon.name + ' por ' + map.gates[lane] + '!' : '¡Llega ' + mon.name + '!', 2.6);
       G.Audio.sfx('legend');
       if (coop) G.Coop.broadcast(['tb', e.id, kind]);
     }
@@ -747,7 +772,8 @@ export const TD = (() => {
     for (let i = list.length - 1; i >= 0; i--) {
       const e = list[i];
       if (e.dead || !(e instanceof Walker)) continue;
-      reach = Math.max(reach, pathProgress(e.x, e.y, e.wp, path, lens) / lens[lens.length - 1]);
+      const path = paths[e.lane], l = lens[e.lane];
+      reach = Math.max(reach, pathProgress(e.x, e.y, e.wp, path, l) / l[l.length - 1]);
       const to = path[e.wp];
       if (G.U.dist2(e.x, e.y, to.x, to.y) > 18 * 18) continue;
       if (e.wp + 1 < path.length) { e.wp++; continue; }
@@ -768,7 +794,11 @@ export const TD = (() => {
       if (toSpawn > 0 || bossLeft > 0) {
         spawnT -= dt;
         if (spawnT <= 0) {
-          if (toSpawn > 0) { spawnEnemy(false); toSpawn--; spawnT = toSpawn > 0 ? waveGap(wave) : 2; }
+          // Los normales salen por todas las entradas a la vez (uno por cada una).
+          if (toSpawn > 0) {
+            for (let lane = 0; lane < paths.length && toSpawn > 0; lane++) { spawnEnemy(false, 0, lane); toSpawn--; }
+            spawnT = toSpawn > 0 ? waveGap(wave) : 2;
+          }
           else { spawnEnemy(true); bossLeft = 0; }
         }
       } else if (!G.EnemyMgr.all().some(e => !e.dead)) {
@@ -862,7 +892,7 @@ export const TD = (() => {
   function cancelPlacing() { placing = null; refreshUI(); }
 
   /** Motivo por el que no se puede plantar en (x, y), o '' si se puede. */
-  const whyNot = (x: number, y: number) => placementError(x, y, { path, towers: towers.map(t => t.p), bound });
+  const whyNot = (x: number, y: number) => placementError(x, y, { paths, towers: towers.map(t => t.p), bound });
 
   /**
    * Intenta plantar la torre que se está colocando en (x, y).
@@ -1204,7 +1234,7 @@ export const TD = (() => {
       const d2 = G.U.dist2(e.x, e.y, p.x, p.y), reach = r + (e.r || 0);
       if (d2 > reach * reach) continue;
       inRange.push(e);
-      cands.push({ d2, hp: e.hp, progress: e instanceof Walker ? pathProgress(e.x, e.y, e.wp, path, lens) : 0 });
+      cands.push({ d2, hp: e.hp, progress: e instanceof Walker ? progressOf(e) : 0 });
     }
     const i = pickTarget(cands, mode);
     return i < 0 ? null : inRange[i];
@@ -1287,7 +1317,7 @@ export const TD = (() => {
   /** Un paso de la partida entera (en solitario, o el anfitrión). */
   function step(dt: number) {
     time += dt;
-    for (const p of path) p.level = pl.level;
+    for (const path of paths) for (const p of path) p.level = pl.level;
     heroStep(dt);
 
     tickPhase(dt);
@@ -1826,10 +1856,14 @@ export const TD = (() => {
     ctx.beginPath(); ctx.arc(S / 2, S / 2, S / 2, 0, 6.2832); ctx.fill();
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)'; ctx.lineWidth = 1; ctx.setLineDash([3 * dpr, 3 * dpr]);
     ctx.beginPath(); ctx.arc(S / 2, S / 2, bound * k, 0, 6.2832); ctx.stroke(); ctx.setLineDash([]);
-    // El camino, la entrada y la base.
-    if (path.length > 1) {
+    // Los caminos, sus entradas y la base.
+    for (const path of paths) {
+      if (path.length < 2) continue;
       ctx.strokeStyle = 'rgba(214, 186, 132, 0.95)'; ctx.lineWidth = Math.max(2, 42 * k); ctx.lineJoin = 'round'; ctx.lineCap = 'round';
       ctx.beginPath(); ctx.moveTo(X(path[0].x), Y(path[0].y)); for (const p of path) ctx.lineTo(X(p.x), Y(p.y)); ctx.stroke();
+    }
+    for (const path of paths) {
+      if (path.length < 2) continue;
       const a = path[0], b = path[path.length - 1];
       ctx.fillStyle = '#ff5f6d'; ctx.beginPath(); ctx.arc(X(a.x), Y(a.y), 3.5 * dpr, 0, 6.2832); ctx.fill();
       ctx.fillStyle = '#4fb4ff'; ctx.beginPath(); ctx.arc(X(b.x), Y(b.y), 4.5 * dpr, 0, 6.2832); ctx.fill();
@@ -2029,15 +2063,17 @@ export const TD = (() => {
 
   /** El camino, la base, y los alcances (al colocar o con una torre seleccionada). */
   function drawGround(ctx: CanvasRenderingContext2D) {
-    if (path.length < 2) return;
+    if (!paths.length || paths[0].length < 2) return;
     ctx.save();
     ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-    const trace = () => { ctx.beginPath(); ctx.moveTo(path[0].x, path[0].y); for (const p of path) ctx.lineTo(p.x, p.y); };
+    // Todos los caminos en un solo trazo (así el tramo que comparten no se oscurece dos veces).
+    const trace = () => { ctx.beginPath(); for (const path of paths) { ctx.moveTo(path[0].x, path[0].y); for (const p of path) ctx.lineTo(p.x, p.y); } };
+    const path = paths[0];
     // Al colocar: lo que no se puede ocupar, sombreado en rojo (camino y su borde, entrada, base y junto a otras torres).
     if (placing) {
       trace(); ctx.strokeStyle = 'rgba(255, 95, 109, 0.22)'; ctx.lineWidth = PATH_CLEAR * 2; ctx.stroke();
       ctx.fillStyle = 'rgba(255, 95, 109, 0.22)';
-      for (const e of [path[0], path[path.length - 1]]) { ctx.beginPath(); ctx.arc(e.x, e.y, ENDS_CLEAR, 0, 6.2832); ctx.fill(); }
+      for (const e of [...paths.map(p => p[0]), path[path.length - 1]]) { ctx.beginPath(); ctx.arc(e.x, e.y, ENDS_CLEAR, 0, 6.2832); ctx.fill(); }
       for (const t of towers) { ctx.beginPath(); ctx.arc(t.p.x, t.p.y, TOWER_GAP, 0, 6.2832); ctx.fill(); }
       // Lo que ocupa cada torre (no hay casillas: es un círculo; dos torres no pueden solaparse).
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)'; ctx.lineWidth = 1.5;
@@ -2049,9 +2085,14 @@ export const TD = (() => {
     trace(); ctx.strokeStyle = 'rgba(60, 44, 28, 0.55)'; ctx.lineWidth = 50; ctx.stroke();
     trace(); ctx.strokeStyle = 'rgba(214, 186, 132, 0.85)'; ctx.lineWidth = 42; ctx.stroke();
     // Flechas en el camino: hacia dónde van.
+    // (El tramo que comparten varios caminos, una sola vez.)
     ctx.fillStyle = 'rgba(120, 90, 50, 0.45)';
-    for (let i = 1; i < path.length; i++) {
+    const done = new Set<string>();
+    for (const path of paths) for (let i = 1; i < path.length; i++) {
       const a = path[i - 1], b = path[i], len = Math.hypot(b.x - a.x, b.y - a.y), ang = Math.atan2(b.y - a.y, b.x - a.x);
+      const key = a.x + ',' + a.y + ',' + b.x + ',' + b.y;
+      if (done.has(key)) continue;
+      done.add(key);
       for (let d = 60; d < len - 30; d += 120) {
         const x = a.x + Math.cos(ang) * d, y = a.y + Math.sin(ang) * d;
         ctx.save(); ctx.translate(x, y); ctx.rotate(ang);
@@ -2064,10 +2105,9 @@ export const TD = (() => {
     ctx.fillStyle = 'rgba(79, 180, 255, 0.35)';
     ctx.beginPath(); ctx.arc(b.x, b.y, 34, 0, 6.2832); ctx.fill();
     ctx.strokeStyle = '#4fb4ff'; ctx.lineWidth = 4; ctx.stroke();
-    // La entrada.
-    const a = path[0];
+    // Las entradas.
     ctx.fillStyle = 'rgba(255, 95, 109, 0.35)';
-    ctx.beginPath(); ctx.arc(a.x, a.y, 26, 0, 6.2832); ctx.fill();
+    for (const p of paths) { const a = p[0]; ctx.beginPath(); ctx.arc(a.x, a.y, 26, 0, 6.2832); ctx.fill(); }
     if (placing) {
       // El alcance de las torres que ya tienes, para ver qué queda cubierto.
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
@@ -2222,7 +2262,9 @@ export const TD = (() => {
     /** La cámara a (x, y), como al pulsar en el minimapa (null: de vuelta al héroe). */
     debugCam(x: number | null, y = 0) { camFree = x == null ? null : { x, y }; },
     get cam() { return { x: G.Camera.x, y: G.Camera.y, free: !!camFree }; },
-    get route() { return path.map(p => ({ x: p.x, y: p.y })); },
+    /** El camino de la primera entrada; `routes`, todos. */
+    get route() { return paths[0].map(p => ({ x: p.x, y: p.y })); },
+    get routes() { return paths.map(path => path.map(p => ({ x: p.x, y: p.y }))); },
     get placing() { return placing ? { dex: placing.dex, x: ghost.x, y: ghost.y } : null; },
     get info() {
       return {

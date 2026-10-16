@@ -52,13 +52,16 @@ export function distToPath(x: number, y: number, path: Pt[]): number {
 
 /**
  * ¿Se puede plantar una torre en (x, y)? Devuelve el motivo si no ('' si sí).
+ * @param paths  los caminos del mapa (uno por entrada; todos acaban en la base)
  * @param bound  radio del mapa jugable, desde el centro
  */
-export function placementError(x: number, y: number, o: { path: Pt[]; towers: Pt[]; bound: number }): string {
+export function placementError(x: number, y: number, o: { paths: Pt[][]; towers: Pt[]; bound: number }): string {
   if (!Number.isFinite(x) || !Number.isFinite(y) || Math.hypot(x, y) > o.bound) return 'Fuera del mapa';
-  if (o.path.length && (Math.hypot(x - o.path[0].x, y - o.path[0].y) < ENDS_CLEAR ||
-      Math.hypot(x - o.path[o.path.length - 1].x, y - o.path[o.path.length - 1].y) < ENDS_CLEAR)) return 'Demasiado cerca de la entrada o de la base';
-  if (distToPath(x, y, o.path) < PATH_CLEAR) return 'Encima del camino';
+  for (const p of o.paths) {
+    if (p.length && (Math.hypot(x - p[0].x, y - p[0].y) < ENDS_CLEAR ||
+        Math.hypot(x - p[p.length - 1].x, y - p[p.length - 1].y) < ENDS_CLEAR)) return 'Demasiado cerca de la entrada o de la base';
+  }
+  if (o.paths.some(p => distToPath(x, y, p) < PATH_CLEAR)) return 'Encima del camino';
   if (o.towers.some(t => Math.hypot(t.x - x, t.y - y) < TOWER_GAP)) return 'Pegada a otra torre';
   return '';
 }
@@ -161,15 +164,41 @@ export function stepBack(x: number, y: number, wp: number, d: number, path: Pt[]
 // ---------------- mapas ----------------
 
 /**
- * Un mapa: su camino en tiles, de la entrada a la base (todos miden más o menos lo mismo), y
- * cuántos pueden jugarlo en grupo (`players`: en Valle hay menos sitio para torres).
+ * Un mapa: sus caminos en tiles, uno por entrada, de la entrada a la base (todos miden más o
+ * menos lo mismo; con varias entradas, los caminos se juntan antes de la base y comparten el
+ * último tramo), y cuántos pueden jugarlo en grupo (`players`: en Valle hay menos sitio para torres).
+ * `gates`: el nombre de cada entrada, para avisar por dónde llega un jefe ("por el norte").
+ * Con varias entradas, las mismas monedas bastan si se planta con cabeza (entre dos caminos o
+ * donde se juntan); sólo en las esquinas de cada uno, no. Medido con tools/td-balance.ts --cover.
  */
-export interface TdMap { id: string; name: string; en: string; players: number; route: [number, number][] }
+export interface TdMap { id: string; name: string; en: string; players: number; routes: [number, number][][]; gates?: string[] }
 export const MAPS: TdMap[] = [
-  { id: 'valle', name: 'Valle', en: 'Valley', players: 6, route: [[-20, -8], [-8, -8], [-8, 6], [4, 6], [4, -6], [14, -6], [14, 8], [19, 8]] },
-  { id: 'zigzag', name: 'Zigzag', en: 'Zigzag', players: 8, route: [[-20, -10], [10, -10], [10, 0], [-10, 0], [-10, 10], [19, 10]] },
-  { id: 'espiral', name: 'Espiral', en: 'Spiral', players: 8, route: [[-20, 4], [-12, -12], [10, -12], [14, 6], [-4, 10], [-6, -3], [4, -3]] },
+  { id: 'valle', name: 'Valle', en: 'Valley', players: 6, routes: [[[-20, -8], [-8, -8], [-8, 6], [4, 6], [4, -6], [14, -6], [14, 8], [19, 8]]] },
+  { id: 'zigzag', name: 'Zigzag', en: 'Zigzag', players: 8, routes: [[[-20, -10], [10, -10], [10, 0], [-10, 0], [-10, 10], [19, 10]]] },
+  { id: 'espiral', name: 'Espiral', en: 'Spiral', players: 8, routes: [[[-20, 4], [-12, -12], [10, -12], [14, 6], [-4, 10], [-6, -3], [4, -3]]] },
+  // Dos entradas al oeste; los caminos van cada uno por su mitad y se juntan poco antes de la base.
+  // Entre sus dos últimos tramos largos queda una franja desde la que se cubren los dos.
+  { id: 'cruce', name: 'Cruce', en: 'Crossing', players: 8, gates: ['el noroeste', 'el suroeste'], routes: [
+    [[-20, -6], [-12, -6], [-12, -14], [2, -14], [2, -8], [-6, -8], [-6, -4], [10, -4], [10, 0], [19, 0]],
+    [[-20, 6], [-12, 6], [-12, 14], [2, 14], [2, 8], [-6, 8], [-6, 4], [10, 4], [10, 0], [19, 0]],
+  ] },
+  // Tres entradas (norte, oeste y sur) que se juntan cerca de la base.
+  { id: 'tridente', name: 'Tridente', en: 'Trident', players: 8, gates: ['el norte', 'el oeste', 'el sur'], routes: [
+    [[-10, -19], [-10, -13], [4, -13], [4, -8], [-4, -8], [-4, -4], [10, -4], [10, 0], [19, 0]],
+    [[-20, 0], [-16, 0], [-16, -6], [-12, -6], [-12, 6], [-8, 6], [-8, 0], [10, 0], [19, 0]],
+    [[-10, 19], [-10, 13], [4, 13], [4, 8], [-4, 8], [-4, 4], [10, 4], [10, 0], [19, 0]],
+  ] },
 ];
+/**
+ * Por qué entrada sale el jefe de la oleada `wave` (con una sola entrada, por ésa). Van rotando, y
+ * de forma que también los legendarios (uno de cada dos jefes) pasan por todas las entradas: con
+ * dos entradas, si no, saldrían siempre por la misma.
+ */
+export function bossGate(wave: number, gates: number): number {
+  if (gates <= 1) return 0;
+  const k = Math.max(0, Math.floor(wave / 5) - 1);          // el k-ésimo jefe (0 = el de la 5)
+  return (Math.floor(k / 2) + k % 2) % gates;
+}
 /** Jugadores en una sala del Survivor (está hecho para 4: colores, cartas de nivel compartidas, dificultad). */
 export const SURVIVOR_PLAYERS = 4;
 /**

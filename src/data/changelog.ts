@@ -23,6 +23,8 @@ export const CHANGELOG: ChangelogEntry[] = [
     ['El juego pasa a llamarse PokéTD: tiene hordas, defensa de torres y juego en grupo. (Nació como fork de PokéSurvivor.)',
      'The game is now called PokéTD: it has hordes, tower defense and group play. (It started as a fork of PokéSurvivor.)']
   ], new: [
+    ['Defensa: dos mapas nuevos con varias entradas, Cruce (2) y Tridente (3). Los enemigos salen por todas a la vez y los caminos se juntan poco antes de la base; cada jefe llega por una de ellas, y se avisa por cuál. En grupo, cada uno puede defender su entrada.',
+     'Defense: two new maps with several entrances, Crossing (2) and Trident (3). Enemies come out of all of them at once and the paths join just before the base; each boss arrives through one of them, and you are told which. In a group, each player can defend their own entrance.'],
     ['Chat en las salas y en la partida en grupo: escribe lo que quieras o usa las frases rápidas («¡Ayuda!», «¡Voy!», «¡Bien jugado!»…). Lo que dice cada uno sale como bocadillo sobre su Pokémon y en unas líneas pequeñas que se apagan solas.',
      'Chat in rooms and in group games: write anything or use quick phrases ("Help!", "On my way!", "Well played!"…). What each player says shows as a bubble over their Pokémon and in a few small lines that fade on their own.'],
     ['En PC: Enter (o T) abre el chat ya para escribir, y Enter envía; V, las frases rápidas (luego 1-8). En el móvil, el botón de arriba a la derecha.',
