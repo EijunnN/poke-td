@@ -25,6 +25,8 @@ export const CHANGELOG: ChangelogEntry[] = [
   ], new: [
     ['Defensa: dos mapas nuevos con varias entradas, Cruce (2) y Tridente (3). Los enemigos salen por todas a la vez y los caminos se juntan poco antes de la base; cada jefe llega por una de ellas, y se avisa por cuál. En grupo, cada uno puede defender su entrada.',
      'Defense: two new maps with several entrances, Crossing (2) and Trident (3). Enemies come out of all of them at once and the paths join just before the base; each boss arrives through one of them, and you are told which. In a group, each player can defend their own entrance.'],
+    ['Survivor en grupo: si caes, puedes mover la cámara (las teclas de andar o el joystick) para ver cómo va la partida; Tab la lleva a seguir a un compañero o vuelve a tu Pokémon.',
+     'Group Survivor: when you are down you can move the camera (the movement keys or the joystick) to see how the game goes; Tab makes it follow a teammate or goes back to your Pokémon.'],
     ['Chat en las salas y en la partida en grupo: escribe lo que quieras o usa las frases rápidas («¡Ayuda!», «¡Voy!», «¡Bien jugado!»…). Lo que dice cada uno sale como bocadillo sobre su Pokémon y en unas líneas pequeñas que se apagan solas.',
      'Chat in rooms and in group games: write anything or use quick phrases ("Help!", "On my way!", "Well played!"…). What each player says shows as a bubble over their Pokémon and in a few small lines that fade on their own.'],
     ['En PC: Enter (o T) abre el chat ya para escribir, y Enter envía; V, las frases rápidas (luego 1-8). En el móvil, el botón de arriba a la derecha.',

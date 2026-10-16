@@ -184,6 +184,7 @@ G.I18n.add({
   'La grieta os ha expulsado…': 'The rift threw you out…', '{x} ha dejado la partida': '{x} left the game',
   '+1 ticket': '+1 ticket', '¡Ticket ×10!': 'Ticket ×10!', '· ×{x} Fortuna': '· ×{x} Fortune',
   'Has caído: un compañero puede levantarte': 'You\'re down: a teammate can revive you', 'Habéis caído todos…': 'Everyone is down…',
+  'Mueve la cámara con el joystick': 'Move the camera with the joystick', 'Mueve la cámara · Tab: seguir a un compañero': 'Move the camera · Tab: follow a teammate',
   '¡{x} necesita ayuda! · {x} m': '{x} needs help! · {x} m', 'CAÍDO': 'DOWN', 'Quédate a su lado': 'Stay by their side',
   'Grieta · {x} m · {x} s': 'Rift · {x} m · {x} s', 'DERROTADOS ·': 'DEFEATED ·', 'MONEDAS': 'COINS',
   '{x} · {x} DERROTADOS · {x} MONEDAS': '{x} · {x} DEFEATED · {x} COINS',

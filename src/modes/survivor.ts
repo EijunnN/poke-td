@@ -40,10 +40,16 @@ export const Survivor = (() => {
    * no ataca, no recoge, no le dan), está donde mira la cámara, y al acabar no cobra nada.
    */
   let spectating = false;
+  /**
+   * Caído en grupo: adónde mira la cámara. Se mueve con las teclas de andar (o el joystick);
+   * Tab / E / Q la llevan a seguir a un compañero o a tu Pokémon. null mientras estás en pie.
+   */
+  let look: { x: number; y: number; i: number; who: { x: number; y: number } | null } | null = null;
+  const LOOK_SPEED = 520;
 
   /** @param coop  { seed, host, members } para una partida en grupo (con `watch`, como espectador) */
   function start(coop: CoopConfig | null = null) {
-    holdBy = []; awayBy = null;
+    holdBy = []; awayBy = null; look = null;
     ownHold = false; choiceQ = []; bondQueued = false; flashT = 0;
     spectating = !!(coop && coop.watch);
     const save = G.DB.save!;
@@ -559,7 +565,8 @@ export const Survivor = (() => {
       for (const p of G.Coop.puppets()) { p.netUpdate(dt); G.Combat.ghostOrbit(p, dt, time); }
       if (pl.dead) reviveTick(dt);
     }
-    G.Camera.follow(pl.x, pl.y, dt);
+    if (coop && pl.dead && !spectating) lookTick(dt);
+    else { look = null; G.Camera.follow(pl.x, pl.y, dt); }
     G.World.update(dt, G.Camera);
 
     const all = everyone();
@@ -591,6 +598,24 @@ export const Survivor = (() => {
     const helper = G.Coop.puppets().some(p => !p.dead && G.U.dist2(p.x, p.y, pl.x, pl.y) < 56 * 56);
     pl.reviveT = helper ? (pl.reviveT || 0) + dt : Math.max(0, (pl.reviveT || 0) - dt * 0.5);
     if (pl.reviveT >= G.Player.REVIVE_TIME) pl.revive(0.5);
+  }
+
+  /** Caído en grupo: la cámara va libre (el anfitrión te manda los enemigos de donde miras, net/coop.ts). */
+  function lookTick(dt: number) {
+    if (!look) look = { x: pl.x, y: pl.y, i: 0, who: pl };
+    const [ax, ay] = pl.frozen ? [0, 0] : G.Input.axis();
+    if (ax || ay) { look.who = null; look.x += ax * LOOK_SPEED * dt; look.y += ay * LOOK_SPEED * dt; }
+    else if (look.who) { look.x = look.who.x; look.y = look.who.y; }
+    G.Camera.follow(look.x, look.y, dt);
+  }
+
+  /** Caído en grupo: Tab / E, la cámara al siguiente compañero; Q, al anterior (tu Pokémon va en la lista). */
+  function lookKeys() {
+    const d = G.Input.tap('tab') || G.Input.tap('keye') ? 1 : G.Input.tap('keyq') ? -1 : 0;
+    if (!d || !look) return;
+    const list = [pl, ...G.Coop.puppets()];
+    look.i = ((look.i + d) % list.length + list.length) % list.length;
+    look.who = list[look.i];
   }
 
   /** Anfitrión: si caéis todos, se acaba (tras ver caer al último). */
@@ -685,6 +710,7 @@ export const Survivor = (() => {
 
   function keysPlay() {
     if (spectating) { G.Spectate.keys(); return; }
+    if (look) { lookKeys(); return; }
     for (let i = 0; i < 4; i++) {
       if (G.Input.tap('digit' + (i + 1)) || G.Input.tap('numpad' + (i + 1))) pl.setActive(i);
     }

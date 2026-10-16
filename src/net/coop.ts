@@ -121,7 +121,7 @@ export type GuestEv = CoreGuestEv | TdGuestEv;
 export type Ev = HostEv | GuestEv;
 /** Estado de un jugador por la red (ver myState / readState). */
 type StateArr = [x: number, y: number, ang: number, walk: number, hp: number, maxHp: number, dead: number, mv: string, ml: number,
-               mag: number, aim: number, xpMul: number, rev: number];
+               mag: number, aim: number, xpMul: number, rev: number, lookX?: number, lookY?: number];
 /** Un enemigo en el fotograma del anfitrión: id, x, y, vida, animación, dirección, estados. */
 type EnemyRow = [id: number, x: number, y: number, hp: number, anim: number, dir: number, st: number];
 /** Fotograma del anfitrión a un invitado. */
@@ -280,9 +280,18 @@ export const Coop = (() => {
     // Con un vínculo se manda la órbita si la hay (es lo único que los demás no ven por los 'c').
     const g = local!.activeGroup();
     const m = g.find(x => x.kind === 'orbit') || g[0];
-    return [r1(local!.x), r1(local!.y), r2(local!.moveAngle), local!.walking ? 1 : 0, r1(local!.hp), r1(local!.maxHp),
+    const s: StateArr = [r1(local!.x), r1(local!.y), r2(local!.moveAngle), local!.walking ? 1 : 0, r1(local!.hp), r1(local!.maxHp),
             local!.dead ? 1 : 0, m ? m.id : '', m ? m.lvl : 1, r1(local!.magnet), r2(local!.aim), r2(local!.xpMul),
             r2(local!.reviveT || 0)];
+    // Caído, la cámara va libre (modes/survivor.ts): el anfitrión te manda lo que hay donde miras.
+    if (local!.dead) s.push(r1(G.Camera.x), r1(G.Camera.y));
+    return s;
+  }
+
+  /** Anfitrión: dónde mira un invitado (caído, donde lleve la cámara; si no, donde está). */
+  function lookOf(m: Mate): { x: number; y: number } {
+    const s = m.state;
+    return s && s[6] && Number.isFinite(s[13]) && Number.isFinite(s[14]) ? { x: s[13]!, y: s[14]! } : m.pl;
   }
 
   function readState(a: StateArr) {
@@ -302,7 +311,8 @@ export const Coop = (() => {
   function emitNear(ev: HostEv, x: number, y: number, except?: string | null) {
     for (const m of mates.values()) {
       if (!m.connected || m.uid === except) continue;
-      if (G.U.dist2(m.pl.x, m.pl.y, x, y) > 700 * 700) continue;
+      const at = lookOf(m);
+      if (G.U.dist2(at.x, at.y, x, y) > 700 * 700) continue;
       if (m.q.length > 400) continue;
       m.q.push(ev);
     }
@@ -329,7 +339,7 @@ export const Coop = (() => {
     }
     const ev = m.q.splice(0, MAX_EV);
     const f: HostFrame = { k: 'f', t: r2(st.time), lv: st.level, xp: r2(st.xp), xn: st.xpNext, ki: st.kills, bo: st.bosses, co: st.coins, tk: [st.t1, st.t10],
-                p, e: enemyList(m.pl), ev };
+                p, e: enemyList(lookOf(m)), ev };
     const ja = G.Judgment.netState();       // Arceus en la Sentencia
     if (ja) f.ja = ja;
     return f;

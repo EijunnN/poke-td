@@ -491,6 +491,34 @@ describe('cooperativo', () => {
     expect(await B.allErrors()).toEqual([]);
   });
 
+  test('caído, el invitado mueve la cámara y el anfitrión le manda los enemigos de donde mira', async () => {
+    const body = await B.eval(() => { const p = G.Game.player; p.dead = true; p.hp = 0; return { x: p.x, y: p.y }; });
+    // Las teclas, al juego directamente (la página de la prueba no tiene el foco).
+    const key = (type: string, code: string) => B.eval(([t, c]) => { const w = globalThis as any; w.dispatchEvent(new w.KeyboardEvent(t, { code: c })); }, [type, code]);
+    await key('keydown', 'ArrowRight');
+    await rig.run(60);
+    await key('keyup', 'ArrowRight');
+    const cam = await B.eval(() => ({ x: G.Camera.x, y: G.Camera.y, px: G.Game.player.x }));
+    expect(cam.x - body.x).toBeGreaterThan(1200);                       // la cámara se ha ido lejos
+    expect(Math.abs(cam.px - body.x)).toBeLessThan(2);                  // el Pokémon caído no se ha movido
+    const far = await A.eval(c => {
+      const e = new G.Enemy(G.Enemies.bagAt(60)[0], c.x + 60, c.y, G.Enemies.scale(60));
+      G.EnemyMgr.add(e);
+      return e.id;
+    }, cam);
+    await waitPage(B, 'B ve el enemigo de donde mira', id => !!G.EnemyMgr.get(id), far);
+    // Tab: la cámara vuelve a seguir a su Pokémon caído o a A.
+    await key('keydown', 'Tab'); await rig.run(1); await key('keyup', 'Tab');
+    await rig.run(30);
+    const back = await B.eval(() => G.Camera.x);
+    expect(Math.abs(back - cam.x)).toBeGreaterThan(1000);
+    await B.eval(() => G.Game.player.revive(1));
+    await rig.run(5);
+    expect(await B.eval(() => G.Game.player.dead)).toBe(false);
+    expect(await A.allErrors()).toEqual([]);
+    expect(await B.allErrors()).toEqual([]);
+  });
+
   test('cartas de nivel: esperan a los dos', async () => {
     await A.eval(() => G.Game.debugLevelUp());
     await waitPage(A, 'cartas en A', () => G.Game.state === 'levelup');

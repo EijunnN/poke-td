@@ -488,6 +488,13 @@ export const HUD = (() => {
       ctx.fillText(msg, w / 2, h * 0.62);
       const f = (pl.reviveT || 0) / G.Player.REVIVE_TIME;
       if (f > 0) bar(ctx, w / 2 - 110, h * 0.62 + 12, 220, 10, f, '#5fe08a');
+      // La cámara va libre mientras estás caído (modes/survivor.ts).
+      const hint = G.Touch.active ? 'Mueve la cámara con el joystick' : 'Mueve la cámara · Tab: seguir a un compañero';
+      ctx.font = F(800, 12);
+      ctx.lineWidth = 3;
+      ctx.strokeText(hint, w / 2, h * 0.62 + 40);
+      ctx.fillStyle = '#e8ecff';
+      ctx.fillText(hint, w / 2, h * 0.62 + 40);
       ctx.restore();
     }
   }
