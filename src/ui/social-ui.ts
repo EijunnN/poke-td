@@ -180,7 +180,7 @@ import type { CoopConfig } from '../net/coop';
           if (room.isHost && G.Coop.active) G.Coop.syncWatchers(lookers(room));
         } else if (G.Net.open_ && !G.Social.watching) G.Net.close();
         if (what === 'room-closed') {
-          G.UI.toast('La sala se ha cerrado', 2600);
+          G.UI.toast(G.Social.closedWhy === 'kicked' ? 'El anfitrión te ha sacado de la sala' : 'La sala se ha cerrado', 2600);
           if (G.UI.isOpen('scr-lobby')) G.MenuUI.open();
         }
         if (G.UI.isOpen('scr-lobby')) render();
@@ -227,7 +227,7 @@ import type { CoopConfig } from '../net/coop';
       const row = document.createElement('div');
       row.className = 'row lobby-mode lobby-access';
       row.innerHTML = '<b>Sala:</b>';
-      for (const [pub, label, tip] of [[false, 'Privada', 'Sólo entran tus amigos, con invitación'],
+      for (const [pub, label, tip] of [[false, 'Privada', 'Sólo entran tus amigos con invitación, o quien tenga el código'],
                                        [true, 'Pública', 'Sale en Salas públicas: cualquiera puede entrar, o mirar si ya habéis empezado']] as const) {
         const b = document.createElement('button');
         b.className = 'btn small' + (room.pub === pub ? ' gold' : '');
@@ -238,6 +238,31 @@ import type { CoopConfig } from '../net/coop';
       }
       row.insertAdjacentHTML('beforeend', `<span class="sub">Caben ${room.max}</span>`);
       box.after(row);
+    }
+
+    /** El código de la sala y su enlace (para pasárselo a quien sea, amigo o no). */
+    function renderCode(room: Room) {
+      const box = $('lobby-code');
+      if (!room.code) { box.innerHTML = ''; return; }
+      if (box.dataset.code === room.code + room.isHost) return;
+      box.dataset.code = room.code + room.isHost;
+      box.innerHTML = `<span class="sub">Código:</span><b class="code" translate="no">${esc(room.code)}</b>`;
+      const b = (label: string, cls: string, fn: () => void, tip = '') => {
+        const x = document.createElement('button');
+        x.className = 'btn small ' + cls; x.textContent = label; x.title = tip; x.onclick = fn;
+        box.appendChild(x);
+      };
+      b('Copiar enlace', 'gold', () => copy(location.origin + '/s/' + room.code), 'Quien abra el enlace entra en la sala, aunque no sea tu amigo');
+      if (room.isHost) b('Cambiar código', 'ghost', async () => {
+        if (!confirm(G.I18n.t('¿Cambiar el código? El de ahora y su enlace dejarán de valer.'))) return;
+        const r = await G.Social.recode();
+        if (!r.ok) G.UI.toast(r.error || '', 2600);
+      }, 'El código y el enlace de ahora dejan de valer');
+    }
+
+    async function copy(text: string) {
+      try { await navigator.clipboard.writeText(text); G.UI.toast(G.I18n.f('Enlace copiado: {x}', text), 3000); }
+      catch { prompt(G.I18n.t('Copia el enlace de la sala:'), text); }
     }
 
     function open() {
@@ -264,12 +289,13 @@ import type { CoopConfig } from '../net/coop';
       if (!room) return;
       const ms = room.members;
       renderMode(room);
+      renderCode(room);
       $('lobby-sub').textContent = room.isHost
-        ? 'Eres el anfitrión. Invita a tus amigos (hasta ' + room.max + ') y empezad cuando estéis.'
+        ? 'Eres el anfitrión. Invita a tus amigos o pásales el código (hasta ' + room.max + ') y empezad cuando estéis.'
         : 'Estás en la sala de ' + ((ms.find(m => m.uid === room.host) || {}).name || '…') + '. El anfitrión empezará la partida.';
 
       // Las tarjetas sólo se rehacen si cambian los miembros (los sprites no parpadean).
-      const key = room.max + '#' + ms.map(m => m.uid + ':' + m.dex + ':' + (m.shiny ? 1 : 0) + (m.spec ? 's' : '')).join('|');
+      const key = room.max + (room.isHost && !room.started ? 'h' : '') + '#' + ms.map(m => m.uid + ':' + m.dex + ':' + (m.shiny ? 1 : 0) + (m.spec ? 's' : '')).join('|');
       const box = $('lobby-members');
       if (key !== membersKey) {
         membersKey = key;
@@ -288,6 +314,19 @@ import type { CoopConfig } from '../net/coop';
             c.style.setProperty('--pc', G.Coop.COLORS[i]);
             c.appendChild(G.UI.spriteCanvas(m.dex, 120, 96, { scale: 2, lively: true, shiny: !!m.shiny }));
             c.insertAdjacentHTML('beforeend', `<b translate="no">${esc(m.name)}</b><small>${m.spec ? 'Sólo mira' : esc((G.DEX_BY[m.dex] || {}).name || '')}</small><span class="conn" data-u="${m.uid}"></span>`);
+            // El anfitrión puede sacar a alguien antes de empezar (ya no vuelve con el código).
+            if (room.isHost && !room.started && m.uid !== room.host) {
+              const k = document.createElement('button');
+              k.className = 'btn small ghost kick';
+              k.textContent = '×';
+              k.title = 'Sacar de la sala';
+              k.onclick = async () => {
+                if (!confirm(G.I18n.f('¿Sacar a {x} de la sala? No podrá volver a entrar con el código.', m.name))) return;
+                const r = await G.Social.kick(m.uid);
+                if (!r.ok) G.UI.toast(r.error || '', 2600);
+              };
+              c.appendChild(k);
+            }
           } else c.innerHTML = '<span>Libre</span>';
           box.appendChild(c);
         }

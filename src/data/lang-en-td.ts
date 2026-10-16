@@ -95,6 +95,23 @@ G.I18n.add({
   'No se pudo entrar a mirar.': 'Could not start watching.', 'Sal de tu sala para mirar otra partida.': 'Leave your room to watch another game.',
 
   // ---------------- sala ----------------
+  'Código:': 'Code:', 'Copiar enlace': 'Copy link', 'Cambiar código': 'Change code', 'Sacar de la sala': 'Remove from the room',
+  'Quien abra el enlace entra en la sala, aunque no sea tu amigo': 'Whoever opens the link joins the room, even if they are not your friend',
+  'El código y el enlace de ahora dejan de valer': 'The current code and link stop working',
+  '¿Cambiar el código? El de ahora y su enlace dejarán de valer.': 'Change the code? The current one and its link will stop working.',
+  '¿Sacar a {x} de la sala? No podrá volver a entrar con el código.': "Remove {x} from the room? They won't be able to rejoin with the code.",
+  'Enlace copiado: {x}': 'Link copied: {x}', 'Copia el enlace de la sala:': 'Copy the room link:',
+  'El anfitrión te ha sacado de la sala': 'The host removed you from the room',
+  'Sólo entran tus amigos con invitación, o quien tenga el código': 'Only your friends with an invitation, or anyone with the code, can join',
+  'Eres el anfitrión. Invita a tus amigos o pásales el código (hasta {x}) y empezad cuando estéis.': "You're the host. Invite your friends or give them the code (up to {x}) and start when you're ready.",
+  'Entrar con código': 'Join with code', 'Código de una sala (p. ej. K7QM4X)': 'Room code (e.g. K7QM4X)',
+  'El código tiene 6 letras y números.': 'The code has 6 letters and numbers.',
+  'No hay ninguna sala con ese código.': 'There is no room with that code.',
+  'Demasiados códigos equivocados: espera un minuto.': 'Too many wrong codes: wait a minute.',
+  'El anfitrión te ha sacado de esa sala.': 'The host removed you from that room.', 'Esa sala ya no existe.': 'That room no longer exists.',
+  'No se pudo cambiar el código.': 'Could not change the code.', 'No puedes sacarte a ti mismo.': 'You cannot remove yourself.',
+  'Ya no está en la sala.': 'They are no longer in the room.',
+  'Para entrar en la sala {x}, inicia sesión con tu cuenta (o crea una).': 'To join room {x}, sign in with your account (or create one).',
   'Modo:': 'Mode:', 'Hordas': 'Hordes', 'Modo: {x}': 'Mode: {x}', 'Defensa · {x}': 'Defense · {x}',
   'Tower defense · solo o en grupo': 'Tower defense · solo or in a group',
 

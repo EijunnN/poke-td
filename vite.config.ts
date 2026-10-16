@@ -20,6 +20,18 @@ export default defineConfig(({ command, mode }) => ({
     target: 'es2022',
   },
   plugins: [{
+    // Enlace de una sala (/s/K7QM4X), como en el servidor (server/index.ts, roomLink).
+    name: 'room-link',
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        const m = /^\/s\/([A-Za-z0-9-]{4,12})\/?$/.exec((req.url || '').split('?')[0]);
+        if (!m) return next();
+        res.statusCode = 302;
+        res.setHeader('Location', '/?sala=' + m[1].toUpperCase());
+        res.end();
+      });
+    },
+  }, {
     name: 'version-json',
     apply: 'build',
     closeBundle() {

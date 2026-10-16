@@ -86,6 +86,7 @@ export const MenuUI = (() => {
       });
     }
     G.InvitePop.refresh();
+    G.RoomsUI.takeLink();
   }
 
   /** Texto bajo "Amigos" y "Jugar": quién está en línea, solicitudes, sala. */

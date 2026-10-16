@@ -20,7 +20,13 @@
  *   { k:'ping' }                                  -> { k:'pong' }
  *   { k:'play', v }                               estoy en partida (sí/no)
  *   { k:'room.new', dex, shiny }                  crea sala y eres su anfitrión
- *   { k:'room.join', id, dex, shiny }             entra en una sala a la que te han invitado
+ *   { k:'room.join', id, dex, shiny }             entra en una sala a la que te han invitado (o pública)
+ *   { k:'room.join', code, dex, shiny }           entra con el código de la sala (vale de invitación, también
+ *                                                 en las privadas, sin ser amigos). Como mucho CODE_TRIES códigos
+ *                                                 equivocados cada CODE_WINDOW ms por conexión
+ *   { k:'room.recode' }                           (anfitrión) código nuevo: el viejo deja de valer
+ *   { k:'room.kick', uid }                        (anfitrión, antes de empezar) saca a alguien de la sala; ya no
+ *                                                 puede volver con el código ni desde la lista (con invitación, sí)
  *   { k:'room.leave' }                            sales (si eras el anfitrión, se cierra para todos)
  *   { k:'room.open', v }                          (anfitrión) admite o no jugadores nuevos
  *   { k:'room.me', dex, shiny }                   cambias de Pokémon
@@ -48,7 +54,8 @@
  *   { k:'pres', uid, online, play, room, seen? }  un amigo cambia de estado
  *   { k:'fr' }                                    cambió la lista de amigos (pídela por REST)
  *   { k:'inv', from, name, room, at } · { k:'invx', from }   invitación recibida / retirada
- *   { k:'room', room: { id, host, open, started, pub, mode, map, members:[{uid,name,dex,shiny,away,spec}], watchers:[{uid,name}] } | null, why? }
+ *   { k:'room', room: { id, code, host, open, started, pub, mode, map, members:[{uid,name,dex,shiny,away,spec}], watchers:[{uid,name}] } | null, why? }
+ *                                                 why: 'closed' · 'left' · 'timeout' · 'kicked' (te ha sacado el anfitrión)
  *   { k:'watch', room: <igual> | null, why? }     la sala que miras (null: se acabó la partida o se cerró)
  *   { k:'chat', f, n, t?, q?, at }                un mensaje del chat de tu sala (también el tuyo)
  *   { k:'mark', f, n, x, y }                      una señal en el mapa (también la tuya)
@@ -118,6 +125,15 @@ const MAX_OUT_INVITES = 8;
 const ID = /^[A-Za-z0-9_-]{8,32}$/;
 /** Chat: mensajes que guarda cada sala (para quien entra después), y el ritmo de cada uno. */
 const CHAT_KEEP = 30, CHAT_BURST = 5, CHAT_WINDOW = 8_000, CHAT_REPEAT = 15_000;
+/**
+ * Código de sala: 6 letras y cifras sin las que se confunden (0/O, 1/I/L). 31^6 ≈ 887 millones;
+ * con CODE_TRIES fallos por minuto, adivinar uno al azar es inviable.
+ */
+const CODE_ABC = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+export const CODE_RE = /^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{6}$/;
+const CODE_TRIES = 8, CODE_WINDOW = 60_000;
+/** El código tal y como lo escribe alguien (minúsculas, espacios, guiones) → como se guarda. */
+export const normCode = (v: unknown) => typeof v === 'string' ? v.toUpperCase().replace(/[\s-]/g, '') : '';
 /** Señales en el mapa: como mucho tantas cada tanto (más, se ignoran). */
 const PING_BURST = 4, PING_WINDOW = 3_000;
 /** Un mensaje del chat tal y como se reparte. */
@@ -129,17 +145,19 @@ interface Member { uid: number; name: string; dex: number; shiny: boolean; spec?
  * Lo público de una sala: si sale en la lista, a qué se juega y la partida en curso (`cfg`, lo
  * que mandó el anfitrión al empezar; el espectador lo necesita para montar la suya).
  */
-interface RoomInfo { pub: boolean; mode: 'survivor' | 'td'; map: string; cfg: Record<string, unknown> | null }
+interface RoomInfo { pub: boolean; mode: 'survivor' | 'td'; map: string; cfg: Record<string, unknown> | null; code: string }
 /** `started`: cuándo empezó la partida en grupo (0 si la sala sigue en el vestíbulo). */
 interface Room {
   id: string; host: number; open: boolean; started: number; created: number; members: Map<number, Member>;
   info: RoomInfo; watchers: Map<number, { uid: number; name: string }>;
   /** Los últimos mensajes del chat (sólo en memoria). */
   chat: ChatMsg[];
+  /** Los que ha sacado el anfitrión: no vuelven con el código ni desde la lista (sólo en memoria). */
+  kicked: Set<number>;
 }
 /** Espectadores por sala, como mucho. */
 export const MAX_WATCHERS = 8;
-const newInfo = (): RoomInfo => ({ pub: false, mode: 'survivor', map: 'random', cfg: null });
+const newInfo = (): RoomInfo => ({ pub: false, mode: 'survivor', map: 'random', cfg: null, code: '' });
 /** La información guardada (JSON) de una sala, con lo que falte por defecto. */
 function readInfo(s: string | undefined): RoomInfo {
   const i = newInfo();
@@ -149,6 +167,7 @@ function readInfo(s: string | undefined): RoomInfo {
       i.pub = v.pub === true; i.mode = v.mode === 'td' ? 'td' : 'survivor';
       if (typeof v.map === 'string' && v.map.length <= 20) i.map = v.map;
       if (v.cfg && typeof v.cfg === 'object') i.cfg = v.cfg;
+      if (typeof v.code === 'string' && CODE_RE.test(v.code)) i.code = v.code;
     }
   } catch { /* JSON roto: por defecto */ }
   return i;
@@ -173,6 +192,8 @@ export interface Conn {
   chatAt: number[]; lastChat: string; lastChatAt: number;
   /** Cuándo lanzó sus últimas señales en el mapa. */
   pingAt: number[];
+  /** Cuándo probó un código de sala que no existía. */
+  codeMiss: number[];
 }
 
 const newRoomId = () => Buffer.from(crypto.getRandomValues(new Uint8Array(9))).toString('base64url');
@@ -260,7 +281,7 @@ export function createRealtime(db: Db, opts: RealtimeOptions = {}) {
   /** Los de la sala que juegan (los que sólo miran no ocupan plaza: tienen su tope, MAX_WATCHERS). */
   const playersOf = (r: Room) => [...r.members.values()].filter(m => !m.spec).length;
   const snapshot = (r: Room) => ({
-    id: r.id, host: String(r.host), open: r.open, started: r.started > 0, pub: r.info.pub, mode: r.info.mode, map: r.info.map, max: maxOf(r),
+    id: r.id, code: r.info.code, host: String(r.host), open: r.open, started: r.started > 0, pub: r.info.pub, mode: r.info.mode, map: r.info.map, max: maxOf(r),
     members: [...r.members.values()].map(m => ({ uid: String(m.uid), name: m.name, dex: m.dex, shiny: m.shiny, away: !conns.has(m.uid), spec: !!m.spec })),
     watchers: [...r.watchers.values()].map(w => ({ uid: String(w.uid), name: w.name })),
   });
@@ -276,6 +297,17 @@ export function createRealtime(db: Db, opts: RealtimeOptions = {}) {
     members: [...r.members.values()].map(m => ({ uid: m.uid, dex: m.dex, shiny: m.shiny })),
     info: JSON.stringify(r.info),
   }, now());
+
+  /** Un código que no tenga ninguna otra sala. */
+  function newCode() {
+    const used = new Set([...rooms.values()].map(r => r.info.code));
+    for (;;) {
+      const b = crypto.getRandomValues(new Uint8Array(6));
+      const c = Array.from(b, x => CODE_ABC[x % CODE_ABC.length]).join('');
+      if (!used.has(c)) return c;
+    }
+  }
+  const byCode = (code: string) => [...rooms.values()].find(r => r.info.code === code);
 
   // ---------------- espectadores ----------------
 
@@ -341,7 +373,9 @@ export function createRealtime(db: Db, opts: RealtimeOptions = {}) {
     }
     if (!members.has(rec.host)) { store.deleteRoom(rec.id); continue; }
     const r: Room = { id: rec.id, host: rec.host, open: rec.open, started: rec.started, created: rec.created, members,
-                      info: readInfo(rec.info), watchers: new Map(), chat: [] };
+                      info: readInfo(rec.info), watchers: new Map(), chat: [], kicked: new Set() };
+    // Salas de antes de los códigos (o con uno repetido): uno nuevo.
+    if (!r.info.code || byCode(r.info.code)) { r.info.code = newCode(); rooms.set(r.id, r); persist(r); }
     rooms.set(r.id, r);
     for (const id of members.keys()) { roomOf.set(id, r); markAway(id); }
   }
@@ -353,7 +387,7 @@ export function createRealtime(db: Db, opts: RealtimeOptions = {}) {
   function open(ws: ServerWebSocket<WsData>) {
     const u = ws.data.user;
     const c: Conn = { ws, id: u.id, name: u.name, play: false, gone: false, since: now(), msgs: msgBurst, bytes: byteBurst, t: now(), bad: 0, badT: 0,
-                      chatAt: [], lastChat: '', lastChatAt: 0, pingAt: [] };
+                      chatAt: [], lastChat: '', lastChatAt: 0, pingAt: [], codeMiss: [] };
     ws.data.c = c;
     const old = conns.get(u.id);
     if (old) {
@@ -441,7 +475,8 @@ export function createRealtime(db: Db, opts: RealtimeOptions = {}) {
         const cur = roomOf.get(c.id);
         if (cur) return reply(true, { room: snapshot(cur) });
         unwatch(c.id);
-        const r: Room = { id: newRoomId(), host: c.id, open: true, started: 0, created: now(), members: new Map(), info: newInfo(), watchers: new Map(), chat: [] };
+        const r: Room = { id: newRoomId(), host: c.id, open: true, started: 0, created: now(), members: new Map(), info: newInfo(), watchers: new Map(), chat: [], kicked: new Set() };
+        r.info.code = newCode();
         r.members.set(c.id, { uid: c.id, name: c.name, dex: m.dex, shiny: m.shiny });
         rooms.set(r.id, r); roomOf.set(c.id, r);
         persist(r);
@@ -450,17 +485,29 @@ export function createRealtime(db: Db, opts: RealtimeOptions = {}) {
       }
 
       case 'room.join': {
-        if (typeof m.id !== 'string' || !ID.test(m.id) || !validDex(m.dex) || typeof m.shiny !== 'boolean') return bad('Mensaje no válido.');
+        const withCode = m.id === undefined && typeof m.code === 'string';
+        if ((!withCode && (typeof m.id !== 'string' || !ID.test(m.id))) || !validDex(m.dex) || typeof m.shiny !== 'boolean') return bad('Mensaje no válido.');
+        let r: Room | undefined;
+        if (withCode) {
+          // El código vale de invitación (también en las privadas). Los fallos, contados: nada de probar códigos al azar.
+          const t = now();
+          c.codeMiss = c.codeMiss.filter(x => t - x < CODE_WINDOW);
+          if (c.codeMiss.length >= CODE_TRIES) return no('Demasiados códigos equivocados: espera un minuto.');
+          const code = normCode(m.code);
+          r = CODE_RE.test(code) ? byCode(code) : undefined;
+          if (!r) { c.codeMiss.push(t); return no('No hay ninguna sala con ese código.'); }
+        } else r = rooms.get(m.id);
         const cur = roomOf.get(c.id);
-        if (cur && cur.id === m.id) return reply(true, { room: snapshot(cur) });
-        const r = rooms.get(m.id);
-        // En una sala pública se entra sin invitación (y sin ser amigos); en una privada, sólo invitado por un amigo.
-        if (!r || !r.info.pub) {
+        if (cur && r && cur.id === r.id) return reply(true, { room: snapshot(cur) });
+        if (r && r.kicked.has(c.id) && (withCode || r.info.pub) && !invites.get(c.id)?.get(r.host)) return no('El anfitrión te ha sacado de esa sala.');
+        // En una sala pública se entra sin invitación (y sin ser amigos); en una privada, invitado por un amigo o con su código.
+        if (!withCode && (!r || !r.info.pub)) {
           const iv = r && invites.get(c.id)?.get(r.host);
           if (!r || !iv || iv.room !== r.id) return no('Esa sala ya no existe o no te han invitado.');
           if (!live(iv)) { dropInvite(c.id, r.host); return no('La invitación ha caducado.'); }
           if (!store.isFriend(c.id, r.host)) { dropInvite(c.id, r.host); return no('Sólo puedes entrar en la sala de un amigo.'); }
         }
+        if (!r) return no('Esa sala ya no existe.');
         if (!r.open) return no('La partida de esa sala ya ha empezado.');
         unwatch(c.id);
         if (playersOf(r) >= maxOf(r)) return no(`La sala está llena (máximo ${maxOf(r)}).`);
@@ -478,6 +525,32 @@ export function createRealtime(db: Db, opts: RealtimeOptions = {}) {
 
       case 'room.leave': {
         leaveRoom(c.id, 'left');
+        return reply(true);
+      }
+
+      case 'room.recode': {
+        const r = roomOf.get(c.id);
+        if (!r) return no('No estás en ninguna sala.');
+        if (r.host !== c.id) return bad('Sólo el anfitrión gobierna la sala.');
+        r.info.code = newCode();
+        persist(r);
+        tellRoom(r);
+        return reply(true, { code: r.info.code });
+      }
+
+      case 'room.kick': {
+        const who = parseUid(m.uid);
+        if (who === null) return bad('Mensaje no válido.');
+        const r = roomOf.get(c.id);
+        if (!r) return no('No estás en ninguna sala.');
+        if (r.host !== c.id) return bad('Sólo el anfitrión gobierna la sala.');
+        if (who === c.id) return no('No puedes sacarte a ti mismo.');
+        if (!r.members.has(who)) return no('Ya no está en la sala.');
+        if (r.started) return no('La partida ya ha empezado.');
+        r.kicked.add(who);
+        dropInvite(who, r.host);
+        send(who, { k: 'room', room: null, why: 'kicked' });
+        leaveRoom(who, 'kicked');
         return reply(true);
       }
 

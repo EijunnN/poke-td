@@ -19,6 +19,12 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { d: '2026-10-16', title: ['Códigos de sala', 'Room codes'], new: [
+    ['Cada sala tiene un código (p. ej. K7QM4X) y un enlace para compartir: quien lo tenga entra en la sala aunque no sea tu amigo, también si es privada. Se escribe en «Salas públicas» → «Entrar con código», o se abre el enlace.',
+     'Every room has a code (e.g. K7QM4X) and a link to share: whoever has it joins the room even if they are not your friend, private rooms too. Type it in “Public rooms” → “Join with code”, or open the link.'],
+    ['El anfitrión puede cambiar el código (el de antes deja de valer) y sacar a alguien de la sala antes de empezar.',
+     'The host can change the code (the old one stops working) and remove someone from the room before starting.'],
+  ] },
   { d: '2026-10-15', title: ['PokéTD: chat en las salas', 'PokéTD: room chat'], chg: [
     ['El juego pasa a llamarse PokéTD: tiene hordas, defensa de torres y juego en grupo. (Nació como fork de PokéSurvivor.)',
      'The game is now called PokéTD: it has hordes, tower defense and group play. (It started as a fork of PokéSurvivor.)']

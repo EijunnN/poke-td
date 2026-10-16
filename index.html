@@ -286,6 +286,10 @@
     <div class="row between"><h2>Salas públicas</h2>
       <div class="row"><button id="rooms-create" class="btn small gold">Crear sala pública</button><button id="rooms-refresh" class="btn small">Actualizar</button><button class="btn small ghost" data-back>Volver</button></div></div>
     <p class="sub">Entra en una sala que espera jugadores, o mira una partida que ya ha empezado.</p>
+    <form id="rooms-code" class="row" autocomplete="off">
+      <input id="rooms-code-in" class="field grow" maxlength="9" spellcheck="false" autocapitalize="characters" placeholder="Código de una sala (p. ej. K7QM4X)">
+      <button class="btn gold" type="submit" data-sfx="confirm">Entrar con código</button>
+    </form>
     <div class="filters" id="rooms-filter"></div>
     <div id="rooms-list" class="fr-list"></div>
     <p class="note" id="rooms-note"></p>
@@ -312,6 +316,7 @@
     <div class="row between"><h2>Sala</h2>
       <div class="row"><button id="lobby-menu" class="btn small ghost">Menú</button><button id="lobby-leave" class="btn small ghost">Salir de la sala</button></div></div>
     <p class="sub" id="lobby-sub"></p>
+    <div id="lobby-code" class="row lobby-code"></div>
     <div id="lobby-members" class="lobby-members"></div>
     <div id="lobby-mode" class="row lobby-mode"></div>
     <div id="lobby-chat" class="lobby-chat hidden"></div>

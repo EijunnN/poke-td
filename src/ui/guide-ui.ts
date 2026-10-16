@@ -127,8 +127,8 @@ export const GuideUI = (() => {
                `On the leaderboard (Defense and Group Defense tabs) what counts is the waves you clear (up to ${MAX_WAVE}) and, on a tie, the lives you have left.`)}</p>`
       + h('En grupo', 'With friends')
       + ul([
-        ['Crea una sala desde Amigos, invita a tus amigos (hasta 4) y, como anfitrión, elige <b>Defensa</b> y el mapa antes de empezar.',
-         'Create a room from Friends, invite your friends (up to 4) and, as the host, choose <b>Defense</b> and the map before starting.'],
+        ['Crea una sala desde Amigos, invita a tus amigos o pásales el código de la sala (hasta 6 u 8, según el mapa) y, como anfitrión, elige <b>Defensa</b> y el mapa antes de empezar.',
+         'Create a room from Friends, invite your friends or give them the room code (up to 6 or 8, depending on the map) and, as the host, choose <b>Defense</b> and the map before starting.'],
         ['Las <b>vidas</b> son de todos; las <b>monedas</b>, de cada uno. Por cada enemigo y cada oleada cobráis todos lo mismo, y los enemigos tienen más vida cuantos más sois.',
          '<b>Lives</b> are shared; <b>coins</b> belong to each player. Everyone earns the same for each enemy and each wave, and enemies have more HP the more of you there are.'],
         ['Cada torre es de quien la compra (el anillo de su color): sólo él la mejora, la vende o elige a quién ataca. Las de un compañero que se va pasan al anfitrión.',
@@ -204,11 +204,11 @@ export const GuideUI = (() => {
        'Sí: Pokémonedas para tu cuenta según las oleadas que superes y los enemigos que caigan (más si ganas), y cuenta para misiones, logros y su propio ranking. Las monedas de la tienda son sólo para esa partida.',
        'Yes: Pokécoins for your account depending on the waves you clear and the enemies defeated (more if you win), and it counts for missions, achievements and its own leaderboard. Shop coins only last for that game.'],
       ['¿Puedo jugar con gente que no es mi amiga?', 'Can I play with people who are not my friends?',
-       'Sí: en tu sala marca «Sala pública» y saldrá en «Salas públicas» (en el menú). Cualquiera puede entrar mientras estáis en la sala; si ya habéis empezado, sólo puede mirar la partida como espectador (no juega ni gana nada). Sirve para Survivor y para Defensa.',
-       'Yes: in your room tick “Public room” and it will show in “Public rooms” (in the menu). Anyone can join while you are in the room; once you have started, they can only watch the game as a spectator (they do not play or earn anything). It works for Survivor and Defense.'],
+       'Sí, de dos formas. Pásale el <b>código</b> de tu sala (o su enlace, con «Copiar enlace»): entra aunque no seáis amigos, también en una sala privada; lo escribe en «Salas públicas» → «Entrar con código». O marca «Sala pública» y saldrá en «Salas públicas» (en el menú): cualquiera puede entrar mientras estáis en la sala; si ya habéis empezado, sólo puede mirar la partida como espectador (no juega ni gana nada). Como anfitrión, puedes cambiar el código y sacar a alguien antes de empezar. Sirve para Survivor y para Defensa.',
+       'Yes, in two ways. Give them your room <b>code</b> (or its link, with “Copy link”): they join even if you are not friends, private rooms too; they type it in “Public rooms” → “Join with code”. Or tick “Public room” and it will show in “Public rooms” (in the menu): anyone can join while you are in the room; once you have started, they can only watch the game as a spectator (they do not play or earn anything). As the host you can change the code and remove someone before starting. It works for Survivor and Defense.'],
       ['¿Puedo jugar la Defensa con amigos?', 'Can I play Defense with friends?',
-       'Sí, hasta 4: desde una sala, el anfitrión elige Defensa. Cada uno compra sus torres con sus monedas y las vidas son de todos.',
-       'Yes, up to 4: from a room, the host chooses Defense. Each player buys their own towers with their own coins, and lives are shared.'],
+       'Sí, hasta 6 u 8 según el mapa: desde una sala, el anfitrión elige Defensa. Cada uno compra sus torres con sus monedas y las vidas son de todos.',
+       'Yes, up to 6 or 8 depending on the map: from a room, the host chooses Defense. Each player buys their own towers with their own coins, and lives are shared.'],
       ['¿Es un juego oficial de Pokémon?', 'Is it an official Pokémon game?',
        'No. Es un proyecto de fans, gratuito y sin ánimo de lucro, sin relación con Nintendo, GAME FREAK ni The Pokémon Company.',
        'No. It is a free, non-profit fan project, not affiliated with Nintendo, GAME FREAK or The Pokémon Company.'],

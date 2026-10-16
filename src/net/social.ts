@@ -20,6 +20,10 @@ import type { CoopConfig } from './coop';
  * `listRooms`; cualquiera entra sin invitación mientras están en la sala, y si ya juegan, sólo
  * puede MIRAR (`watch`): `watching` es la sala que miras y la partida que mandó el anfitrión.
  *
+ * Cada sala tiene un CÓDIGO corto (`room.code`, p. ej. K7QM4X) que vale de invitación, también en
+ * las privadas y sin ser amigos: se escribe en Salas o se comparte como enlace (/s/K7QM4X). El
+ * anfitrión puede cambiarlo (`recode`) y sacar a alguien antes de empezar (`kick`).
+ *
  * El resto del juego escucha los cambios con G.Social.on(fn): 'friends', 'presence',
  * 'invites', 'room', 'room-closed', 'watch', 'watch-ended' y 'stop'.
  */
@@ -40,7 +44,7 @@ export interface Member { uid: string; name: string; dex: number; shiny: boolean
  * su modo y mapa. `watchers`: los que la miran (no juegan).
  */
 export interface Room {
-  id: string; host: string; isHost: boolean; members: Member[]; open: boolean; started: boolean;
+  id: string; code: string; host: string; isHost: boolean; members: Member[]; open: boolean; started: boolean;
   pub: boolean; mode: 'survivor' | 'td'; map: string; watchers: { uid: string; name: string }[];
   /** Cuántos caben (Survivor 4; Defensa, según el mapa). */
   max: number;
@@ -56,7 +60,7 @@ export interface PublicProfile {
 type Presence = Pick<Friend, 'online' | 'play' | 'room' | 'seen'>;
 /** La sala tal y como viene del servidor (JSON; toRoom la normaliza). */
 interface RoomWire {
-  id: string; host: string; members?: Member[]; open?: boolean; started?: boolean; pub?: boolean;
+  id: string; code?: string; host: string; members?: Member[]; open?: boolean; started?: boolean; pub?: boolean;
   mode?: string; map?: unknown; watchers?: { uid: string; name: string }[]; max?: number;
 }
 
@@ -182,7 +186,7 @@ export const Social = (() => {
       case 'invx': if (invites.delete(m.from)) emit('invites'); break;
       case 'room': {
         if (m.room) applyRoom(m.room);
-        else if (room) closedRoom();
+        else if (room) closedRoom(m.why);
         break;
       }
       case 'watch': {
@@ -255,7 +259,7 @@ export const Social = (() => {
 
   /** La sala tal y como la manda el servidor. */
   function toRoom(r: RoomWire): Room {
-    return { id: r.id, host: r.host, isHost: r.host === uid, members: r.members || [], open: !!r.open, started: !!r.started,
+    return { id: r.id, code: typeof r.code === 'string' ? r.code : '', host: r.host, isHost: r.host === uid, members: r.members || [], open: !!r.open, started: !!r.started,
              pub: !!r.pub, mode: r.mode === 'td' ? 'td' : 'survivor', map: typeof r.map === 'string' ? r.map : 'random',
              watchers: Array.isArray(r.watchers) ? r.watchers : [], max: typeof r.max === 'number' && Number.isInteger(r.max) && r.max > 0 ? r.max : MAX_PLAYERS };
   }
@@ -324,12 +328,42 @@ export const Social = (() => {
     return { ok: true };
   }
 
-  /** La sala se cerró (el anfitrión se fue o se cayó la conexión). */
-  function closedRoom() {
+  /** Por qué se cerró la última sala ('kicked': te sacó el anfitrión). */
+  let closedWhy = '';
+  /** La sala se cerró (el anfitrión se fue o se cayó la conexión, o te sacó). */
+  function closedRoom(why?: unknown) {
     if (!room) return;
+    closedWhy = typeof why === 'string' ? why : '';
     room = null;
     Link.setEager(false);
     emit('room-closed');
+  }
+
+  /** Entras con el código de una sala (vale de invitación). */
+  async function joinByCode(code: string): Promise<Result> {
+    const c = code.toUpperCase().replace(/[\s-]/g, '');
+    if (!/^[A-Z0-9]{6}$/.test(c)) return { ok: false, error: 'El código tiene 6 letras y números.' };
+    if (room && room.code === c) return { ok: true };
+    if (watching) unwatch();
+    // Recién arrancado (al abrir un enlace), la conexión aún se está abriendo: se espera un poco.
+    for (let i = 0; i < 50 && Link.status !== 'open'; i++) await new Promise(ok => setTimeout(ok, 200));
+    const r = await Link.request({ k: 'room.join', code: c, ...memberInfo() }).catch(() => null);
+    if (!r || !r.ok) return { ok: false, error: (r && r.error) || 'No se pudo entrar en la sala.' };
+    if (room && room.id !== r.room.id) { room = null; }
+    applyRoom(r.room);
+    return { ok: true };
+  }
+
+  /** Anfitrión: código nuevo (el de antes deja de valer). */
+  async function recode(): Promise<Result> {
+    const r = await Link.request({ k: 'room.recode' }).catch(() => null);
+    return r && r.ok ? { ok: true } : { ok: false, error: (r && r.error) || 'No se pudo cambiar el código.' };
+  }
+
+  /** Anfitrión: saca a alguien de la sala (antes de empezar). */
+  async function kick(other: string): Promise<Result> {
+    const r = await Link.request({ k: 'room.kick', uid: other }).catch(() => null);
+    return r && r.ok ? { ok: true } : { ok: false, error: (r && r.error) || 'No se pudo.' };
   }
 
   async function leaveRoom() {
@@ -446,7 +480,7 @@ export const Social = (() => {
 
   return {
     start, stop, claimNick, request, accept, remove, publishProfile, getProfile, profileData,
-    createRoom, joinRoom, leaveRoom, setOpen, refreshMember, setPlaying, refreshPresence, setSpec, amSpec,
+    createRoom, joinRoom, joinByCode, recode, kick, leaveRoom, setOpen, refreshMember, setPlaying, refreshPresence, setSpec, amSpec,
     setPublic, listRooms, watch, unwatch,
     invite, acceptInvite, declineInvite,
     on(fn: (what: string) => void) { listeners.add(fn); }, off(fn: (what: string) => void) { listeners.delete(fn); },
@@ -455,6 +489,7 @@ export const Social = (() => {
     get friends() { return [...friends.values()]; },
     get invites() { return [...invites.values()]; },
     get room() { return room; },
+    get closedWhy() { return closedWhy; },
     get watching() { return watching; },
     get uid() { return uid; },
     VALID, MAX_PLAYERS

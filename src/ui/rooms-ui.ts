@@ -4,6 +4,10 @@ import { G } from '../g';
  * (Survivor o Defensa, y el mapa), cuántos juegan y si ya han empezado. Si esperan gente,
  * "Unirse" te mete en la sala (sin invitación); si ya juegan, "Mirar" te deja ver la partida
  * como espectador (net/spectate.ts). Se actualiza sola mientras está abierta.
+ *
+ * Arriba, "Entrar con código": el código de cualquier sala (también privada; vale de invitación).
+ * Los enlaces /s/<código> llegan como /?sala=<código> (server/index.ts, roomLink): al abrir el
+ * juego se guarda y, en cuanto hay sesión con cuenta, se entra en esa sala (takeLink, desde el menú).
  */
 export const RoomsUI = (() => {
   const $ = G.UI.$;
@@ -12,7 +16,56 @@ export const RoomsUI = (() => {
   let timer: ReturnType<typeof setInterval> | null = null;
   let busy = false;
 
+  // ¿Se abrió el juego desde el enlace de una sala? Se guarda (por si hay que iniciar sesión antes) y se quita de la barra.
+  const K_LINK = 'ps.sala';
+  let linked: string | null = null, told = false;
+  try {
+    const q = new URLSearchParams(location.search).get('sala');
+    if (q && /^[A-Za-z0-9-]{4,12}$/.test(q)) {
+      sessionStorage.setItem(K_LINK, q.toUpperCase());
+      const u = new URL(location.href); u.searchParams.delete('sala');
+      history.replaceState(null, '', u.pathname + u.search + u.hash);
+    }
+    linked = sessionStorage.getItem(K_LINK);
+  } catch { /* sin sessionStorage: el enlace no se recuerda */ }
+
+  /** Entra en la sala de un código (escrito o de un enlace), pidiendo el apodo si hace falta. */
+  function joinCode(code: string, done?: (ok: boolean) => void) {
+    G.Social.start().then(st => {
+      const go = async () => {
+        const r = await G.Social.joinByCode(code);
+        done?.(r.ok);
+        if (r.ok) G.LobbyUI.open(); else G.UI.toast(r.error || 'No se pudo entrar.', 3200);
+      };
+      if (st === 'ok') go(); else if (st === 'need-nick') G.NickUI.open(go); else done?.(false);
+    });
+  }
+
+  /** Desde el menú: si el juego se abrió con el enlace de una sala, entra en ella (con cuenta; si no, avisa). */
+  function takeLink() {
+    if (!linked) return;
+    if (!G.DB.online) {
+      if (!told) { told = true; G.UI.toast(G.I18n.f('Para entrar en la sala {x}, inicia sesión con tu cuenta (o crea una).', linked), 6000); }
+      return;
+    }
+    const code = linked;
+    linked = null;
+    try { sessionStorage.removeItem(K_LINK); } catch { /* nada */ }
+    if (G.Social.room && G.Social.room.code === code) { G.LobbyUI.open(); return; }
+    joinCode(code);
+  }
+
   function init() {
+    $('rooms-code').onsubmit = (e: Event) => {
+      e.preventDefault();
+      const inp = $<HTMLInputElement>('rooms-code-in');
+      const code = inp.value.trim();
+      if (!code) return;
+      if (!G.SocialUI.needOnline()) return;
+      const btn = $('rooms-code').querySelector('button')!;
+      btn.disabled = true;
+      joinCode(code, ok => { btn.disabled = false; if (ok) inp.value = ''; });
+    };
     $('rooms-refresh').onclick = () => load();
     // Tu propia sala: si ya tienes una, a ella; si no, se crea pública (para que otros la vean aquí).
     $('rooms-create').onclick = async () => {
@@ -91,7 +144,7 @@ export const RoomsUI = (() => {
     } finally { busy = false; }
   }
 
-  return { init, open, load };
+  return { init, open, load, takeLink };
 })();
 G.RoomsUI = RoomsUI;
 

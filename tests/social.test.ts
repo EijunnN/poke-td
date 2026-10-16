@@ -1570,3 +1570,104 @@ describe('señales en el mapa', () => {
     expect(wc.req({ k: 'mark', x: 5, y: 5 }).ok).toBe(true);                     // también quien mira
   });
 });
+
+describe('códigos de sala', () => {
+  const CODE = /^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{6}$/;
+
+  test('cada sala tiene un código; con él entra cualquiera (sin ser amigos, sala privada), escrito como sea', async () => {
+    const h = account(), x = account();
+    const hc = online(h), xc = online(x);
+    const room = hc.req({ k: 'room.new', dex: 25, shiny: false }).room;
+    expect(room.code).toMatch(CODE);
+    expect(room.pub).toBe(false);
+    // Sin código ni invitación, no.
+    expect(xc.req({ k: 'room.join', id: room.id, dex: 4, shiny: false }).ok).toBe(false);
+    const typed = room.code.slice(0, 3).toLowerCase() + ' - ' + room.code.slice(3);
+    const j = xc.req({ k: 'room.join', code: typed, dex: 4, shiny: false });
+    expect(j.ok).toBe(true);
+    expect(j.room.id).toBe(room.id);
+    expect(hc.take(m => m.k === 'room' && m.room.members.length === 2).room.code).toBe(room.code);
+    // Otra sala, otro código.
+    const y = account();
+    expect(online(y).req({ k: 'room.new', dex: 1, shiny: false }).room.code).not.toBe(room.code);
+  });
+
+  test('probar códigos al azar: tras 8 fallos en un minuto, ni el bueno vale; pasado el minuto, sí', async () => {
+    const h = account(), x = account();
+    const room = online(h).req({ k: 'room.new', dex: 25, shiny: false }).room;
+    const xc = online(x);
+    for (let i = 0; i < 8; i++) expect(xc.req({ k: 'room.join', code: 'ZZZZZ' + (i + 2), dex: 4, shiny: false }).error).toBe('No hay ninguna sala con ese código.');
+    expect(xc.req({ k: 'room.join', code: room.code, dex: 4, shiny: false }).error).toMatch(/espera un minuto/);
+    expect(xc.closed).toBeNull();                         // un código equivocado no es una falta
+    advance(60_000);
+    expect(xc.req({ k: 'room.join', code: room.code, dex: 4, shiny: false }).ok).toBe(true);
+  });
+
+  test('cambiar el código: el viejo deja de valer; sólo el anfitrión', async () => {
+    const h = account(), x = account(), y = account();
+    const hc = online(h), xc = online(x), yc = online(y);
+    const room = hc.req({ k: 'room.new', dex: 25, shiny: false }).room;
+    expect(xc.req({ k: 'room.join', code: room.code, dex: 4, shiny: false }).ok).toBe(true);
+    expect(xc.req({ k: 'room.recode' }).ok).toBe(false);
+    const r = hc.req({ k: 'room.recode' });
+    expect(r.ok).toBe(true);
+    expect(r.code).toMatch(CODE);
+    expect(r.code).not.toBe(room.code);
+    expect(xc.take(m => m.k === 'room' && m.room.code === r.code)).toBeTruthy();       // los de dentro lo ven
+    expect(yc.req({ k: 'room.join', code: room.code, dex: 4, shiny: false }).ok).toBe(false);
+    expect(yc.req({ k: 'room.join', code: r.code, dex: 4, shiny: false }).ok).toBe(true);
+  });
+
+  test('sacar a alguien: se entera, no vuelve con el código ni desde la lista; con invitación, sí. Empezada la partida, no se saca', async () => {
+    const h = account(), x = account(), y = account();
+    const hc = online(h), xc = online(x), yc = online(y);
+    const room = hc.req({ k: 'room.new', dex: 25, shiny: false }).room;
+    hc.req({ k: 'room.pub', v: true, mode: 'survivor', map: 'random' });
+    expect(xc.req({ k: 'room.join', code: room.code, dex: 4, shiny: false }).ok).toBe(true);
+    expect(yc.req({ k: 'room.join', id: room.id, dex: 7, shiny: false }).ok).toBe(true);
+    expect(xc.req({ k: 'room.kick', uid: y.uid }).ok).toBe(false);                     // sólo el anfitrión
+    expect(hc.req({ k: 'room.kick', uid: h.uid }).ok).toBe(false);
+    expect(hc.req({ k: 'room.kick', uid: x.uid }).ok).toBe(true);
+    expect(xc.take(m => m.k === 'room' && m.room === null).why).toBe('kicked');
+    expect(hc.take(m => m.k === 'room' && m.room.members.length === 2 && m.room.members.every((u: any) => u.uid !== x.uid)).room.members.map((m: any) => m.uid)).toEqual([h.uid, y.uid]);
+    expect(xc.req({ k: 'room.join', code: room.code, dex: 4, shiny: false }).error).toBe('El anfitrión te ha sacado de esa sala.');
+    expect(xc.req({ k: 'room.join', id: room.id, dex: 4, shiny: false }).ok).toBe(false);
+    // Si el anfitrión le vuelve a invitar (son amigos), entra.
+    await befriend(h, x);
+    expect(hc.req({ k: 'inv', to: x.uid }).ok).toBe(true);
+    expect(xc.req({ k: 'room.join', id: room.id, dex: 4, shiny: false }).ok).toBe(true);
+    // Con la partida empezada, no.
+    hc.req({ k: 'room.open', v: false });
+    hc.send({ k: 'g', d: { k: 'start', seed: 1, host: h.uid, members: [] } });
+    expect(hc.req({ k: 'room.kick', uid: y.uid }).error).toBe('La partida ya ha empezado.');
+  });
+
+  test('el enlace /s/<código> lleva al juego con ?sala=', async () => {
+    const r = await fetch(E.base + '/s/k7qm4x', { redirect: 'manual' });
+    expect(r.status).toBe(302);
+    expect(r.headers.get('location')).toBe('/?sala=K7QM4X');
+    expect((await fetch(E.base + '/s/../../etc', { redirect: 'manual' })).status).not.toBe(302);
+  });
+});
+
+describe('códigos de sala tras un reinicio', () => {
+  beforeEach(() => { fresh({ file: true }); });
+
+  test('la sala conserva su código y sigue valiendo; las salas guardadas sin código reciben uno', async () => {
+    const h = account(), x = account();
+    const room = online(h).req({ k: 'room.new', dex: 25, shiny: false }).room;
+    E.restart(() => {
+      // Una sala guardada antes de que existieran los códigos.
+      const db = new Database(E.dbPath);
+      db.run(`UPDATE rooms SET info = '{"pub":false,"mode":"survivor","map":"random"}' WHERE id = ?`, [room.id]);
+      db.close();
+    });
+    const hc = online(h);
+    const code = hc.hello.room.code;
+    expect(code).toMatch(CODE_RE);
+    expect(online(x).req({ k: 'room.join', code, dex: 4, shiny: false }).ok).toBe(true);
+    E.restart();
+    expect(online(h).hello.room.code).toBe(code);
+  });
+  const CODE_RE = /^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{6}$/;
+});

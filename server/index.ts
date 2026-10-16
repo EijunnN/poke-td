@@ -27,6 +27,12 @@ const ROOT = join(import.meta.dir, '..');
 /** Sprites, fuente e iconos no cambian nunca; lo empaquetado lleva huella en el nombre. */
 const FOREVER = /^\/(assets|build)\//;
 
+/** /s/<código> → /?sala=<código> (el juego usa rutas relativas: no puede abrirse desde /s/). */
+export function roomLink(path: string) {
+  const m = /^\/s\/([A-Za-z0-9-]{4,12})\/?$/.exec(path);
+  return m ? new Response(null, { status: 302, headers: { Location: '/?sala=' + m[1].toUpperCase(), 'Cache-Control': 'no-store' } }) : null;
+}
+
 export interface ServerOptions {
   port?: number;
   dbPath?: string;
@@ -82,6 +88,9 @@ export function startServer(o: ServerOptions = {}) {
         if (!s) return new Response('Sesión caducada', { status: 401 });
         return srv?.upgrade(req, { data: { user: s.user } }) ? undefined : new Response('Se esperaba un WebSocket', { status: 400 });
       }
+      // Enlace de una sala (/s/K7QM4X): al juego, que entra en ella (src/ui/rooms-ui.ts, fromLink).
+      const link = roomLink(new URL(req.url).pathname);
+      if (link) return link;
       const res = await api.handle(req, ip);
       if (res) return res;
       if (req.method !== 'GET' && req.method !== 'HEAD') return new Response('Method not allowed', { status: 405 });
