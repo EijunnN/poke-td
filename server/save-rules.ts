@@ -35,6 +35,19 @@
  *   El margen fijo (k) también es proporcional a ese tiempo, hasta LIMITS.marginSecs: si valiera
  *   entero con un minuto, un script que subiera cada minuto lo cobraría cada vez. (Por eso PUT /api/save no
  *   necesita tope de frecuencia: api.ts, SAVE_GAP.)
+ *
+ * Depósito de margen (por cuenta, en la tabla save_budget): los tickets llegan A GOLPES (un ×10 de
+ * un jefe, del legendario de la grieta, de Gholdengo o de un cofre grande vale 10 tiradas de una vez,
+ * y en una partida con suerte caen varios), mientras que el presupuesto de arriba los reparte por
+ * tiempo. Lo que un guardado traiga de más sobre ese presupuesto se paga de un depósito que se llena
+ * con el tiempo real (BUDGET.rate por segundo) hasta BUDGET.cap. Sin él, una racha de suerte con
+ * guardados seguidos (los tickets se guardan al cogerlos, como mucho cada 30 s) marcaba la cuenta.
+ * Sólo cubre tickets NUEVOS guardados (lo que llega por suerte): no Pokémon, shinies ni monedas que
+ * no se expliquen (ésos llegan con tickets ya guardados: gastarlos en el gacha es otro guardado).
+ * Calibrado con las cuentas reales (2026-10-16): la que más, 197 tiradas en 11,8 h contando los
+ * premios de logros (≈0,3 por minuto); el depósito rellena 6 por minuto, y guarda hasta 80 (8 ×10:
+ * una partida con mucha suerte). Un script que invente tickets lo vacía en minutos y queda marcado; uno
+ * que invente Pokémon, a la primera, como antes (tests/save-rules.test.ts).
  *   Cambios respecto a las reglas originales: el tope de tiempo por guardado pasa de
  *   3 h a 12 h (el cliente ya no guarda cada 2 h y una tarde sin conexión no debe
  *   marcar a nadie) y el premio de cada logro se mira en una tabla con los premios
@@ -50,6 +63,9 @@ const size = (v: unknown) => (isObj(v) ? Object.keys(v).length : 0);
 
 /** Las colecciones que sólo crecen (clave -> cuándo). Igual que el union de db.ts, merge. */
 const GROWING = ['owned', 'shiny', 'legends', 'arenas', 'itemsFound', 'evoMoves', 'ach'] as const;
+
+/** El depósito de margen (ver la cabecera): tiradas por segundo de tiempo real, y tope. */
+export const BUDGET = { rate: 0.1, cap: 80 };
 
 /** Tiradas que vale el premio de cada logro (ticket x1 = 1, x10 = 10, 300 monedas = 1). */
 export const ACH_VALUE: Record<string, number> = {
@@ -76,7 +92,8 @@ export const LIMITS = {
 };
 
 export type Verdict =
-  | { kind: 'ok'; save: Obj }
+  /** `used`: lo que se ha pagado del depósito de margen (tiradas). */
+  | { kind: 'ok'; save: Obj; used?: number }
   | { kind: 'sus'; save: Obj; why: string }
   | { kind: 'reject'; error: string };
 
@@ -126,12 +143,15 @@ function freshSave(s: Obj, now: number): string | null {
   return null;
 }
 
-/** ¿Puede ser la continuación de `o` pasados `secs` segundos? → el motivo si no */
-function possibleSave(o: Obj, n: Obj, secs: number, now: number): string | null {
-  if (num(n.created) !== num(o.created)) return 'la fecha de creación ha cambiado';
-  if (size(n.ach) > LIMITS.ach) return 'demasiados logros';
+/**
+ * ¿Puede ser la continuación de `o` pasados `secs` segundos? → el motivo si no (`short`: las tiradas que
+ * faltan en el presupuesto; si es eso lo único, el depósito de margen puede cubrirlas)
+ */
+function possibleSave(o: Obj, n: Obj, secs: number, now: number): { why: string; short?: number; gain?: number } | null {
+  if (num(n.created) !== num(o.created)) return { why: 'la fecha de creación ha cambiado' };
+  if (size(n.ach) > LIMITS.ach) return { why: 'demasiados logros' };
   const dm = mis(n) - mis(o);
-  if (mis(n) > 10 + (now - num(o.created)) / 86400000 * 5) return 'demasiadas misiones para los días que lleva la partida';
+  if (mis(n) > 10 + (now - num(o.created)) / 86400000 * 5) return { why: 'demasiadas misiones para los días que lleva la partida' };
 
   const e = Math.min(Math.max(secs, 0), LIMITS.gapSecs);          // segundos de juego que pudo haber
   const k = Math.min(Math.max(secs, 0) / LIMITS.marginSecs, 1);   // margen fijo (0-1): proporcional al tiempo real desde el último guardado, así subir a menudo no lo multiplica
@@ -148,7 +168,9 @@ function possibleSave(o: Obj, n: Obj, secs: number, now: number): string | null 
     Math.max(size(n.shiny) - size(o.shiny) - 2 * k - e / 900,
       // monedas: lo de jugar, logros y misiones; lo que sobre, reembolsos del gacha (< 300 por tirada)
       (num(n.coins) - num(o.coins) - 8000 * k - 40 * e - 1000 * dm) / 300));
-  return have >= need ? null : 'más de lo que se puede ganar en ese tiempo';
+  // Tiradas en tickets nuevos guardados (lo único que llega a golpes por suerte).
+  const gain = Math.max(0, tk(n, 't1') + 10 * tk(n, 't10') - tk(o, 't1') - 10 * tk(o, 't10'));
+  return have >= need ? null : { why: 'más de lo que se puede ganar en ese tiempo', short: need - have, gain };
 }
 
 /**
@@ -157,14 +179,48 @@ function possibleSave(o: Obj, n: Obj, secs: number, now: number): string | null 
  * @param o.secs    segundos reales desde el guardado anterior (hora del servidor)
  * @param o.now     hora actual en ms
  * @param o.marked  la cuenta ya está marcada: no se vuelve a juzgar
+ * @param o.budget  tiradas en el depósito de margen de la cuenta (ver la cabecera; sin él, 0)
  */
-export function judgeSave(prev: Obj | null, next: Obj, o: { secs: number; now: number; marked?: boolean }): Verdict {
+export function judgeSave(prev: Obj | null, next: Obj, o: { secs: number; now: number; marked?: boolean; budget?: number }): Verdict {
   const bad = shapeError(next);
   if (bad) return { kind: 'reject', error: 'Partida no válida (' + bad + ').' };
   const save = prev && isObj(prev) ? keepProgress(prev, next) : next;
   if (o.marked) return { kind: 'ok', save };
-  const why = saneSave(save) ?? (prev && isObj(prev) ? possibleSave(prev, save, o.secs, o.now) : freshSave(save, o.now));
-  return why ? { kind: 'sus', save, why } : { kind: 'ok', save };
+  const sane = saneSave(save) ?? (prev && isObj(prev) ? null : freshSave(save, o.now));
+  if (sane) return { kind: 'sus', save, why: sane };
+  if (!prev || !isObj(prev)) return { kind: 'ok', save };
+  const p = possibleSave(prev, save, o.secs, o.now);
+  if (!p) return { kind: 'ok', save };
+  // Sólo falta presupuesto, y por tickets nuevos (una racha de suerte): si el depósito alcanza, se paga
+  // de ahí. Pokémon, shinies o monedas sin tickets que los expliquen no son suerte: eso no lo cubre.
+  if (p.short !== undefined && p.short <= Math.min(p.gain ?? 0, Math.max(0, o.budget ?? 0))) return { kind: 'ok', save, used: p.short };
+  return { kind: 'sus', save, why: p.why };
+}
+
+// ---------------- depósito de margen (tabla save_budget) ----------------
+
+const budgetReady = new WeakSet<Db>();
+function ensureBudget(db: Db) {
+  if (budgetReady.has(db)) return;
+  db.raw.exec(`CREATE TABLE IF NOT EXISTS save_budget (
+    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    tokens REAL NOT NULL,
+    at INTEGER NOT NULL
+  )`);
+  budgetReady.add(db);
+}
+/** Las tiradas del depósito de la cuenta ahora: lo que quedaba más lo rellenado desde entonces (lleno si no tenía). */
+export function readBudget(db: Db, userId: number, now = Date.now()) {
+  ensureBudget(db);
+  const r = db.raw.query<{ tokens: number; at: number }, [number]>('SELECT tokens, at FROM save_budget WHERE user_id = ?').get(userId);
+  if (!r) return BUDGET.cap;
+  return Math.min(BUDGET.cap, r.tokens + Math.max(0, now - r.at) / 1000 * BUDGET.rate);
+}
+function writeBudget(db: Db, userId: number, tokens: number, now: number) {
+  ensureBudget(db);
+  db.raw.query<unknown, [number, number, number]>(
+    'INSERT INTO save_budget (user_id, tokens, at) VALUES (?1, ?2, ?3) ON CONFLICT(user_id) DO UPDATE SET tokens = excluded.tokens, at = excluded.at')
+    .run(userId, Math.max(0, Math.min(BUDGET.cap, tokens)), now);
 }
 
 /**
@@ -179,11 +235,15 @@ export function vetSave(db: Db, userId: number, save: Obj, base: number):
   let prev: Obj | null = null;
   try { if (cur) prev = JSON.parse(cur.data); } catch { /* partida guardada ilegible: se trata como nueva */ }
   const now = Date.now();
+  const budget = readBudget(db, userId, now);
   // (Una partida guardada que no se puede leer no sirve de referencia: no se juzga.)
-  const v = judgeSave(prev, save, { secs: cur ? (now - cur.updated) / 1000 : 0, now, marked: isMarkedAccount(db, userId) || (!!cur && !prev) });
+  const v = judgeSave(prev, save, { secs: cur ? (now - cur.updated) / 1000 : 0, now, marked: isMarkedAccount(db, userId) || (!!cur && !prev), budget });
   if (v.kind === 'reject') return { ok: false, error: v.error };
   return {
     ok: true, save: v.save,
-    stored: () => { if (v.kind === 'sus') { markAccount(db, userId, now); console.warn(`[save] cuenta ${userId} marcada: ${v.why}`); } },
+    stored: () => {
+      if (v.kind === 'sus') { markAccount(db, userId, now); console.warn(`[save] cuenta ${userId} marcada: ${v.why}`); }
+      writeBudget(db, userId, budget - (v.kind === 'ok' ? v.used ?? 0 : 0), now);
+    },
   };
 }

@@ -11,7 +11,7 @@ import { readFileSync } from 'node:fs';
 import { startServer } from './helpers';
 import { sha256 } from '../server/http';
 import { isMarkedAccount } from '../server/ranking';
-import { ACH_VALUE, LIMITS, judgeSave } from '../server/save-rules';
+import { ACH_VALUE, BUDGET, LIMITS, judgeSave, readBudget } from '../server/save-rules';
 
 let srv: ReturnType<typeof startServer>;
 let base = '';
@@ -656,5 +656,78 @@ describe('PUT /api/save: campos de tipos raros', () => {
     expect((await put(u, {}, 0)).status).toBe(200);
     age(u, 100);
     expect((await put(u, { coins: 5 }, 1)).status).toBe(200);
+  });
+});
+
+describe('depósito de margen: rachas de suerte con tickets', () => {
+  const now = Date.parse('2026-10-16T12:00:00Z');
+  const prev = () => game({ created: now - 86400000, coins: 3000, tickets: { t1: 9, t10: 1 } }, 20);
+
+  test('la partida real que marcó una cuenta (4:26 con 3 jefes: +7 tickets y +3 ×10) pasa con el depósito', () => {
+    const p = prev();
+    const n = { ...p, tickets: { t1: 16, t10: 4 } };
+    // Guardado a los 30 s del anterior (los tickets se guardan al cogerlos): sin depósito, marcaba.
+    expect(judgeSave(p, n, { secs: 30, now }).kind).toBe('sus');
+    const v = judgeSave(p, n, { secs: 30, now, budget: BUDGET.cap });
+    expect(v.kind).toBe('ok');
+    expect(v.kind === 'ok' && v.used! > 0 && v.used! < 37).toBe(true);
+  });
+
+  test('el depósito sólo cubre tickets nuevos: Pokémon, shinies o monedas de la nada siguen marcando', () => {
+    const p = prev();
+    const o = { secs: 30, now, budget: BUDGET.cap };
+    const mas = (k: number) => ({ ...p.owned, ...Object.fromEntries(Array.from({ length: k }, (_, i) => [100 + i, mon()])) });
+    expect(judgeSave(p, { ...p, owned: mas(20) }, o).kind).toBe('sus');
+    expect(judgeSave(p, { ...p, shiny: { 1: mon(), 2: mon(), 3: mon(), 4: mon(), 5: mon() } }, o).kind).toBe('sus');
+    expect(judgeSave(p, { ...p, coins: p.coins + 100000 }, o).kind).toBe('sus');
+    // Ni con tickets nuevos de excusa: sólo se cubre lo que valen esos tickets.
+    expect(judgeSave(p, { ...p, tickets: { t1: 10, t10: 1 }, owned: mas(30) }, o).kind).toBe('sus');
+  });
+
+  test('más de lo que cabe en el depósito marca', () => {
+    const p = prev();
+    expect(judgeSave(p, { ...p, tickets: { t1: 9, t10: 1 + BUDGET.cap / 10 + 2 } }, { secs: 30, now, budget: BUDGET.cap }).kind).toBe('sus');
+    expect(judgeSave(p, { ...p, tickets: { t1: 9, t10: 4 } }, { secs: 30, now, budget: 5 }).kind).toBe('sus');
+  });
+
+  test('PUT: una racha de suerte en una partida (×10 cada pocos guardados de 30 s) no marca, y gasta del depósito', async () => {
+    const u = mkUser();
+    let s = game({ created: Date.now() - 86400000, coins: 2000, tickets: { t1: 3, t10: 0 } }, 10);
+    seed(u, s);
+    let ver = 1;
+    for (let i = 0; i < 6; i++) {
+      age(u, 30);
+      s = { ...s, tickets: { t1: s.tickets.t1 + 1, t10: s.tickets.t10 + (i % 2 === 0 ? 1 : 0) } };
+      const r = await put(u, s, ver);
+      expect(r.status).toBe(200);
+      ver = r.j.ver;
+    }
+    expect(marked(u)).toBe(false);
+    expect(readBudget(srv.db, u.id)).toBeLessThan(BUDGET.cap);
+  });
+
+  test('PUT: un script que se inventa tickets ×10 cada minuto vacía el depósito y queda marcado, sin llevarse más de lo que cabe', async () => {
+    const u = mkUser();
+    let s = game({ created: Date.now() - 86400000, coins: 2000, tickets: { t1: 0, t10: 0 } }, 10);
+    seed(u, s);
+    let ver = 1, free = 0;
+    for (let i = 0; i < 20 && !marked(u); i++) {
+      age(u, 60);
+      s = { ...s, tickets: { t1: 0, t10: s.tickets.t10 + 3 } };
+      ver = (await put(u, s, ver)).j.ver;
+      if (!marked(u)) free += 30;
+    }
+    expect(marked(u)).toBe(true);
+    // Lo que se ha llevado antes de marcarse: el depósito más el presupuesto normal de esos minutos.
+    expect(free).toBeLessThanOrEqual(BUDGET.cap + 60);
+  });
+
+  test('el depósito se rellena con el tiempo real hasta su tope', () => {
+    const u = mkUser();
+    const t = Date.now();
+    expect(readBudget(srv.db, u.id, t)).toBe(BUDGET.cap);                      // cuenta sin depósito: lleno
+    srv.db.raw.run('INSERT INTO save_budget (user_id, tokens, at) VALUES (?, 0, ?)', [u.id, t]);
+    expect(readBudget(srv.db, u.id, t + 60_000)).toBeCloseTo(60 * BUDGET.rate);
+    expect(readBudget(srv.db, u.id, t + 86400_000)).toBe(BUDGET.cap);
   });
 });
