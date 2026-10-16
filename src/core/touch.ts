@@ -4,6 +4,9 @@ import { G } from '../g';
  * y ahí aparece; arrastras para moverte y al soltar desaparece. El centro se
  * queda fijo donde pusiste el dedo; si te alejas más que el radio, sólo el
  * pomo se queda en el borde (la dirección sigue siendo la del dedo).
+ * Con el ajuste stickMode = 'fixed' el joystick es fijo: siempre se ve abajo a la
+ * izquierda (sobre el margen seguro) y sólo lo mueven los toques que empiezan en
+ * su zona; el resto de la pantalla (el mapa de la Defensa, por ejemplo) queda libre.
  *
  * Botones del HUD (iconos de ataque, pausa): el HUD los registra en cada
  * fotograma con addButton(); un toque (o un clic con el ratón) sobre uno lo
@@ -21,6 +24,20 @@ export const Touch = (() => {
   let buttons: TouchButton[] = [];
 
   const R = () => 56 * (G.Settings.get('stick') || 1);
+
+  /** ¿Joystick fijo? Sólo con el táctil en uso y el ajuste elegido. */
+  const fixed = () => active && G.Settings.get('stickMode') === 'fixed';
+  /** Centro del joystick fijo: abajo a la izquierda, por encima de la barra de inicio y a la altura de la barra de ataques. */
+  function fixedPos() {
+    const sa = safeArea(), r = R();
+    return { x: Math.min(44, sa.left) + 28 + r, y: cv!.clientHeight - 20 - Math.min(28, sa.bottom) - r };
+  }
+  /** ¿Cae el punto en la zona del joystick fijo? (un poco más grande que el dibujo, para el pulgar) */
+  function inFixedZone(x: number, y: number) {
+    if (!fixed() || !cv) return false;
+    const p = fixedPos();
+    return Math.hypot(x - p.x, y - p.y) <= R() + 24;
+  }
 
   function init(canvas: HTMLCanvasElement) {
     cv = canvas;
@@ -72,8 +89,14 @@ export const Touch = (() => {
     const b = hit(e.clientX, e.clientY);
     if (b) { e.preventDefault(); press(b); return; }
     if (!touchy || stick || !G.Game || G.Game.state !== 'playing') return;
+    // Fijo: sólo vale un toque dentro de su zona, y el centro es siempre el mismo.
+    let ox = e.clientX, oy = e.clientY;
+    if (fixed()) {
+      if (!inFixedZone(ox, oy)) return;
+      const p = fixedPos(); ox = p.x; oy = p.y;
+    }
     e.preventDefault();
-    stick = { id: e.pointerId, ox: e.clientX, oy: e.clientY, x: e.clientX, y: e.clientY };
+    stick = { id: e.pointerId, ox, oy, x: e.clientX, y: e.clientY };
     try { cv!.setPointerCapture(e.pointerId); } catch (err) { /* nada */ }
   }
 
@@ -118,25 +141,28 @@ export const Touch = (() => {
 
   /** Dibuja el joystick (coordenadas de pantalla, CSS px). */
   function draw(ctx: CanvasRenderingContext2D) {
-    if (!stick) return;
+    // Fijo y sin dedo encima: se dibuja en reposo (más tenue) mientras se juega.
+    let s: TouchStick | null = stick, rest = false;
+    if (!s && fixed() && G.Game && G.Game.state === 'playing') { const p = fixedPos(); s = { id: -1, ox: p.x, oy: p.y, x: p.x, y: p.y }; rest = true; }
+    if (!s) return;
     const r = R();
-    const dx = stick.x - stick.ox, dy = stick.y - stick.oy, d = Math.hypot(dx, dy);
-    const kx = stick.ox + (d > r ? dx / d * r : dx), ky = stick.oy + (d > r ? dy / d * r : dy);
+    const dx = s.x - s.ox, dy = s.y - s.oy, d = Math.hypot(dx, dy);
+    const kx = s.ox + (d > r ? dx / d * r : dx), ky = s.oy + (d > r ? dy / d * r : dy);
     ctx.save();
-    ctx.globalAlpha = 0.5;
+    ctx.globalAlpha = rest ? 0.3 : 0.5;
     ctx.fillStyle = 'rgba(10,20,48,.55)';
-    ctx.beginPath(); ctx.arc(stick.ox, stick.oy, r, 0, 6.2832); ctx.fill();
+    ctx.beginPath(); ctx.arc(s.ox, s.oy, r, 0, 6.2832); ctx.fill();
     ctx.lineWidth = 3; ctx.strokeStyle = '#f4f8ff';
     ctx.stroke();
-    ctx.globalAlpha = 0.85;
+    ctx.globalAlpha = rest ? 0.5 : 0.85;
     ctx.fillStyle = '#ffd23f';
     ctx.beginPath(); ctx.arc(kx, ky, r * 0.42, 0, 6.2832); ctx.fill();
     ctx.lineWidth = 3; ctx.strokeStyle = '#a55f00'; ctx.stroke();
     ctx.restore();
   }
 
-  /** ¿Hay un botón del HUD en ese punto de la pantalla? (para que el modo no lo tome por un toque en el mapa) */
-  const onButton = (x: number, y: number) => !!hit(x, y);
+  /** ¿Hay un botón del HUD (o el joystick fijo) en ese punto? (para que el modo no lo tome por un toque en el mapa) */
+  const onButton = (x: number, y: number) => !!hit(x, y) || inFixedZone(x, y);
 
   return { init, vector, draw, clearButtons, addButton, reset, safeArea, onButton,
            get active() { return active; }, get stick() { return stick; } };

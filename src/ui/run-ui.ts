@@ -1,6 +1,7 @@
 import { G } from '../g';
 import type { Card } from '../systems/levelup';
 import type { MoveInstance } from '../data/moves';
+import type { AgainState } from '../net/coop';
 /* ============ run-ui.js — cartas de nivel, pausa y fin de run ============ */
 /** Lo que se enseña al acabar la run (la Defensa cambia las cuatro cifras de arriba con `cells`). */
 interface RunResult {
@@ -127,8 +128,16 @@ export const RunUI = (() => {
     return true;
   }
 
-  /** @param r  lo de la partida; `cells` ([nombre, valor][]) cambia las cuatro cifras de arriba (la Defensa enseña oleadas y vidas). */
-  function showOver(r: RunResult, onBack: () => void) {
+  /** Cuándo salió el resumen (performance.now): sus teclas esperan un momento. */
+  let overAt = 0;
+  const OVER_GUARD_MS = 600;
+
+  /**
+   * @param r  lo de la partida; `cells` ([nombre, valor][]) cambia las cuatro cifras de arriba (la Defensa enseña oleadas y vidas).
+   * @param onRetry  otra partida igual sin pasar por el menú (sin él no sale el botón). En grupo, quedar listo (againReady / setAgain)
+   */
+  function showOver(r: RunResult, onBack: () => void, onRetry: (() => void) | null = null) {
+    overAt = performance.now();
     $('over-title').textContent = r.dead ? 'Has caído…' : 'Run terminada';
     const cells: [string, string | number][] = r.cells || [['Tiempo', G.U.mmss(r.time)], ['Nivel', r.level], ['Derrotados', r.kills], ['Jefes', r.bosses]];
     $('over-stats').innerHTML = `
@@ -152,6 +161,11 @@ export const RunUI = (() => {
     const ask = $('over-ask');
     if (ask) ask.querySelector<HTMLElement>('.x')!.onclick = () => ask.remove();
     $('btn-again').onclick = onBack;
+    $('btn-retry').onclick = onRetry;
+    $<HTMLButtonElement>('btn-retry').disabled = false;
+    $('btn-retry').textContent = 'Volver a intentarlo';
+    $('over-wait').textContent = '';
+    showRetry(!!onRetry);
     if (r.caught && r.caught.length) {
       const row = $('over-caught');
       for (const c of r.caught) {
@@ -164,19 +178,65 @@ export const RunUI = (() => {
     G.UI.show('scr-over');
   }
 
-  /** Has encontrado un objeto llevando ya otro: ¿con cuál te quedas? */
-  function showItemChoice(cur: string, next: string, cb: (id: string) => void) {
+  /** Con el botón de reintentar o sin él. El dorado es seguir jugando; sin él, volver pasa a ser el principal. Con sala, "volver" lleva a ella (Flow.afterRun). */
+  function showRetry(on: boolean) {
+    const room = !!G.Social.room;
+    $('btn-retry').classList.toggle('hidden', !on);
+    $('btn-again').classList.toggle('gold', !on);
+    $('btn-again').classList.toggle('gray', on);
+    $('btn-again').textContent = room ? 'Volver a la sala' : 'Volver al menú';
+    $('over-keys').innerHTML = '<kbd>Esc</kbd> ' + (room ? 'sala' : 'menú') + (on ? ' · <kbd>Intro</kbd> reintentar' : '');
+  }
+
+  /** Grupo: has pulsado "Volver a intentarlo"; esperas a los demás. */
+  function againReady() {
+    const retry = $<HTMLButtonElement>('btn-retry');
+    retry.disabled = true;
+    retry.textContent = '¡Listo!';
+  }
+
+  /** Grupo: quién está listo para otra partida (ver Coop.againOpen), o por qué ya no se puede. */
+  function setAgain(st: AgainState) {
+    const msg = st.off ? (st.upd ? 'Hay una versión nueva: volved a la sala para actualizar' : 'El anfitrión ha vuelto a la sala')
+      : st.left ? 'Los demás ya han empezado otra partida'
+      : st.alone ? 'No queda nadie más para volver a intentarlo' : '';
+    showRetry(!msg);
+    $('over-wait').textContent = msg || 'Listos: ' + (st.names.join(', ') || 'nadie') + ' (' + st.n + '/' + st.of + ')';
+  }
+
+  /**
+   * Teclas del resumen: Esc vuelve al menú e Intro lo intenta otra vez. Un momento sin teclas,
+   * para no saltárselo con lo que se estaba pulsando al caer (p. ej. Esc para pausar).
+   */
+  function keysOver() {
+    if (!G.UI.isOpen('scr-over') || performance.now() - overAt < OVER_GUARD_MS) return;
+    const id = G.Input.tap('escape') ? 'btn-again' : G.Input.tap('enter') || G.Input.tap('numpadenter') ? 'btn-retry' : null;
+    const btn = id && $(id);
+    if (btn && !btn.classList.contains('hidden')) btn.click();
+  }
+
+  /**
+   * Has encontrado un objeto: si ya llevas otro, ¿con cuál te quedas?; si no llevas ninguno, ¿lo equipas o sigues sin objeto?
+   * @param cb  recibe el objeto elegido, o null si sigues sin objeto
+   */
+  function showItemChoice(cur: string | null, next: string, cb: (id: string | null) => void) {
     armGuard();
     const box = $('item-cards');
     box.innerHTML = '';
-    ([[cur, 'Quedarme con'], [next, 'Cambiar a']] as [string, string][]).forEach(([id, verb], i) => {
-      const it = G.Items.BY[id];
+    const opts: { id: string | null; title: string; desc: string; ico: string }[] = cur ? [
+      { id: cur, title: 'Quedarme con ' + G.Items.BY[cur].name, desc: G.Items.BY[cur].desc, ico: cur },
+      { id: next, title: 'Cambiar a ' + G.Items.BY[next].name, desc: G.Items.BY[next].desc, ico: next }
+    ] : [
+      { id: next, title: 'Equipar ' + G.Items.BY[next].name, desc: G.Items.BY[next].desc, ico: next },
+      { id: null, title: 'Seguir sin objeto', desc: 'Continuar la partida sin equipar ningún objeto.', ico: 'ban' }
+    ];
+    opts.forEach((o, i) => {
       const el = document.createElement('div');
-      el.className = 'card' + (i === 1 ? ' evo' : '');
-      el.innerHTML = `<div class="ico">${G.Icons.html(id, 36)}</div>
-        <div class="txt"><div class="nm">${verb} ${it.name}</div><div class="ds">${it.desc}</div></div>
+      el.className = 'card' + (i === (cur ? 1 : 0) ? ' evo' : '');
+      el.innerHTML = `<div class="ico">${G.Icons.html(o.ico, 36)}</div>
+        <div class="txt"><div class="nm">${o.title}</div><div class="ds">${o.desc}</div></div>
         <div class="key">${i + 1}</div>`;
-      el.onclick = () => { if (guarded()) return; G.UI.hide('scr-item'); cb(id); };
+      el.onclick = () => { if (guarded()) return; G.UI.hide('scr-item'); cb(o.id); };
       box.appendChild(el);
     });
     G.UI.show('scr-item');
@@ -260,7 +320,7 @@ export const RunUI = (() => {
     $('btn-quit').onclick = onQuit;
   }
 
-  return { showLevelUp, reroll, showItemChoice, showBond, pickBond, bondBack, pick, setWaiting, closeLevelUp, showOver, wirePause, showPause };
+  return { showLevelUp, reroll, showItemChoice, showBond, pickBond, bondBack, pick, setWaiting, closeLevelUp, showOver, againReady, setAgain, keysOver, wirePause, showPause };
 })();
 G.RunUI = RunUI;
 

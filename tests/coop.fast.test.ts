@@ -1102,6 +1102,109 @@ describe('cooperativo', () => {
     for (const d of [A, B, C]) expect(await d.allErrors()).toEqual([]);
   });
 
+  // ---------------- «Volver a intentarlo» en grupo (net/coop.ts, againOpen) ----------------
+
+  /** Cae el jugador de esa página (sin escudos): cuando caen todos, la partida en grupo acaba. */
+  const fall = (d: Dev) => d.eval(() => { const p = G.Game.player; p.invuln = 0; p.reviveShield = 0; p.hurt(1e9); });
+  /** Empieza desde la sala una partida en grupo (la del modo elegido) y espera a que juegue cada uno. */
+  async function startGroup() {
+    await waitPage(A, 'A puede empezar', () => !(document.getElementById('lobby-start') as HTMLButtonElement).disabled);
+    await click(A, '#lobby-start');
+    for (const d of [A, B]) await waitPage(d, 'en partida en grupo', () => G.Coop.active && G.Game.state === 'playing');
+    for (const d of [A, B]) await d.eval(() => { window.__old = G.Game.player; });   // (para distinguir esta partida de la siguiente)
+  }
+  /** Caen los dos: resumen en los dos. */
+  async function bothFall() {
+    await fall(A); await fall(B);
+    for (const d of [A, B]) await waitPage(d, 'resumen', () => G.Game.state === 'over' && !G.Coop.active, undefined, 500);
+  }
+  const waitTxt = (d: Dev, t: string) => waitPage(d, 'se lee «' + t + '»', s => document.getElementById('over-wait')!.textContent === s, t);
+  const hidden = (d: Dev, id: string) => d.eval(i => document.getElementById(i)!.classList.contains('hidden'), id);
+
+  test('Volver a intentarlo en grupo: los dos quedan listos y empieza otra partida sin pasar por la sala', async () => {
+    await startGroup();
+    await bothFall();
+    for (const d of [A, B]) {
+      expect(await hidden(d, 'btn-retry')).toBe(false);                 // en grupo sale el botón
+      expect(await d.eval(() => document.getElementById('btn-again')!.textContent)).toBe('Volver a la sala');
+    }
+    const runs = await Promise.all([A, B].map(d => d.eval(() => G.DB.save.stats.runs)));
+    // A queda listo: se ve en los dos, y su botón pasa a «¡Listo!».
+    await click(A, '#btn-retry');
+    await waitTxt(A, `Listos: ${nameA} (1/2)`);
+    await waitTxt(B, `Listos: ${nameA} (1/2)`);
+    expect(await A.eval(() => { const b = document.getElementById('btn-retry') as HTMLButtonElement; return [b.disabled, b.textContent]; })).toEqual([true, '¡Listo!']);
+    expect(await B.eval(() => (document.getElementById('btn-retry') as HTMLButtonElement).disabled)).toBe(false);
+    expect(await state(A)).toBe('over');                                // aún falta B
+    // B también: empieza otra partida igual para los dos, sin pasar por la sala (que sigue cerrada: se está jugando).
+    await click(B, '#btn-retry');
+    for (const d of [A, B]) await waitPage(d, 'otra partida en grupo', () => G.Coop.active && G.Game.state === 'playing' && G.Game.player !== window.__old);
+    expect(await A.eval(() => G.Coop.isHost && G.Coop.members.map((m: any) => m.name).join())).toBe([nameA, nameB].join());
+    expect(await B.eval(() => !G.Coop.isHost && G.Coop.members.length === 2)).toBe(true);
+    for (const d of [A, B]) expect(await d.eval(() => G.UI.isOpen('scr-over') || G.UI.isOpen('scr-lobby'))).toBe(false);
+    for (const d of [A, B]) expect(await d.eval(() => G.Social.room.started && !G.Social.room.open)).toBe(true);
+    expect((await Promise.all([A, B].map(d => d.eval(() => G.DB.save.stats.runs)))).map((n, i) => n - runs[i])).toEqual([0, 0]);   // (la primera partida ya contó)
+    expect(await A.allErrors()).toEqual([]);
+    expect(await B.allErrors()).toEqual([]);
+  });
+
+  test('Volver a intentarlo en grupo: si el anfitrión vuelve a la sala, el invitado listo no se queda esperando', async () => {
+    await bothFall();
+    await click(B, '#btn-retry');
+    await waitTxt(A, `Listos: ${nameB} (1/2)`);
+    await click(A, '#btn-again');                                        // el anfitrión vuelve a la sala
+    await waitPage(A, 'A en la sala', () => G.Game.state === 'ui' && G.UI.isOpen('scr-lobby') && !G.Social.room.started);
+    await waitTxt(B, 'El anfitrión ha vuelto a la sala');
+    expect(await hidden(B, 'btn-retry')).toBe(true);
+    expect(await state(B)).toBe('over');
+    await click(B, '#btn-again');
+    await waitPage(B, 'B en la sala', () => G.Game.state === 'ui' && G.UI.isOpen('scr-lobby'));
+    expect(await A.allErrors()).toEqual([]);
+    expect(await B.allErrors()).toEqual([]);
+  });
+
+  test('Volver a intentarlo en grupo: si el invitado vuelve a la sala, el anfitrión no se queda colgado', async () => {
+    await waitPage(B, 'la sala está abierta otra vez', () => !G.Social.room.started);
+    await startGroup();
+    await bothFall();
+    await click(A, '#btn-retry');
+    await waitTxt(B, `Listos: ${nameA} (1/2)`);
+    await click(B, '#btn-again');                                        // B no quiere: vuelve a la sala
+    await waitPage(B, 'B en la sala', () => G.Game.state === 'ui' && G.UI.isOpen('scr-lobby'));
+    await waitTxt(A, 'No queda nadie más para volver a intentarlo');     // A no espera a nadie: sin botón, sólo la sala
+    expect(await hidden(A, 'btn-retry')).toBe(true);
+    expect(await state(A)).toBe('over');
+    await click(A, '#btn-again');
+    await waitPage(A, 'A en la sala', () => G.Game.state === 'ui' && G.UI.isOpen('scr-lobby') && !G.Social.room.started);
+    expect(await A.allErrors()).toEqual([]);
+    expect(await B.allErrors()).toEqual([]);
+  });
+
+  test('Volver a intentarlo en grupo: la Defensa repite el mapa', async () => {
+    await A.eval(() => G.LobbyUI.setGame('td', 'zigzag'));
+    await waitPage(B, 'B ve la Defensa en Zigzag', () => G.LobbyUI.game.mode === 'td' && G.LobbyUI.game.map === 'zigzag');
+    await startGroup();
+    await waitPage(B, 'B en la Defensa', () => G.Run.mode.id === 'td' && G.TD.net.coop);
+    await A.eval(() => G.TD.debugLives(0));                              // cae la base: acaba para los dos
+    for (const d of [A, B]) await waitPage(d, 'resumen de la Defensa', () => G.Game.state === 'over' && !G.Coop.active, undefined, 500);
+    await click(B, '#btn-retry');
+    await click(A, '#btn-retry');
+    for (const d of [A, B]) await waitPage(d, 'otra Defensa en grupo', () => G.Run.mode.id === 'td' && G.Coop.active && G.Game.state === 'playing' && G.Game.player !== window.__old);
+    expect(await A.eval(() => [G.TD.net.map, G.TD.net.host, G.TD.net.towers.length])).toEqual(['zigzag', true, 0]);
+    expect(await B.eval(() => [G.TD.net.map, G.TD.net.host, G.TD.net.coop])).toEqual(['zigzag', false, true]);
+    // Como estaba para la prueba de después: acaba, vuelven a la sala y de nuevo a las hordas.
+    await A.eval(() => G.Game.quit());
+    await waitPage(B, 'acaba para B', () => G.Game.state === 'over' && !G.Coop.active);
+    expect(await hidden(B, 'btn-retry')).toBe(true);                     // se fue el anfitrión: no hay reintento
+    await click(A, '#btn-again');
+    await click(B, '#btn-again');
+    await waitPage(A, 'A de vuelta en la sala', () => G.Social.room && G.Game.state === 'ui');
+    await waitPage(B, 'B de vuelta en la sala', () => G.Social.room && G.Game.state === 'ui');
+    await A.eval(() => G.LobbyUI.setGame('hordas'));
+    expect(await A.allErrors()).toEqual([]);
+    expect(await B.allErrors()).toEqual([]);
+  });
+
   test('segunda partida: el anfitrión desaparece y no vuelve', async () => {
     // (Quien esté en el resumen vuelve a la sala; quien sólo miraba ya está en ella.)
     for (const d of [A, B]) if (await d.eval(() => G.Game.state === 'over')) await click(d, '#btn-again');

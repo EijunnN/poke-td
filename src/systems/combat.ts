@@ -223,7 +223,7 @@ export const Combat = (() => {
   }
 
   function buff(pl: Player, m: Move) {
-    pl.addBuff(m.stat, m.amount, m.dur!, m.stacks | 0);
+    pl.addBuff(m.stat, m.amount, m.dur!, m.stacks | 0, m.id);
     const col = G.U.TYPE_COLOR[m.type];
     G.FX.ring(pl.x, pl.y, (pl.visR || pl.r) * 2.4, (pl.visR || pl.r) * 1.1, col, 0.35, 2.5);
     const vis = G.VFX.forMove(m);

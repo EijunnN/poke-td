@@ -439,6 +439,9 @@
           <button id="pull-10" class="btn gold grow" data-sfx="none">Tirar ×10 · <span id="cost-10"></span></button>
           <button id="pull-10b" class="btn gold grow" data-sfx="none">Tirar ×10 · <span id="cost-10b"></span></button>
         </div>
+        <div class="row" style="margin-top:8px">
+          <button type="button" id="gacha-skip" class="chip" aria-pressed="false" title="Muestra el resultado al momento, sin la tragaperras">Abrir sin animación</button>
+        </div>
         <p class="note tickets-line" id="gacha-tickets"></p>
         <p class="note" id="gacha-pity"></p>
       </div>
@@ -501,7 +504,12 @@
   <div class="box center" style="width:min(480px,100%)">
     <h2 id="over-title">Has caído…</h2>
     <div id="over-stats" class="stats"></div>
-    <button id="btn-again" class="btn gold">Volver al menú</button>
+    <div class="row" style="justify-content:center">
+      <button id="btn-again" class="btn gray">Volver al menú</button>
+      <button id="btn-retry" class="btn gold" data-sfx="confirm">Volver a intentarlo</button>
+    </div>
+    <p id="over-wait" class="note" style="margin:12px 0 0"></p>
+    <p id="over-keys" class="sub kbd-hint" style="margin:12px 0 0"><kbd>Esc</kbd> menú · <kbd>Intro</kbd> reintentar</p>
   </div>
 </section>
 

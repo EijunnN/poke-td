@@ -300,12 +300,15 @@ export const Survivor = (() => {
     if (ok && !coop) G.Ranking.submitSolo(Object.assign(mark, { dex: pl.dex, shiny: pl.shiny }));
     else if (ok && wasHost) G.Ranking.submitGroup(Object.assign(mark, { members: team }));
 
+    const back = () => { pl = null!; G.Flow.afterRun(); };
     G.RunUI.showOver({
       dead, time, level: pl.level, kills: pl.kills, bosses: pl.bosses, coins, record, t1: pl.t1, t10: pl.t10, judge,
       moves: pl.moves, caught,
       breakdown: Object.entries(parts).filter(([, v]) => v).map(([k, v]) => `${k} ${v}`).join(' · ') +
                  (mul > 1 ? ` · ×${mul.toFixed(2)} Fortuna` : '')
-    }, () => { pl = null!; G.Flow.afterRun(); });
+    }, back, G.Flow.retry(coop, dead, back, () => { pl = null!; G.Flow.play(); }));
+    // En grupo, sólo si habéis caído todos (no si el anfitrión se fue o se cortó): la cuenta de quién quiere otra.
+    if (coop) G.Flow.overGroup(dead);
   }
 
   /*
@@ -437,16 +440,17 @@ export const Survivor = (() => {
 
   const PICK_SFX: Record<string, string> = { xp: 'xp', xpBig: 'xp', coin: 'coin', heal: 'heal', bomb: 'break', magnet: 'confirm', ticket: 'shiny', ticket10: 'legend', item: 'legend' };
 
-  /** Has cogido un objeto: si no llevas ninguno te lo pones; si no, eliges. */
+  /** Has cogido un objeto: eliges (equiparlo o seguir sin objeto si no llevas ninguno; quedarte o cambiar si ya llevas uno). */
   function offerItem(id: string) {
     if (!pl || !G.Items.BY[id]) return;
-    if (!pl.item) { equipItem(id); return; }
     // Se para el juego mientras eliges; en grupo, para todos (como con las
     // fusiones). Si ya hay otra elección abierta, espera a que se cierre.
     queueChoice(() => openItem(id));
   }
 
-  function equipItem(got: string) {
+  /** @param got  el objeto elegido, o null si sigues sin objeto (el recogido se descarta) */
+  function equipItem(got: string | null) {
+    if (!got) { if (!pl.item) G.Spawner.say('Sigues sin objeto', 2, true); return; }
     if (got === pl.item) return;
     pl.equip(got);
     G.Spawner.say('¡Llevas ' + G.Items.BY[got].name + '!', 2.6, true);
@@ -455,7 +459,6 @@ export const Survivor = (() => {
 
   /** Se mira al abrirla, no al cogerlo: lo que llevas puede haber cambiado mientras esperaba. */
   function openItem(id: string) {
-    if (!pl.item) { equipItem(id); return; }
     if (pl.item === id) { G.Spawner.say('Ya llevas ' + G.Items.BY[id].name, 2, true); return; }
     beginChoice();
     G.RunUI.showItemChoice(pl.item, id, got => {

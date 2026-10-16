@@ -105,7 +105,9 @@ input { font: inherit; }
   color: #3a2300; text-shadow: 1px 1px 0 rgba(255,255,255,.4);
   border-color: #fff7d6;
 }
+#over-wait:empty { display: none; }
 .btn.ghost { background: transparent; box-shadow: none; border-color: rgba(244,248,255,.35); }
+.btn.gray { background: linear-gradient(180deg, #8d96a8, #5c6476); border-color: #e3e8f2; }
 .btn.small { padding: 6px 12px; font-size: 14px; }
 .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 .row.end { justify-content: flex-end; }
@@ -681,6 +683,8 @@ body.touch kbd, body.touch .card .key, body.touch .kbd-hint { display: none !imp
 .set-chips { margin: 6px 0 10px; }
 .keys { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; align-items: center; font-size: 14px; }
 .keys span { color: var(--muted); }
+/* Botón elegido con el mando en los menús (core/gamepad.ts). */
+.pad-focus { outline: 3px solid var(--gold); outline-offset: 2px; }
 .credits { margin: 4px 0 12px; padding-left: 18px; color: var(--muted); font-size: 14px; line-height: 1.6; }
 .credits b { color: var(--ink); }
 .about-logo { text-align: center; font-size: 34px; font-weight: 700; color: var(--gold); text-shadow: 2px 2px 0 #a55f00, 4px 4px 0 var(--shadow); margin-top: 6px; }

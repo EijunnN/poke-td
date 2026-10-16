@@ -9,7 +9,8 @@ import type { Prop } from '../world/world';
  * solo y se cambia con 1-4 / Q / E. Cada disparo reproduce la animación de
  * ataque de Mundo Misterioso que le toca (Attack, Shoot o Charge).
  */
-interface Buff { n: number; t: number; amount: number }
+/** dur: lo que dura entero (para el aro del HUD) · src: el movimiento que lo dio (su icono). */
+interface Buff { n: number; t: number; amount: number; dur: number; src: string | null }
 type BuffStat = 'atk' | 'spd' | 'def' | 'regen';
 
 /** Mejoras permanentes ya resueltas (G.Upgrades.perks); las que falten valen lo de por defecto. */
@@ -157,10 +158,10 @@ export class Player {
     this.bonds = 0;            // vínculos por usar (premio de los legendarios)
 
     this.buffs = {
-      atk: { n: 0, t: 0, amount: 0 },
-      spd: { n: 0, t: 0, amount: 0 },
-      def: { n: 0, t: 0, amount: 0 },
-      regen: { n: 0, t: 0, amount: 0 }
+      atk: { n: 0, t: 0, amount: 0, dur: 0, src: null },
+      spd: { n: 0, t: 0, amount: 0, dur: 0, src: null },
+      def: { n: 0, t: 0, amount: 0, dur: 0, src: null },
+      regen: { n: 0, t: 0, amount: 0, dur: 0, src: null }
     };
 
     this.level = 1;
@@ -480,12 +481,13 @@ export class Player {
     this.power = { def, t: dur, dur };
   }
 
-  addBuff(stat: BuffStat, amount: number, dur: number, maxStacks: number) {
+  addBuff(stat: BuffStat, amount: number, dur: number, maxStacks: number, src?: string) {
     const b = this.buffs[stat];
     if (!b) return;
     b.amount = amount;
     b.n = Math.min(maxStacks, b.n + 1);
-    b.t = dur;
+    b.t = b.dur = dur;
+    if (src) b.src = src;
   }
 
   // ---------------- ciclo ----------------
@@ -542,13 +544,21 @@ export class Player {
     //   cuerpo a cuerpo y el resto:   lo que te toca > el jefe > el más cercano
     // Con una horda encima casi siempre te toca algo; si eso ganara siempre,
     // los ataques a distancia no le darían nunca al jefe.
+    // Cofre pequeño cerca: si te acercas a él se le apunta aunque haya enemigos
+    // (si no, sólo le dabas si quedaba de casualidad entre tú y un enemigo).
+    //   pegado (CHEST_NEAR): gana incluso a lo que te toca
+    //   cerca  (CHEST_FAR):  gana al jefe y al más cercano, no a lo que te toca
     // Sin enemigos, apunta a la roca o cofre más cercano.
     const all = G.EnemyMgr.all();
     const m = this.activeMove();
     const ranged = !!m && (m.kind === 'projectile' || m.kind === 'beam');
     const threat = G.Projectiles.nearest(all, this.x, this.y, this.r + 24);
     const boss = all.find(e => e.boss && !e.dead && G.U.dist(this.x, this.y, e.x, e.y) < 330);
-    const tg = (ranged ? boss || threat : threat || boss)
+    const CHEST_NEAR = 60, CHEST_FAR = 100;
+    const chest = G.World.nearestBreakable(this.x, this.y, CHEST_FAR, 'chest');
+    const chestNear = chest && G.U.dist(this.x, this.y, chest.x, chest.y) <= CHEST_NEAR ? chest : null;
+    const foe = ranged ? boss || threat : threat || boss;
+    const tg = chestNear || (threat ? foe : chest || foe)
             || G.Projectiles.nearest(all, this.x, this.y, 520)
             || G.World.nearestBreakable(this.x, this.y, 200);
     this.target = tg;

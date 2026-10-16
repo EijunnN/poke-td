@@ -20,6 +20,31 @@ export const HUD = (() => {
     ctx.closePath();
   }
 
+  /**
+   * Un efecto con tiempo (Danza Espada, poder de altar…): círculo con su icono
+   * (o los segundos que quedan), un aro que se vacía según lo que le falta
+   * (parpadea los 2 últimos segundos) y la etiqueta debajo.
+   */
+  function effect(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, frac: number, left: number,
+                  col: string, label: string, icon: string | null) {
+    ctx.save();
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, 6.2832);
+    ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fill();
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(255,255,255,.14)'; ctx.stroke();
+    if (left < 2 && Math.floor(left * 6) % 2) ctx.globalAlpha = 0.35;
+    ctx.beginPath(); ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + 6.2832 * G.U.clamp(frac, 0, 1));
+    ctx.strokeStyle = col; ctx.lineCap = 'round'; ctx.stroke();
+    ctx.textAlign = 'center';
+    if (icon) G.Icons.draw(ctx, icon, cx - 10, cy - 10, 20);
+    else { ctx.font = F(800, 11); ctx.fillStyle = col; ctx.fillText(String(Math.ceil(left)), cx, cy + 4); }
+    ctx.globalAlpha = 1;
+    ctx.font = F(800, 9);
+    ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,.8)'; ctx.strokeText(label, cx, cy + r + 11);
+    ctx.fillStyle = col; ctx.fillText(label, cx, cy + r + 11);
+    ctx.restore();
+  }
+
   function bar(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, frac: number, col: string, bg = 'rgba(0,0,0,.55)') {
     roundRect(ctx, x, y, w, h, h / 2); ctx.fillStyle = bg; ctx.fill();
     if (frac > 0) {
@@ -66,22 +91,16 @@ export const HUD = (() => {
     ctx.textAlign = 'center';
     ctx.fillText(Math.ceil(pl.hp) + ' / ' + Math.round(pl.maxHp), px + 48 + 84, py + 26);
 
-    // buffs activos
+    // buffs activos: icono del movimiento y aro con el tiempo que les queda
     const COL: Record<string, string> = { atk: '#ff6b4d', spd: '#7fe0ff', def: '#b0b8c8', regen: '#5fe08a' };
     const LBL: Record<string, string> = { atk: 'ATK', spd: 'VEL', def: 'DEF', regen: 'REG' };
+    const ER = 15, ey = py + 36 + ER;
     let bx = px;
-    ctx.textAlign = 'left';
     for (const k in pl.buffs) {
       const b = pl.buffs[k as keyof typeof pl.buffs];
       if (b.n <= 0) continue;
-      ctx.font = F(800, 9);
-      const txt = LBL[k] + ' ×' + b.n;
-      const tw = ctx.measureText(txt).width + 12;
-      roundRect(ctx, bx, py + 34, tw, 15, 7);
-      ctx.fillStyle = 'rgba(0,0,0,.5)'; ctx.fill();
-      ctx.fillStyle = COL[k];
-      ctx.fillText(txt, bx + 6, py + 45);
-      bx += tw + 5;
+      effect(ctx, bx + ER, ey, ER, b.dur ? b.t / b.dur : 1, b.t, COL[k], LBL[k] + ' ×' + b.n, b.src && 'move:' + b.src);
+      bx += ER * 2 + 12;
     }
 
     // ---------- reloj / bioma / kills ----------
@@ -167,18 +186,13 @@ export const HUD = (() => {
 
     // Poder de altar activo.
     if (pl.power) {
-      const pw = pl.power, txt = pw.def.name.toUpperCase() + ' ' + Math.ceil(pw.t) + 's';
-      ctx.font = F(800, 9);
-      ctx.textAlign = 'left';
-      const tw = ctx.measureText(txt).width + 12;
-      roundRect(ctx, bx, py + 34, tw, 15, 7);
-      ctx.fillStyle = 'rgba(0,0,0,.6)'; ctx.fill();
-      ctx.fillStyle = pw.def.color;
-      ctx.fillText(txt, bx + 6, py + 45);
-      bx += tw + 5;
+      const pw = pl.power;
+      effect(ctx, bx + ER, ey, ER, pw.t / pw.dur, pw.t, pw.def.color, pw.def.name.toUpperCase(), null);
+      bx += ER * 2 + 12;
     }
 
-    if (G.Coop.active) drawCoop(ctx, w, h, pl, px, py + (bx > px ? 56 : 40));
+    // En cooperativo la lista del grupo baja para hacerle sitio a los efectos.
+    if (G.Coop.active) drawCoop(ctx, w, h, pl, px, py + (bx > px ? 84 : 40));
 
     // Grieta: flecha grande que late en el borde si no se ve, y si se ve, una
     // flecha que bota encima; en la arena, cuenta atrás.

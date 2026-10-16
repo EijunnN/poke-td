@@ -21,6 +21,8 @@ export const SettingsUI = (() => {
     $('btn-settings').innerHTML = G.Icons.html('gear', 20);
     $('btn-settings').onclick = () => open();
     $('btn-pause-settings').onclick = () => open('sound');
+    // Mando conectado, desconectado o botón cambiado: se redibuja sin perder el sitio.
+    G.Gamepad.on(() => { if (isOpen() && tab === 'ctl') refresh(); });
     // Pantalla completa (si el navegador la permite; en iPhone, cómo conseguirla).
     if (canFull() || iosTip()) {
       $('btn-full').classList.remove('hidden');
@@ -35,6 +37,7 @@ export const SettingsUI = (() => {
     render();
   }
   function close() { $('scr-settings').classList.add('hidden'); }
+  function refresh() { const y = $('set-body').scrollTop; render(); $('set-body').scrollTop = y; }
   const isOpen = () => !$('scr-settings').classList.contains('hidden');
 
   // ---------------- pantalla completa ----------------
@@ -101,6 +104,8 @@ export const SettingsUI = (() => {
         + `<p class="sub">Pon el dedo en cualquier parte y arrastra para moverte: el joystick aparece donde tocas. Toca un ataque de abajo para cambiarlo y el botón de arriba a la derecha para pausar. Se juega en horizontal.</p>`
         + `<div class="set-row"><div class="grow"><b>Tamaño del joystick</b><small>Cuánto hay que arrastrar el dedo.</small></div></div>`
         + choice('stick', [[0.8, 'Pequeño'], [1, 'Normal'], [1.25, 'Grande']])
+        + `<div class="set-row"><div class="grow"><b>Posición del joystick</b><small>Sigue al dedo: aparece donde tocas. Fijo: siempre abajo a la izquierda.</small></div></div>`
+        + choice('stickMode', [['follow', 'Sigue al dedo'], ['fixed', 'Fijo']])
         + section('En PC')
         + `<div class="keys">
              <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> o flechas</div><span>moverse</span>
@@ -111,7 +116,8 @@ export const SettingsUI = (() => {
              <div><kbd>Enter</kbd> o <kbd>T</kbd></div><span>chat (en una sala)</span>
              <div><kbd>V</kbd>, luego <kbd>1</kbd>–<kbd>8</kbd></div><span>frases rápidas</span>
              <div><kbd>Alt</kbd> + clic</div><span>señal en el mapa (en grupo)</span>
-           </div>`;
+           </div>`
+        + padSection();
     } else if (tab === 'acc') {
       renderAccount(box);
     } else {
@@ -132,6 +138,16 @@ export const SettingsUI = (() => {
            </div>`;
     }
     wire(box);
+  }
+
+  /** Los botones del mando para cada acción (core/gamepad.ts); se guardan en este aparato. */
+  function padSection() {
+    const P = G.Gamepad, map = P.map;
+    return section('Con mando', P.name ? 'Conectado: ' + esc(P.name) : 'Conecta un mando (USB o Bluetooth) y pulsa cualquier botón.')
+      + `<p class="sub">Stick izquierdo o cruceta para moverte. En los menús, cruceta o stick para elegir, el botón de abajo para aceptar y el de la derecha para volver.</p>`
+      + P.ACTIONS.map(([a, label]: [string, string]) => `<div class="set-row"><div class="grow"><b>${esc(label)}</b></div>
+          <button class="btn small ${P.capturing === a ? 'gold' : ''}" data-pad="${a}">${P.capturing === a ? 'Pulsa un botón…' : esc(P.label(map[a as keyof typeof map]))}</button></div>`).join('')
+      + `<div class="row" style="margin-top:10px"><button class="btn small" id="set-pad-reset">Restablecer botones</button></div>`;
   }
 
   function renderAccount(box: HTMLElement) {
@@ -161,6 +177,8 @@ export const SettingsUI = (() => {
     box.querySelectorAll<HTMLElement>('.chip[data-k]').forEach(b => {
       b.onclick = () => { const v = b.dataset.v!; G.Settings.set(b.dataset.k!, isNaN(+v) ? v : +v); render(); };
     });
+    box.querySelectorAll<HTMLElement>('[data-pad]').forEach(b => { b.onclick = () => G.Gamepad.rebind(b.dataset.pad!); });
+    const padReset = $<HTMLButtonElement>('set-pad-reset'); if (padReset) padReset.onclick = () => G.Gamepad.reset();
     const full = $<HTMLButtonElement>('set-full'); if (full) full.onclick = toggleFull;
     box.querySelectorAll<HTMLElement>('[data-guide]').forEach(b => { b.onclick = () => G.GuideUI.open(); });
     box.querySelectorAll<HTMLElement>('[data-lang]').forEach(b => { b.onclick = () => { if (b.dataset.lang !== G.I18n.lang) G.I18n.set(b.dataset.lang!); }; });

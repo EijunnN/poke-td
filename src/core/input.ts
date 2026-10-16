@@ -1,5 +1,5 @@
 import { G } from '../g';
-/* ============ input.js — teclado y ratón (el táctil está en touch.js) ============ */
+/* ============ input.js — teclado y ratón (el táctil está en touch.js y el mando en gamepad.ts) ============ */
 export const Input = (() => {
   const down = new Set<string>();
   const pressed = new Set<string>();   // se limpia cada frame
@@ -34,10 +34,12 @@ export const Input = (() => {
   addEventListener('mouseup', () => mdown = false);
 
   return {
-    /** Vector de movimiento del jugador (teclado o joystick táctil). */
+    /** Vector de movimiento del jugador (joystick táctil, mando o teclado). */
     axis() {
       const t = G.Touch && G.Touch.vector();
       if (t && (t[0] || t[1])) return t;
+      const p = G.Gamepad && G.Gamepad.vector();
+      if (p) return p;
       let x = 0, y = 0;
       if (MOVE_KEYS.left.some(k => down.has(k))) x -= 1;
       if (MOVE_KEYS.right.some(k => down.has(k))) x += 1;
@@ -49,7 +51,11 @@ export const Input = (() => {
     /** true sólo en el frame en que se pulsó. */
     tap(c: string) { return pressed.has(c); },
     mouse() { return { x: mx, y: my, down: mdown }; },
-    endFrame() { pressed.clear(); }
+    endFrame() {
+      pressed.clear();
+      // El mando se lee aquí: lo que pulse llega como teclas en el fotograma siguiente.
+      if (G.Gamepad) G.Gamepad.poll();
+    }
   };
 })();
 G.Input = Input;

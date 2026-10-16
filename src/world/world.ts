@@ -306,11 +306,14 @@ export const World = (() => {
     return out;
   }
 
-  /** Roca o cofre más cercano (para apuntar cuando no hay enemigos). */
-  function nearestBreakable(x: number, y: number, r: number) {
+  /**
+   * Roca o cofre más cercano (para apuntar cuando no hay enemigos).
+   * Con type, sólo los de ese tipo (p. ej. 'chest': el cofre pequeño, no el grande).
+   */
+  function nearestBreakable(x: number, y: number, r: number, type?: PropTipo) {
     let best: Prop | null = null, bd = r * r;
     for (const p of propsInCircle(x, y, r)) {
-      if (!p.solid) continue;
+      if (!p.solid || (type && p.type !== type)) continue;
       const d = G.U.dist2(x, y, p.x, p.y);
       if (d < bd) { bd = d; best = p; }
     }

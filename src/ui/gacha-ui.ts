@@ -12,6 +12,10 @@ export const GachaUI = (() => {
     $<HTMLButtonElement>('pull-10').onclick = () => pull(10, 't1');
     $<HTMLButtonElement>('pull-10b').onclick = () => pull(10, 't10');
     $('pull-close').onclick = close;
+    $('gacha-skip').onclick = () => {
+      G.Settings.set('gachaSkip', !G.Settings.get('gachaSkip'));
+      syncSkip();
+    };
 
     const tabs = $('gacha-gens');
     G.Gacha.BANNERS.forEach(b => {
@@ -74,7 +78,16 @@ export const GachaUI = (() => {
     $<HTMLButtonElement>('pull-1').disabled = !G.Gacha.costOf(s, 1);
     $<HTMLButtonElement>('pull-10').disabled = !G.Gacha.costOf(s, 10, 't1');
     $<HTMLButtonElement>('pull-10b').disabled = !G.Gacha.costOf(s, 10, 't10');
+    syncSkip();
     G.UI.refreshCoins();
+  }
+
+  /** Pinta el interruptor «Abrir sin animación» según el ajuste guardado. */
+  function syncSkip() {
+    const b = $('gacha-skip');
+    const on = !!G.Settings.get('gachaSkip');
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
   }
 
   const wait = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
@@ -88,16 +101,23 @@ export const GachaUI = (() => {
     busy = true;
 
     const best = Math.max(...res.map(r => r.rarity));
+    const skip = !!G.Settings.get('gachaSkip');
     const fx = $('pull-fx'), slot = $<HTMLCanvasElement>('slot'), out = $('pull-results');
     out.innerHTML = '';
     $('pull-close').classList.add('hidden');
-    slot.style.display = '';
+    slot.style.display = skip ? 'none' : '';
     fx.classList.remove('hidden');
 
-    // La tragaperras (ui/slots.js) y luego las cartas.
-    await G.Slots.play(slot, res);
+    // Con «Abrir sin animación» las cartas salen al momento. Si no, la
+    // tragaperras (ui/slots.js) y luego las cartas, una a una.
+    if (!skip) {
+      await G.Slots.play(slot, res);
+      slot.style.display = 'none';
+    }
     G.Audio.sfx('burst', { rarity: best });
-    slot.style.display = 'none';
+    // La tragaperras ya suena estos premios; sin ella, un solo aviso.
+    if (skip && res.some(r => r.shiny)) G.Audio.sfx('shiny');
+    else if (skip && best === 5) G.Audio.sfx('legend');
 
     for (const r of res) {
       const mon = G.DEX_BY[r.dex];
@@ -111,8 +131,10 @@ export const GachaUI = (() => {
         : `Repetido · <span class="coin"></span> +${r.refund}`;
       c.insertAdjacentHTML('beforeend', `<b>${r.shiny ? G.Icons.html('shiny', 12) + ' ' : ''}${mon.name}</b><div class="tag">${tag}</div>`);
       out.appendChild(c);
-      G.Audio.sfx('reveal', { rarity: r.rarity });
-      await wait(n === 10 ? 150 : 0);
+      if (!skip) {
+        G.Audio.sfx('reveal', { rarity: r.rarity });
+        await wait(n === 10 ? 150 : 0);
+      }
     }
     $('pull-close').classList.remove('hidden');
     busy = false;

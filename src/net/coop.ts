@@ -22,6 +22,10 @@ import type { PokeType } from '../data/types';
  *                            ja:[x,y,anim,dir] (Arceus, sólo en la Sentencia) }
  *   anfitrión -> todos     { k:'start', seed, host, members:[{uid,name,dex,shiny}] }
  *
+ * En el resumen (ya sin partida), "Volver a intentarlo" (ver again*), mensajes fuera de la partida como 'start':
+ *   invitado -> anfitrión  { k:'ag', on:1 } listo · { k:'ag', on:0 } se va a la sala · { k:'ag', hi:1 } "estoy en el resumen"
+ *   anfitrión -> todos     { k:'ag', st:{ names:[listos], n, of, alone? } } · { k:'ag', off:1, upd? } se acabó el reintento
+ *
  * Cortes de conexión (o reinicio del servidor): los mensajes que se mandan mientras alguien no está
  * se pierden, pero el servidor le guarda el sitio en la sala (server/realtime.ts). Cuando vuelve
  * (Net avisa con el modo 'relay'), el anfitrión le reenvía el estado entero (resync): ['rs'] borra
@@ -47,7 +51,11 @@ export interface CoopConfig {
   k?: string; seed: number; host: string; members: CoopMember[]; watch?: boolean;
   /** A qué se juega (por defecto, Survivor) y, en la Defensa, en qué mapa. */
   mode?: 'survivor' | 'td'; map?: string;
+  /** Viene de "Volver a intentarlo": quien no esté en `members` (volvió a la sala) no se une como espectador. */
+  again?: boolean;
 }
+/** "Volver a intentarlo" en el resumen: quién está listo (`names`, de `of` jugadores). `alone`: no queda nadie más; `off`: se acabó el reintento (`upd`: hay versión nueva); `left`: los demás han empezado sin ti. */
+export interface AgainState { names: string[]; n: number; of: number; alone?: number; off?: number; upd?: number; left?: number }
 /** El equipo en una partida: lo que el anfitrión manda a los invitados en cada fotograma. */
 export interface TeamState {
   time: number; level: number; xp: number; xpNext: number; kills: number; bosses: number; coins: number; t1: number; t10: number;
@@ -176,6 +184,10 @@ export const Coop = (() => {
   const STALL_MS = 2500;
   let members: CoopMember[] = [];
   let broken: string[] = [];            // anfitrión: props rotos en esta partida ("tx,ty"), para reenviarlos
+  /** Resumen de una partida en grupo: la cuenta de "Volver a intentarlo" (ver againOpen). La lleva el anfitrión; los invitados sólo reciben el estado. */
+  let ag: { cb: (st: AgainState) => void; host: boolean; team: Set<string>; ready: Set<string>; gone: Set<string> } | null = null;
+  let lastTeam: string[] = [];          // anfitrión: quienes seguían en la partida al acabar (los que se fueron antes no cuentan)
+  let lastGame: { mode?: 'survivor' | 'td'; map?: string } = {};   // a qué se jugaba (para repetirlo)
 
   // ---------------- escalado de dificultad ----------------
 
@@ -198,6 +210,7 @@ export const Coop = (() => {
     api = cb;
     members = cfg.members;
     mates.clear();
+    ag = null; lastGame = { mode: cfg.mode, map: cfg.map };
     outEv = []; flushT = 0; waiting = new Set(); holds = new Set(); broken = [];
     hostAway = false; stalled = false; lastHostAt = performance.now();
     // Espectador: en cuanto tiene la partida montada, pide el estado entero (lo que el anfitrión
@@ -217,6 +230,7 @@ export const Coop = (() => {
   }
 
   function end() {
+    if (host) lastTeam = [me!, ...[...mates.values()].filter(m => m.connected && !m.watcher).map(m => m.uid)];
     active = false; host = false; local = null; watching = false;
     mates.clear(); outEv = []; waiting = new Set(); holds = new Set();
   }
@@ -398,12 +412,18 @@ export const Coop = (() => {
   G.Net.on((from, msg) => {
     if (!msg) return;
     // Empezar la partida sólo vale si lo manda el anfitrión de la sala (el servidor también lo exige).
-    if (msg.k === 'start') { if (from === G.Net.hostUid && G.Flow.startCoop) G.Flow.startCoop(msg as CoopConfig); return; }
+    if (msg.k === 'start') { if (from === G.Net.hostUid && G.Flow.startCoop) { ag = null; G.Flow.startCoop(msg as CoopConfig); } return; }
+    if (msg.k === 'ag') { againMsg(from, msg); return; }
     if (!active || msg.k !== 'f') return;
     if (host) onClientFrame(from, msg); else if (from === hostUid) onHostFrame(msg as HostFrame);
   });
 
   G.Net.onPeer((u, mode) => {
+    // En el resumen: alguien se va o vuelve (se recuenta); si quien se va es el anfitrión, se acabó.
+    if (ag) {
+      if (ag.host) againCheck();
+      else if (u === hostUid && mode === 'closed') { const cb = ag.cb; ag = null; cb({ names: [], n: 0, of: 0, off: 1 }); }
+    }
     if (!active) return;
     // Un compañero que vuelve tras un corte: se le reenvía todo lo que se ha perdido. Alguien que
     // empieza a mirar (está entre los espectadores de la sala): se le añade y se le manda todo.
@@ -706,10 +726,84 @@ export const Coop = (() => {
     end();
   }
 
+  // ---------------- otra vez (resumen de una partida en grupo) ----------------
+  // Cada uno pulsa "Volver a intentarlo" y queda listo. El anfitrión lleva la cuenta y, cuando lo están
+  // todos los que jugaban y siguen en la sala, empieza otra igual (mismo modo y mapa, otra semilla) con
+  // ellos, como desde la sala pero sin pasar por ella. Quien vuelve a la sala o pierde la conexión deja
+  // de contar (los demás siguen si quedan dos o más); si el anfitrión vuelve a la sala, se acaba para todos.
+
+  /**
+   * Sale el resumen. `cb` recibe el estado cada vez que cambia. `can`: la partida ha acabado para todos a la vez
+   * (no porque el anfitrión se fuera o se cortara); si no, no hay reintento y el anfitrión deja de esperarte.
+   */
+  function againOpen(cb: (st: AgainState) => void, can: boolean) {
+    const isHost = hostUid === me;
+    if (!can) { if (!isHost) G.Net.toHost({ k: 'ag', on: 0 }); return; }
+    ag = { cb, host: isHost, team: new Set(isHost ? lastTeam : []), ready: new Set(), gone: new Set() };
+    if (isHost) againCheck(); else G.Net.toHost({ k: 'ag', hi: 1 });
+  }
+
+  /** Tú: listo (on) o te vas a la sala (!on). */
+  function againSet(on: boolean) {
+    if (!ag) return;
+    if (ag.host) {
+      if (on) { ag.ready.add(me!); againCheck(); return; }
+      G.Net.broadcast({ k: 'ag', off: 1 });
+    } else {
+      G.Net.toHost({ k: 'ag', on: on ? 1 : 0 });
+      if (on) return;
+    }
+    ag = null;
+  }
+
+  function againMsg(from: string, msg: { [key: string]: any }) {
+    if (!ag) return;
+    if (ag.host) {
+      if (!ag.team.has(from)) return;                    // sólo cuentan los que jugaban
+      if (msg.on) ag.ready.add(from);
+      else if (msg.on === 0) { ag.ready.delete(from); ag.gone.add(from); }
+      againCheck();                                      // (también con 'hi': le llega el estado de ahora)
+    } else if (from === hostUid) {
+      if (msg.off) { const cb = ag.cb; ag = null; cb({ names: [], n: 0, of: 0, off: 1, upd: msg.upd ? 1 : 0 }); }
+      else if (msg.st) ag.cb(msg.st as AgainState);
+    }
+  }
+
+  /** Anfitrión: quién falta; si no falta nadie (y quedan dos o más), otra partida. */
+  function againCheck() {
+    const a = ag, room = G.Social.room;
+    if (!a || !a.host || !room) return;
+    // Los que cuentan: jugaban, siguen en la sala y conectados, y no han vuelto a la sala (con el Pokémon que tengan ahora).
+    const stay = members.filter(m => a.team.has(m.uid))
+      .map(m => room.members.find(x => x.uid === m.uid))
+      .filter((m): m is NonNullable<typeof m> => !!m && !m.spec && (m.uid === me || (!a.gone.has(m.uid) && G.Net.mode(m.uid) === 'relay')));
+    const ready = stay.filter(m => a.ready.has(m.uid));
+    if (stay.length >= 2 && ready.length === stay.length) {
+      ag = null;
+      // Con versión nueva pendiente no se encadena: todos a la sala, que es donde se actualiza (updater.ts).
+      if (G.Updater.pending) {
+        G.Net.broadcast({ k: 'ag', off: 1, upd: 1 });
+        a.cb({ names: [], n: 0, of: 0, off: 1, upd: 1 });
+        return;
+      }
+      const cfg: CoopConfig & { k: string } = {
+        k: 'start', seed: Math.floor(Math.random() * 1e6), host: me!, again: true,
+        members: stay.map(m => ({ uid: m.uid, name: m.name, dex: m.dex, shiny: !!m.shiny }))
+      };
+      if (lastGame.mode === 'td') { cfg.mode = 'td'; cfg.map = lastGame.map; }
+      G.Net.broadcast({ ...cfg });
+      G.Flow.startCoop(cfg);
+      return;
+    }
+    const st: AgainState = { names: ready.map(m => m.name), n: ready.length, of: stay.length, alone: stay.length < 2 ? 1 : 0 };
+    G.Net.broadcast({ k: 'ag', st });
+    a.cb(st);
+  }
+
   return {
     ANIMS, COLORS, begin, end, leave, tick, players, puppets, xpFactor, scaleRate, scaleHp, addWatcher, syncWatchers,
     cast, hit, status, hurtShown, enemyAdded, enemyGone, enemyShot, pickupAdded, pickupGone, say,
-    propBroken, collected, shinyCaught, levelStart, localPicked, over, holdStart, holdEnd,
+    propBroken, collected, shinyCaught, levelStart, localPicked, over, holdStart, holdEnd, againOpen, againSet,
     /** Anfitrión: evento para todos. Invitado: evento para el anfitrión. */
     broadcast(ev: HostEv) { emit(ev); },
     toHost(ev: GuestEv) { if (active && !host) { outEv.push(ev); flushClient(true); } },

@@ -153,6 +153,7 @@ export const Game = (() => {
           && document.getElementById('pull-fx')!.classList.contains('hidden')) G.MenuUI.open();
       return;
     }
+    if (Run.state === 'over') { G.RunUI.keysOver(); return; }   // resumen: Esc menú · Intro otra vez
     if (G.Input.tap('escape') || G.Input.tap('keyp')) { togglePause(); return; }
     if (Run.state !== 'playing' || !player()) return;
     Run.mode!.keysPlay();
@@ -366,6 +367,8 @@ export const Game = (() => {
 G.Game = Game;
 
 /* ============ Flow — transiciones entre pantallas ============ */
+/** Se está cerrando el resumen para empezar otra partida en grupo (startCoop): afterRun no lleva a la sala. */
+let chaining = false;
 export const Flow = {
   boot() {
     G.UI.initChrome();
@@ -416,6 +419,8 @@ export const Flow = {
   },
   /** Al cerrar el resumen: a la sala si sigues en una, si no al menú. */
   afterRun() {
+    if (chaining) return;                          // otra partida en grupo desde el resumen (startCoop): no se pasa por la sala
+    G.Coop.againSet(false);                        // (si estabas listo para otra, ya no)
     if (G.Social.room) {
       if (G.Game.state !== 'ui') G.Game.toUI();
       G.Audio.music('village');
@@ -424,13 +429,55 @@ export const Flow = {
     } else this.goMenu();
   },
   play() { G.Game.startRun(); },
+  /**
+   * "Volver a intentarlo" del resumen: `again` empieza otra partida igual sin pasar por el menú.
+   * Si hay versión nueva pendiente, va al menú (o a la sala), que es donde se recarga (updater.ts): no se
+   * encadenan partidas con la vieja. `back`: lo que hace "Volver al menú"; `again` y `back` valen una sola vez.
+   * En grupo no se empieza aquí: quedas listo y, cuando lo están todos, el anfitrión empieza (Coop.againSet →
+   * startCoop). `normal`: ha acabado para todos a la vez; si el anfitrión se fue o se cortó, no hay botón.
+   * Sin grupo pero con sala, tampoco: ahí se vuelve a la sala.
+   */
+  retry(group: boolean, normal: boolean, back: () => void, again: () => void): (() => void) | null {
+    if (group) {
+      if (!normal || !G.Social.room) return null;
+      return () => {
+        if (G.Game.state !== 'over') return;
+        if (G.Updater.pending) { back(); return; }
+        G.RunUI.againReady();
+        G.Coop.againSet(true);
+      };
+    }
+    if (G.Social.room) return null;
+    return () => {
+      if (G.Game.state !== 'over') return;
+      if (G.Updater.pending) { back(); return; }
+      // Como al empezar desde el menú (y como startCoop desde el resumen): fuera el resumen, estado de menú.
+      G.UI.hide('scr-over');
+      G.Game.toUI();
+      again();
+    };
+  },
+  /**
+   * Tras enseñar el resumen de una partida en grupo: engancha la cuenta de "Volver a intentarlo" (net/coop.ts).
+   * `normal`: ha acabado para todos a la vez (si no, no hay reintento).
+   */
+  overGroup(normal: boolean) {
+    G.Coop.againOpen(st => { if (G.Game.state === 'over') G.RunUI.setAgain(st); }, normal && !!G.Social.room);
+  },
   /** Empieza la partida en grupo (el anfitrión la manda a todos): de hordas o, con mode 'td', de Defensa. */
   startCoop(cfg: CoopConfig) {
     // En 'over' (resumen de la partida anterior) se cierra el resumen como si se pulsara "volver" y se empieza.
     // En cualquier otro estado que no sea 'ui' (p. ej. 'playing') se ignora.
     if ((G.Game.state !== 'ui' && G.Game.state !== 'over') || !G.Social.room) return;
+    // Otra partida desde el resumen (cfg.again) sin ti: has vuelto a la sala (o te has quedado fuera), no la miras.
+    if (cfg.again && !G.Social.amSpec() && !cfg.members.some(m => m.uid === G.Social.uid)) {
+      if (G.Game.state === 'over') G.RunUI.setAgain({ names: [], n: 0, of: 0, left: 1 });
+      return;
+    }
     if (G.Game.state === 'over') {
-      document.getElementById('btn-again')!.click();
+      // Como al pulsar "volver" (el modo recoge su partida), pero sin pasar por la sala (afterRun lo evita con `chaining`).
+      chaining = true;
+      try { document.getElementById('btn-again')!.click(); } finally { chaining = false; }
       if ((G.Game.state as string) !== 'ui') G.Game.toUI();
       G.UI.hide('scr-over');
     }

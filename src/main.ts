@@ -16,6 +16,7 @@ import './core/db';
 import './core/audio';
 import './core/input';
 import './core/touch';
+import './core/gamepad';
 import './core/sprites';
 import './core/camera';
 import './data/moves';

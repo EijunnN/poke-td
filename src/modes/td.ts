@@ -631,16 +631,17 @@ export const TD = (() => {
   }
 
   /** Se acaba la partida (la base cae, se abandona o, en grupo, el anfitrión la termina). */
-  function end(dead: boolean) {
+  function end(dead: boolean, quitting = false) {
     if (Run.state === 'over' || !pl) return;
     const d = summary(dead);
     // En grupo, el anfitrión la acaba para todos (Coop les manda el resumen y ellos llaman a finish).
     if (coop && G.Coop.isHost) G.Coop.over(d);
-    finish(d);
+    finish(d, !quitting);
   }
 
   /** Resumen, premios de la cuenta y ranking. `d`: el de summary(), el tuyo o el del anfitrión. */
-  function finish(d: ReturnType<typeof summary>) {
+  /** @param normal  ha acabado para todos a la vez; si el anfitrión se fue o se cortó, en grupo no hay "Volver a intentarlo" */
+  function finish(d: ReturnType<typeof summary>, normal = true) {
     if (Run.state === 'over' || !pl) return;
     Run.state = 'over';
     // Espectador: ni premio ni resumen; de vuelta a la lista de salas.
@@ -678,13 +679,20 @@ export const TD = (() => {
       else if (wasHost) G.Ranking.submitDefenseGroup(Object.assign(mark, { members: members.map(m => ({ uid: m.uid, dex: m.dex, shiny: m.shiny })) }));
     }
 
+    const back = () => { pl = null!; towers = []; G.EnemyMgr.clear(); G.Flow.afterRun(); };
     G.RunUI.showOver({
       dead: d.dead, time: d.s, level: pl.level, kills: d.k, bosses: 0, coins, record: false, t1: 0, t10: 0, judge: null,
       cells: [['Oleadas superadas', d.w], ['Vidas', d.l], ['Derrotados', d.k], ['Tiempo', G.U.mmss(d.s)]],
       moves: pl.moves, caught: [],
       breakdown: tampered ? 'Partida tocada desde la consola: sin premio'
         : `oleadas ${d.w * 10} · derrotados ${Math.floor(d.k / 5)}${d.won ? ' · victoria ' + WIN_COINS : ''}`
-    }, () => { pl = null!; towers = []; G.EnemyMgr.clear(); G.Flow.afterRun(); });
+    }, back, G.Flow.retry(group, normal, back, () => {
+      // Mismo mapa y mismo equipo; el mismo Pokémon es el de la cuenta.
+      const again = { team: team.slice(), map: map.id };
+      pl = null!; towers = []; G.EnemyMgr.clear();
+      G.Game.start('td', again);
+    }));
+    if (group) G.Flow.overGroup(normal);
     document.getElementById('over-title')!.textContent =
       d.won ? (d.wave > LAST_WAVE ? '¡Victoria! · y en el sin fin, hasta la oleada ' + d.wave : '¡Victoria! · las ' + LAST_WAVE + ' oleadas')
       : d.dead ? 'La base ha caído · oleada ' + d.wave : 'Defensa terminada · oleada ' + d.wave;
@@ -1530,9 +1538,9 @@ export const TD = (() => {
     away(name: string | null) { hostAway = name; hudKey = ''; },
     over(d: Partial<ReturnType<typeof summary>> & { why?: string } | null) {
       if (d && d.why === 'host') G.UI.toast('El anfitrión ha terminado la partida', 3000);
-      finish(d && typeof d.w === 'number' ? d as ReturnType<typeof summary> : summary(false));
+      finish(d && typeof d.w === 'number' ? d as ReturnType<typeof summary> : summary(false), !(d && d.why === 'host'));
     },
-    lost(msg: string) { G.UI.toast(msg, 3000); finish(summary(false)); },
+    lost(msg: string) { G.UI.toast(msg, 3000); finish(summary(false), false); },
     /** Anfitrión: un compañero se ha ido para siempre; sus torres pasan a ser tuyas (siguen defendiendo). */
     mateLeft(m: Mate) {
       let n = 0;
@@ -2219,7 +2227,7 @@ export const TD = (() => {
     /** Abandonar: en grupo, sales tú (si eres el anfitrión, se acaba para todos). Lo conseguido se cobra. */
     quit() {
       if (coop && G.Coop.active) G.Coop.leave();
-      end(false);
+      end(false, true);
     },
     /** El menú abre aquí la elección de favoritos antes de empezar. */
     openTeam,
