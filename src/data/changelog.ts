@@ -20,6 +20,8 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   { d: '2026-10-16', title: ['Códigos de sala y arreglos', 'Room codes and fixes'], fix: [
+    ['Perfil: «Mejor tiempo» contaba también las partidas en grupo. Ahora hay dos marcas, «Mejor tiempo solo» y «Mejor tiempo en grupo» (si tu mejor marca era en grupo, la de solo empieza de nuevo).',
+     'Profile: “Best time” also counted group games. Now there are two records, “Best solo time” and “Best group time” (if your best was in a group, the solo one starts over).'],
     ['Survivor: al salir de una grieta tienes 2 s de protección y los enemigos de alrededor se apartan; antes volvías en medio del grupo que te seguía.',
      'Survivor: when you leave a rift you get 2 s of protection and nearby enemies are pushed away; before, you came back in the middle of the crowd that was following you.'],
     ['Las pantallas de subir de nivel, de objeto y de vínculo ignoran las pulsaciones del primer instante: ya no eliges carta sin querer por estar cambiando de movimiento con 1-4.',

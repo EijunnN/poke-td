@@ -335,7 +335,7 @@ G.I18n.add({
   '(sin título)': '(no title)', 'Consigue logros para desbloquear títulos.': 'Unlock achievements to earn titles.', 'Ver mi perfil público': 'View my public profile',
   'Tu perfil se publica cuando juegas con una cuenta online.': 'Your profile is published when you play with an online account.',
   'Este jugador aún no tiene perfil.': 'This player has no profile yet.', 'Sin favoritos todavía.': 'No favorites yet.', 'Aún sin medallas.': 'No medals yet.',
-  'Medallas': 'Medals', 'Mejor tiempo': 'Best time', 'En grupo': 'In a group', 'Legendarios': 'Legendaries', 'Cerrar': 'Close',
+  'Medallas': 'Medals', 'Mejor tiempo': 'Best time', 'Mejor tiempo solo': 'Best solo time', 'Mejor tiempo en grupo': 'Best group time', 'En grupo': 'In a group', 'Legendarios': 'Legendaries', 'Cerrar': 'Close',
   // misiones
   'Derrota a {x} Pokémon': 'Defeat {x} Pokémon', 'Derrota a {x} Pokémon de tipo {x}': 'Defeat {x} {x}-type Pokémon', 'Derrota a {x} jefes': 'Defeat {x} bosses',
   'Derrota a un jefe': 'Defeat a boss', 'Aguanta {x} minutos en una run': 'Survive {x} minutes in a run',

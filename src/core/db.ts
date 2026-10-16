@@ -30,6 +30,8 @@ export interface SaveStats {
   runs: number; bestTime: number; bestLevel: number; totalKills: number; pulls: number;
   coinsEarned: number; shinies: number; bossesTotal: number; riftWins: number; evolutions: number;
   missionsDone: number; groupRuns: number; bestGroupTime: number;
+  /** Mejor tiempo en solitario (`bestTime` cuenta también las partidas en grupo). */
+  bestSoloTime: number;
   judged?: number; judgeTime?: number; judgeBosses?: number;   // Sentencia de Arceus (se crean al usarlas)
   [k: string]: number | undefined;       // para leerlas por nombre (logros, fusión...)
   // Defensa (modes/td.ts; se crean al usarlas): partidas, mejor oleada superada, victorias,
@@ -137,7 +139,7 @@ export const DB = (() => {
       missions: {},           // misiones del día / semana (systems/progress.js)
       profile: { favs: [], title: '' },   // perfil público: 3 favoritos y título
       stats: { runs: 0, bestTime: 0, bestLevel: 0, totalKills: 0, pulls: 0, coinsEarned: 0, shinies: 0,
-               bossesTotal: 0, riftWins: 0, evolutions: 0, missionsDone: 0, groupRuns: 0, bestGroupTime: 0 }
+               bossesTotal: 0, riftWins: 0, evolutions: 0, missionsDone: 0, groupRuns: 0, bestGroupTime: 0, bestSoloTime: 0 }
     };
   }
 
@@ -145,6 +147,9 @@ export const DB = (() => {
   function migrate(s: SaveData, name?: string): SaveData {
     const base = newSave(name || s.name);
     for (const k in base) if (s[k] == null) s[k] = base[k];
+    // El mejor tiempo en solitario no se guardaba aparte (2026-10-16): si el mejor de todos supera al de
+    // grupo, fue en solitario; si no, no se sabe y empieza de cero.
+    if (s.stats && s.stats.bestSoloTime == null) s.stats.bestSoloTime = (s.stats.bestTime || 0) > (s.stats.bestGroupTime || 0) ? s.stats.bestTime : 0;
     for (const k in base.stats) if (s.stats[k] == null) s.stats[k] = base.stats[k];
     // v1 -> v2: había un único banner (Kanto) con el pity como número.
     if (typeof s.pity === 'number') s.pity = { 1: s.pity };

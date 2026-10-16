@@ -263,8 +263,8 @@ import type { MissionState } from '../data/missions';
         <div class="prof-head"><h2 translate="no">${esc(d.name || '???')}</h2>${d.title ? `<span class="prof-title">${esc(d.title)}</span>` : ''}</div>
         <div class="fav-slots view" id="prof-favs"></div>
         <div class="prof-marks">
-          <div><span>Mejor tiempo</span><b>${fmt(b.solo || 0)}</b></div>
-          <div><span>En grupo</span><b>${fmt(b.group || 0)}</b></div>
+          <div><span>Mejor tiempo solo</span><b>${b.solo ? fmt(b.solo) : '—'}</b></div>
+          <div><span>Mejor tiempo en grupo</span><b>${b.group ? fmt(b.group) : '—'}</b></div>
           <div><span>Nivel máximo</span><b>${b.level || 0}</b></div>
           <div><span>Jefes</span><b>${(b.bosses || 0).toLocaleString('es')}</b></div>
           <div><span>Legendarios</span><b>${b.legends || 0}</b></div>
