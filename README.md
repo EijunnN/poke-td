@@ -15,11 +15,12 @@ Fan game de Pokémon para navegador y móvil con dos modos:
   tabla de tipos de los juegos manda. Los Pokémon de apoyo (Scyther, Togekiss, Lucario,
   Meowth, Noctowl) no atacan: dan auras de daño, velocidad, crítico, monedas o alcance.
   Tres mapas, modo sin fin tras la victoria, premios de cuenta, misiones y logros, ranking
-  propio y **en grupo de 2 a 4** (vidas compartidas, monedas y torres de cada uno).
+  propio y **en grupo** de hasta 6 u 8 según el mapa (vidas compartidas, monedas y torres
+  de cada uno).
 
 Sprites de *Pokémon Mundo Misterioso*, **966 Pokémon de las 9 generaciones**,
 shinies, gacha por región, misiones, logros, ranking, amigos, partidas en grupo
-de hasta 4 con chat y señales en el mapa, salas públicas y modo espectador. Música
+(hasta 4 en Supervivencia, hasta 8 en Defensa) con chat y señales en el mapa, salas públicas y modo espectador. Música
 y efectos compuestos para el juego.
 
 Nació como fork de [PokéSurvivor](https://github.com/JPTER78/pokesurvivor) y es un
@@ -69,7 +70,7 @@ Se puede instalar como app.
   solo o en grupo; diario, semanal, mensual, histórico y por Pokémon. El servidor
   comprueba que las marcas sean posibles.
 - **Amigos** por nombre, con perfil público, y quién está en línea.
-- **Partidas en grupo** de hasta 4: invitas a tus amigos a tu sala y el anfitrión
+- **Partidas en grupo** (hasta 4 en Supervivencia; en Defensa, 6 u 8 según el mapa): invitas a tus amigos a tu sala y el anfitrión
   empieza la partida. Todo el tráfico va por el servidor, así que nadie ve la IP
   de nadie y funciona en cualquier red.
 - **Salas públicas** a las que se puede unir cualquiera, y **modo espectador** para
