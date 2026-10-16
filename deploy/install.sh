@@ -61,14 +61,17 @@ if [ -d /etc/caddy/sites ] && grep -q 'import sites/' /etc/caddy/Caddyfile 2>/de
 		resolvers 1.1.1.1
 	}
 '
+  # Las cabeceras de seguridad, las mismas que en deploy/Caddyfile.
+  HEADERS=$(sed -n '/^\t# Cabeceras de seguridad/,/^\t}/p' deploy/Caddyfile)
   printf '# poke-td: Bun en 127.0.0.1:%s (/opt/poke-td, servicio poke-td). Lo escribe deploy/install.sh.
 %s {
 %s	encode zstd gzip
+%s
 	reverse_proxy 127.0.0.1:%s {
 		flush_interval -1
 	}
 }
-'     "$PORT" "$DOMAIN" "$TLS" "$PORT" > /etc/caddy/sites/poke-td.caddy
+'     "$PORT" "$DOMAIN" "$TLS" "$HEADERS" "$PORT" > /etc/caddy/sites/poke-td.caddy
   chgrp caddy /etc/caddy/sites/poke-td.caddy 2>/dev/null || true
 else
   sed "s/DOMINIO/$DOMAIN/; s/127.0.0.1:8080/127.0.0.1:$PORT/" deploy/Caddyfile > /etc/caddy/Caddyfile

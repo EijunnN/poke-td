@@ -2,5 +2,16 @@
 # y WebSocket. deploy/install.sh cambia DOMINIO por el tuyo.
 DOMINIO {
 	encode zstd gzip
+	# Cabeceras de seguridad: sólo HTTPS (HSTS, un año), nada de adivinar tipos de archivo, el juego no se
+	# puede meter en una página ajena (iframe), sin plugins, y sin cámara, micrófono, ubicación ni pagos.
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Content-Security-Policy "frame-ancestors 'self'; object-src 'none'; base-uri 'self'"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+		-Via
+	}
 	reverse_proxy 127.0.0.1:8080
 }
