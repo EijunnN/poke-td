@@ -18,6 +18,7 @@ import { createApi } from './api';
 import type { Module } from './http';
 import { createRealtime, type RealtimeOptions } from './realtime';
 import { createRanking } from './ranking';
+import { createArena } from './arena';
 import { createSocial } from './social';
 import { createAccount } from './account';
 import { createStats } from './stats';
@@ -57,9 +58,11 @@ export function startServer(o: ServerOptions = {}) {
   // Con el mismo reloj que el tiempo real (en las pruebas, uno falso): verifyTeam compara sus horas.
   const clock = o.realtime?.clock;
   const ranking = createRanking(db, { verifyTeam: rt.verifyTeam, now: clock ? () => clock.now() : undefined });
+  // Podio y victorias de la Arena: mismo equipo verificado y mismo reloj. Va antes que el ranking, que contesta 404 a todo /ranking/...
+  const arena = createArena(db, { verifyTeam: rt.verifyTeam, now: clock ? () => clock.now() : undefined });
   // Métricas del panel interno (/admin.html): después del ranking y del tiempo real, que crean las tablas que lee.
   const stats = createStats(db, rt, { clock });
-  const modules: Module[] = [createAccount(db, { perIp: o.loginLimit }), ranking, createSocial(db, rt), stats.module];
+  const modules: Module[] = [createAccount(db, { perIp: o.loginLimit }), arena, ranking, createSocial(db, rt), stats.module];
   const api = createApi(db, { loginLimit: o.loginLimit, saveGapMs: o.saveGapMs, modules });
 
   async function serveFile(pathname: string) {

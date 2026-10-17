@@ -11,6 +11,8 @@ import { G } from '../g';
  *     s_all2_p25    histórico sólo con Pikachu (el filtro por Pokémon sólo
  *                   existe en el histórico)
  *   id = tu uid (solitario) o los uid del equipo ordenados y unidos con "_".
+ *   La Arena (modo 'a') no tiene tablas de marcas sino un podio por cuenta (victorias, podios y
+ *   partidas): se sube con submitArena y se lee con topArena.
  *
  * Los periodos se cuentan en hora de España (Europe/Madrid). El servidor lleva
  * el anti-trampas (hora de inicio de la partida, tiempos y niveles posibles) y
@@ -29,6 +31,17 @@ export interface Row { id: string; t: number; uids: string[]; names: string[]; d
  * no cuenta (muy corta, sin rivales...): no hace falta avisar.
  */
 export interface RankResult { mode: string; ok: boolean; better: string[]; reason?: string; skipped?: boolean }
+/** Lo que sube el anfitrión de una Arena: cómo quedó cada jugador (`place` 1 = ganador; los empates repiten puesto). */
+export interface ArenaResult {
+  map: string;
+  /** Oleadas superadas por el ganador. */
+  waves: number;
+  /** Duración en segundos de juego. */
+  secs: number;
+  places: { uid: string; place: number; wave: number; dex: number; shiny: boolean }[];
+}
+/** Una cuenta en el podio de la Arena (servidor: server/arena.ts). `pos` sólo viene en `mine`. */
+export interface ArenaRow { uid: string; name: string; dex: number; shiny: boolean; wins: number; podiums: number; games: number; pos?: number }
 
 export const Ranking = (() => {
   const TZ = 'Europe/Madrid';
@@ -160,7 +173,7 @@ export const Ranking = (() => {
   }
 
   /** Sube la marca (reintenta si falla la red, el servidor o hay 429). → periodos donde ha mejorado */
-  async function send(body: Record<string, unknown>): Promise<string[]> {
+  async function send(body: Record<string, unknown>, path = '/submit'): Promise<string[]> {
     const mode = String(body.mode);
     if (typeof body.t === 'number' && body.t > MAX_T) {
       return finish({ mode, ok: false, better: [], reason: 'Esta partida dura más de ' + MAX_T / 60 + ' minutos y el ranking no la admite.' });
@@ -168,7 +181,7 @@ export const Ranking = (() => {
     await starting;                      // el servidor sólo admite marcas de una partida que ha visto empezar
     let r: Result | null = null, tries = 0;
     for (;; tries++) {
-      r = await call('POST', '/submit', body);
+      r = await call('POST', path, body);
       if (!retryable(r) || tries >= SUBMIT_RETRY.length || !session()) break;
       await sleep(SUBMIT_RETRY[tries]);
     }
@@ -219,6 +232,18 @@ export const Ranking = (() => {
                   members: r.members.map(m => ({ uid: String(m.uid), dex: m.dex, shiny: !!m.shiny })) });
   }
 
+  /**
+   * Arena: la sube el anfitrión, con el puesto de todos. Antes hay que haber avisado con
+   * runStarted('a'). No lanza nunca; el resultado de la subida se avisa con onResult (modo 'a').
+   */
+  function submitArena(r: ArenaResult) { return track(submitArenaNow(r)); }
+  async function submitArenaNow(r: ArenaResult): Promise<string[]> {
+    if (!session()) return [];
+    if (!r.places || r.places.length < 2) return skip('a', 'Una partida de Arena necesita al menos 2 jugadores.');
+    return send({ mode: 'a', map: r.map, waves: r.waves, secs: r.secs,
+                  places: r.places.map(p => ({ uid: String(p.uid), place: p.place, wave: p.wave, dex: p.dex, shiny: !!p.shiny })) }, '/arena');
+  }
+
   // ---------------- leer ----------------
 
   /**
@@ -230,6 +255,18 @@ export const Ranking = (() => {
     const circle = friendsOnly ? G.Social.friends.filter(f => f.status === 'ok').map(f => f.uid).slice(0, 30).join(',') || ',' : null;
     const j = await need('GET', '/top' + qs({ mode, period, dex: period === 'a' ? dex : null, circle }));
     return (j.rows as RowWire[]).map(rowOf);
+  }
+
+  /**
+   * Podio de la Arena de un periodo (d, w, m, a): los 50 primeros por victorias, podios y partidas, y tu fila
+   * con tu puesto exacto (`mine`, null si no has jugado) aunque no salgas en el top.
+   * @param friendsOnly  sólo tú y tus amigos
+   */
+  async function topArena(period: string, friendsOnly?: boolean): Promise<{ rows: ArenaRow[]; mine: ArenaRow | null }> {
+    if (!session()) return { rows: [], mine: null };
+    const circle = friendsOnly ? G.Social.friends.filter(f => f.status === 'ok').map(f => f.uid).slice(0, 30).join(',') || ',' : null;
+    const j = await need('GET', '/arena/top' + qs({ period, circle }));
+    return { rows: j.rows as ArenaRow[], mine: (j.mine as ArenaRow | null) ?? null };
   }
 
   /** Tu puesto en la tabla (aunque no salgas en el top). → { pos, t, row } | null */
@@ -325,7 +362,7 @@ export const Ranking = (() => {
   return { PERIODS, periodIds, board, runStarted,
            /** Avisa del resultado de cada subida (ver RankResult); `last` es el de la última. */
            onResult(fn: (r: RankResult) => void) { resultFns.add(fn); },
-           get last() { return lastResult; }, submitSolo, submitGroup, submitDefense, submitDefenseGroup, top, myRank, removeMine,
+           get last() { return lastResult; }, submitSolo, submitGroup, submitDefense, submitDefenseGroup, submitArena, top, topArena, myRank, removeMine,
            report, reported, isAdmin, reports, entryInfo, removeEntry, purgeAbove, removeEverywhere, setMarked, dismiss, markedAccounts };
 })();
 G.Ranking = Ranking;

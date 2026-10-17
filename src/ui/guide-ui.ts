@@ -136,6 +136,19 @@ export const GuideUI = (() => {
         ['Cualquiera puede adelantar la oleada; la velocidad (×1/×2) la elige el anfitrión. Si el anfitrión se va, la partida acaba para todos (cada uno cobra lo suyo).',
          'Anyone can call the next wave early; the host chooses the speed (×1/×2). If the host leaves, the game ends for everyone (each player still gets their reward).'],
       ])
+      + h('Arena', 'Arena')
+      + ul([
+        ['En la sala, Defensa → <b>Arena</b> (de 2 a 8): cada uno tiene <b>su carril</b>, sin camino. Los monstruos entran por arriba y van a la salida, abajo, por la ruta más corta que quede: <b>tus torres son el laberinto</b>. Sudowoodo es un muro barato que no ataca.',
+         'In the room, Defense → <b>Arena</b> (2 to 8 players): everyone has <b>their own lane</b>, with no path. Monsters come in at the top and head for the exit at the bottom by the shortest route left: <b>your towers are the maze</b>. Sudowoodo is a cheap wall that does not attack.'],
+        ['No puedes tapar el paso ni encerrar a un monstruo; al colocar ves la ruta que quedaría. Las filas de arriba y de abajo quedan libres.',
+         'You cannot block the way or trap a monster; while placing you see the route that would be left. The top and bottom rows stay clear.'],
+        ['<b>Envía</b> monstruos al carril de un rival (panel «Enviar»): cuestan monedas y suben tus ingresos de cada oleada. Zubat vuela: no sigue el laberinto. Además, cada 30 s llega una oleada igual para todos.',
+         '<b>Send</b> monsters to a rival’s lane (the «Send» panel): they cost coins and raise your income every wave. Zubat flies: it ignores the maze. On top of that, every 30 s a wave arrives, the same for everyone.'],
+        ['Quien se queda sin vidas cae (desaparecen sus torres) y mira a los demás con Q/E; el último en pie gana.',
+         'Whoever runs out of lives is out (their towers disappear) and watches the others with Q/E; the last one standing wins.'],
+        ['Al acabar sale el <b>podio</b>, el 1.º, 2.º y 3.º se llevan un premio, y cuenta para el ranking de la Arena (victorias y podios).',
+         'At the end the <b>podium</b> shows up, 1st, 2nd and 3rd get a prize, and it counts for the Arena ranking (wins and podiums).'],
+      ])
       + h('Paso a paso', 'Step by step')
       + `<ol>${[
         ['Antes de empezar eliges hasta 6 <b>favoritos</b>: salen los primeros en la tienda. Puedes comprar cualquier Pokémon de tu colección.',

@@ -2,7 +2,7 @@
  *   bun test tests/td-geom.test.ts
  */
 import { describe, expect, test } from 'bun:test';
-import { leadAngle, distToPath, placementError, moveRange, PATH_CLEAR, TOWER_GAP } from '../src/modes/td-geom';
+import { arenaCenters, arenaPlaces, ARENA_GAP, ARENA_PLAYERS, leadAngle, distToPath, placementError, moveRange, PATH_CLEAR, TOWER_GAP } from '../src/modes/td-geom';
 import { MAPS, mapById, randomMap, distToSegment, pathLengths, ENDS_CLEAR, trophyCost, towerCost, costFor, SUPPORT_COST, roomMax, MAX_ROOM, SURVIVOR_PLAYERS, bossGate } from '../src/modes/td-geom';
 
 /** Simula el disparo: ¿pasa el proyectil a menos de `hit` del blanco en algún momento? */
@@ -374,5 +374,30 @@ describe('precios: apoyos y trofeos', () => {
     for (let r = 1; r <= 5; r++) expect(trophyCost(r, false)).toBeGreaterThan(towerCost(r));
     expect(trophyCost(5, true)).toBe(300);
     expect(trophyCost(5, true)).toBeGreaterThan(towerCost(5));
+  });
+});
+
+describe('Arena: carriles y puestos', () => {
+  test('cada jugador, su carril: centrados, sin solaparse y lejos unos de otros', () => {
+    for (let n = 1; n <= ARENA_PLAYERS; n++) {
+      const cs = arenaCenters(n);
+      expect(cs).toHaveLength(n);
+      // Centrados en (0, 0).
+      expect(Math.abs(cs.reduce((s, c) => s + c.x, 0) / n)).toBeLessThan(ARENA_GAP / 2 + 1);
+      expect(Math.abs(cs.reduce((s, c) => s + c.y, 0) / n)).toBeLessThan(ARENA_GAP / 2 + 1);
+      // Dos carriles nunca están más cerca que ARENA_GAP (el vacío entre ellos es mayor que un proyectil).
+      for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) expect(Math.hypot(cs[i].x - cs[j].x, cs[i].y - cs[j].y)).toBeGreaterThanOrEqual(ARENA_GAP - 1e-6);
+    }
+    expect(arenaCenters(2)).toEqual([{ x: -ARENA_GAP / 2, y: 0 }, { x: ARENA_GAP / 2, y: 0 }]);
+    expect(new Set(arenaCenters(8).map(c => c.y)).size).toBe(2);            // de 5 en adelante, dos filas
+    expect(ARENA_GAP - 2 * 24 * 32).toBeGreaterThan(520);                    // más que lo que vuela un proyectil
+    expect(roomMax('arena', 'valle')).toBe(ARENA_PLAYERS);
+  });
+
+  test('puestos: el que sigue en pie gana; quien cae antes, peor; a la vez, empate', () => {
+    expect(arenaPlaces([0, 1, 2])).toEqual([1, 3, 2]);
+    expect(arenaPlaces([2, 1, 2])).toEqual([1, 3, 1]);                       // los dos últimos cayeron a la vez
+    expect(arenaPlaces([0, 0])).toEqual([1, 1]);
+    expect(arenaPlaces([3, 2, 1, 0])).toEqual([2, 3, 4, 1]);
   });
 });

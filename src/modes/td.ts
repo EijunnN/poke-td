@@ -6,8 +6,9 @@ import {
   evolvesAt, START_MONEY, MAX_LEVEL, PATH_CLEAR, TOWER_GAP, ENDS_CLEAR,
   pathLengths, pathProgress, stepBack, pickTarget, TARGET_MODES, TARGET_NAME, type TargetMode,
   ROLES, roleHit, SUPPORT, AURAS, AURA_KINDS, auraStrength, auraRadius, aurasAt, type AuraKind, type AuraTotals,
-  MAPS, mapById, randomMap, costFor, trophyCost, bossGate, type TdMap
+  MAPS, mapById, randomMap, costFor, trophyCost, bossGate, arenaPlaces, type TdMap
 } from './td-geom';
+import { MAZE_COLS, MAZE_W, MAZE_H, CELL, FREE_ROWS, cellIx, cellAt, cellCenter, flow, stepFrom, stepBackFrom, routeFrom, blockError } from './td-maze';
 import { START_LIVES, LAST_WAVE, MAX_WAVE, WIN_COINS, waveAt, waveHp, waveCount, waveGap, bossHpMul, leakCost, defenseCoins } from './td-waves';
 import type { CoopConfig, HostEv, Mate, TdGuestEv, TdHostEv, TeamState } from '../net/coop';
 import type { Pickup, PickupCollector } from '../entities/pickup';
@@ -66,6 +67,18 @@ import type { Player } from '../entities/player';
  *                           ['tx', x, y, texto, color] un número o aviso flotante
  *                           ['tq', dex] un jefe o legendario derrotado pasa a la tienda (trofeo)
  *
+ * Arena (sólo en grupo, de 2 a 8; coop.arena), al estilo de Line Tower Wars: cada jugador tiene su carril,
+ * una cuadrícula vertical (td-maze.ts) sin camino fijo: los monstruos entran por arriba y van a la salida,
+ * abajo, por la ruta más corta que quede. Las torres son obstáculos: con ellas se hace el laberinto (y con
+ * Sudowoodo, un muro barato que no ataca). No se puede tapar el paso ni encerrar a un monstruo; al colocar
+ * se ve la ruta que quedaría. Además de las oleadas (iguales para todos, una cada ARENA_WAVE_GAP s), cada
+ * uno ENVÍA monstruos al carril de un rival (SENDS): cuestan monedas y suben tus ingresos de cada oleada.
+ * Cada uno con sus vidas (ARENA_LIVES) y sus monedas; quien se queda sin vidas cae (fuera sus torres y sus
+ * monstruos) y mira a los demás; gana el último en pie (arenaPlaces). Al acabar, el anfitrión sube el podio
+ * (G.Ranking.submitArena) y cada uno cobra según su puesto.
+ *   invitado -> anfitrión   ['tk', envío, a quién] envía monstruos a un rival
+ *   anfitrión -> invitados  'tg' lleva además [[vidas, caído, ingresos], ...] de cada carril (en el orden de la sala)
+ *
  * Espectador (sala pública ya en juego; net/spectate.ts): monta la partida como un invitado,
  * pero sin héroe propio (no se dibuja, no ataca ni recoge), sin tienda ni nada que comprar; la
  * cámara sigue al jugador que elijas (o donde mandes con el minimapa) y al acabar no cobra nada.
@@ -88,6 +101,30 @@ export const TD = (() => {
   const WALK = 95;
   /** Favoritos como mucho (los que salen primero en la tienda). */
   const TEAM_MAX = 6;
+  /** La animación de herido, sólo con golpes de al menos esta parte de la vida del enemigo (o críticos): con muchas torres pegando, parecía que retrocedían. */
+  const HURT_ANIM_MIN = 0.1;
+  /** Arena: vidas de cada carril. */
+  const ARENA_LIVES = 20;
+  /** Arena: entre carril y carril (unidades de mundo): más que cualquier alcance o lo que vuela un proyectil. */
+  const ARENA_SPACING = MAZE_W + 720;
+  /** Arena: segundos entre oleada y oleada (no esperan a que se vacíe el carril: con los envíos no se vaciaría). */
+  const ARENA_WAVE_GAP = 30;
+  /** Arena: Sudowoodo es el muro (en los juegos, el árbol falso que corta el paso): no ataca y es barato. */
+  const WALL_DEX = 185, WALL_COST = 10;
+  /**
+   * Arena: lo que se puede enviar a un rival. `cost` monedas (fijo); `income`, lo que sube tus ingresos de
+   * cada oleada; `hp` y `spd`, respecto a un enemigo normal de la oleada; `n`, cuántos salen; `fly`, vuela:
+   * no sigue el laberinto, baja recto (las torres sí le pegan); `boss`, grande y caro de dejar pasar.
+   */
+  const SENDS = [
+    { dex: 19, cost: 20, income: 1, hp: 0.6, spd: 1.45, n: 3 },
+    { dex: 74, cost: 45, income: 3, hp: 2.6, spd: 0.7, n: 1 },
+    { dex: 41, cost: 60, income: 4, hp: 1.1, spd: 1.1, n: 2, fly: true },
+    { dex: 67, cost: 110, income: 8, hp: 4.5, spd: 0.95, n: 1 },
+    { dex: 143, cost: 320, income: 25, hp: 22, spd: 0.6, n: 1, boss: true },
+  ];
+  /** Arena: monedas de la cuenta por puesto (1.º, 2.º, 3.º), además de las de siempre. */
+  const ARENA_PRIZE = [300, 150, 75];
   /**
    * Alcance máximo de una torre. Los proyectiles vuelan hasta 520, pero con eso una
    * torre cubría medio mapa y daba igual dónde ponerla.
@@ -171,11 +208,85 @@ export const TD = (() => {
    * lo que le falta (con un solo camino, lo andado, como siempre).
    */
   function progressOf(e: Walker) {
+    // Arena: lo que le falta para la salida (los que vuelan, en línea recta).
+    if (arena) {
+      const ln = lanes[e.lane];
+      if (!ln) return 0;
+      if (e.fly) return 1e6 - (ln.cy + MAZE_H / 2 - e.y) * 10 / CELL;
+      const i = cellAt(e.x - ln.cx, e.y - ln.cy);
+      return 1e6 - (i >= 0 ? Math.min(ln.dist[i], 1e5) : 1e5);
+    }
     const p = paths[e.lane], l = lens[e.lane], done = pathProgress(e.x, e.y, e.wp, p, l);
     return paths.length === 1 ? done : longest - (l[l.length - 1] - done);
   }
-  /** El héroe no sale de este radio (unidades de mundo): el mapa es el claro. */
+  /** El héroe no sale de este radio (unidades de mundo) alrededor del centro de su mapa: el mapa es el claro. */
   let bound = 0;
+  /** ¿Es una Arena? (ver la cabecera) */
+  let arena = false;
+  /**
+   * Arena: el carril de cada jugador (en el orden de la sala): su centro, sus vidas y, si ha caído,
+   * cuántos habían caído ya contándole (`out`; 0 = sigue en pie) y en qué oleada (`outWave`).
+   * `kills`: los enemigos de su carril derrotados (lo lleva el anfitrión).
+   */
+  interface Lane {
+    uid: string; cx: number; cy: number; lives: number; out: number; outWave: number; kills: number;
+    /** El laberinto: casillas ocupadas, lo que le falta a cada una para la salida y la ruta desde la entrada. */
+    blocked: Uint8Array; dist: Float64Array; route: number[];
+    /** Lo que cobra en cada oleada además del premio de la oleada (sube con cada envío). */
+    income: number;
+  }
+  let lanes: Lane[] = [];
+  /** Arena: envíos por salir (uno cada poco, para que no salgan amontonados). */
+  let sendQ: { L: number; k: number; from: string; t: number }[] = [];
+  /** Arena: a quién envías ('' = al siguiente que siga en pie). */
+  let sendTo = '';
+  /** Arena: rehace el laberinto del carril L con las torres de su dueño (al plantar, vender o caer). */
+  function rebuildMaze(L: number) {
+    const ln = lanes[L];
+    if (!ln) return;
+    ln.blocked = new Uint8Array(ln.blocked.length);
+    for (const t of towers) if (t.owner === ln.uid) { const i = cellAt(t.p.x - ln.cx, t.p.y - ln.cy); if (i >= 0) ln.blocked[i] = 1; }
+    ln.dist = flow(ln.blocked);
+    ln.route = routeFrom(cellIx(Math.floor(MAZE_COLS / 2), 0), ln.dist, ln.blocked);
+  }
+  function rebuildMazes() { if (arena) lanes.forEach((_, L) => rebuildMaze(L)); }
+  /** Arena: (x, y) en el centro de su casilla (si cae en tu carril). */
+  function snap(x: number, y: number) {
+    const ln = myLane();
+    if (!ln) return { x, y };
+    const i = cellAt(x - ln.cx, y - ln.cy);
+    if (i < 0) return { x, y };
+    const c = cellCenter(i);
+    return { x: ln.cx + c.x, y: ln.cy + c.y };
+  }
+  /** Arena: las casillas de los monstruos del carril L (y a la que van): ahí no se planta, y ninguno puede quedar encerrado. */
+  function monsterCells(L: number) {
+    const ln = lanes[L], out: number[] = [];
+    if (!ln) return out;
+    for (const e of G.EnemyMgr.all()) {
+      if (e.dead || (e instanceof Walker && (e.lane !== L || e.fly))) continue;
+      const i = cellAt(e.x - ln.cx, e.y - ln.cy);
+      if (i < 0) continue;
+      out.push(i);
+      const n = stepFrom(i, ln.dist, ln.blocked);
+      if (n >= 0) out.push(n);
+    }
+    return out;
+  }
+  /** ¿Es un muro? (Sudowoodo en la Arena) */
+  const isWall = (t: { dex: number }) => arena && t.dex === WALL_DEX;
+  /** Arena: cuántas veces ha caído alguien (cada tanda de caídos a la vez cuenta una). */
+  let outs = 0;
+  /** Arena: el carril de cada jugador (su índice en `lanes`), o -1. */
+  const laneIx = (uid: string) => lanes.findIndex(l => l.uid === uid);
+  /** Arena: el tuyo (o null si no juegas en ella). */
+  const myLane = () => (arena ? lanes[laneIx(me)] || null : null);
+  /** Arena: ¿has caído? (sigues mirando a los demás) */
+  const knockedOut = () => { const l = myLane(); return !!l && l.out > 0; };
+  /** El centro del mapa donde juegas (en la Arena, el de tu carril). */
+  const home = () => { const l = myLane(); return l ? { x: l.cx, y: l.cy } : { x: 0, y: 0 }; };
+  /** Arena, ya fuera: el carril que miras (Q/E o Tab cambian). */
+  let watchLane = 0;
   /** Poderes de tipo que se han disparado (para las pruebas). */
   let powers: Record<string, number> = {};
   /** Lo más lejos que ha llegado un enemigo en la oleada (0 = entrada, 1 = base; para afinar). */
@@ -215,16 +326,39 @@ export const TD = (() => {
     lastType = '';
     textCd = 0;
 
+    /** Arena: vuela (no sigue el laberinto: baja recto) · de quién es el envío ('' = de la oleada). */
+    fly = false;
+    sent = '';
+
     get chief() { return this.kind !== 'normal'; }
+    /** Arena: a dónde va ahora (el centro de la casilla siguiente de su ruta, o recto abajo si vuela). */
+    mazeTarget(): { x: number; y: number } {
+      const ln = lanes[this.lane];
+      if (!ln) return { x: this.x, y: this.y + 50 };
+      const exit = { x: this.x, y: ln.cy + MAZE_H / 2 + CELL };
+      if (this.fly) return exit;
+      const i = cellAt(this.x - ln.cx, this.y - ln.cy);
+      if (i < 0) return { x: ln.cx, y: ln.cy - MAZE_H / 2 + CELL / 2 };              // fuera: de vuelta a la entrada
+      if (ln.dist[i] === 0 && this.confuseT <= 0) return exit;                         // la última fila: sale por abajo
+      const n = this.confuseT > 0 ? stepBackFrom(i, ln.dist, ln.blocked) : stepFrom(i, ln.dist, ln.blocked);
+      const c = cellCenter(n >= 0 ? n : i);
+      return { x: ln.cx + c.x, y: ln.cy + c.y };
+    }
     /** Sus estados para las copias del cooperativo (ver drawStatus). */
     netBits = () => (this.frozenT > 0 ? 1 : 0) | (this.stunT > 0 ? 2 : 0) | (this.confuseT > 0 ? 4 : 0) | (this.curseT > 0 ? 8 : 0) | (this.slow > 0.2 ? 16 : 0);
 
     update(dt: number) {
       // Nunca cuenta como rezagado (en las hordas, los rezagados reaparecen junto al jugador).
       this.lagT = -1e9;
+      // Sin rebotes: al tocar a un héroe, en las hordas salen despedidos (G.Combat); aquí, un héroe plantado
+      // en el camino frenaba así a cualquiera, jefes incluidos. Lo que los hace retroceder es el Agua (por el camino).
+      this.kx = 0; this.ky = 0;
       if (!this.dead) {
         this.chillCd -= dt; this.frozenT -= dt; this.stunT -= dt; this.confuseT -= dt; this.curseT -= dt; this.textCd -= dt; this.ccT -= dt;
       }
+      // Arena: por el laberinto (confundido, hacia atrás). (Con el nivel del héroe, como los puntos del camino:
+      // de él sale lo que quitan las quemaduras.)
+      if (arena) { const to = this.mazeTarget(); super.update(dt, { x: to.x, y: to.y, r: 0, level: pl ? pl.level : 1 }); return; }
       // Confundido: anda hacia atrás.
       const path = paths[this.lane];
       const to = this.confuseT > 0 && this.wp > 1 ? path[this.wp - 1] : path[this.wp];
@@ -255,8 +389,16 @@ export const TD = (() => {
       if (fx.stun > 0 && cc()) this.freeze(fx.stun, 'stun', type === 'electric' ? '¡Paralizado!' : '¡Aturdido!', '#ffe14d');
       if (fx.confuse > 0 && cc()) { this.confuseT = Math.max(this.confuseT, fx.confuse); this.say('¡Confuso!', '#ff8ac4'); note('psychic'); }
       if (fx.push > 0 && cc()) {
-        const b = stepBack(this.x, this.y, this.wp, fx.push, paths[this.lane]);
-        this.x = b.x; this.y = b.y; this.wp = b.wp;
+        if (arena) {
+          // Arena: una casilla atrás en su ruta (los que vuelan, un poco hacia arriba).
+          const ln = lanes[this.lane], i = ln ? cellAt(this.x - ln.cx, this.y - ln.cy) : -1;
+          const b = ln && !this.fly && i >= 0 ? stepBackFrom(i, ln.dist, ln.blocked) : -1;
+          if (b >= 0) { const c = cellCenter(b); this.x = ln.cx + c.x; this.y = ln.cy + c.y; }
+          else if (this.fly) this.y -= fx.push;
+        } else {
+          const b = stepBack(this.x, this.y, this.wp, fx.push, paths[this.lane]);
+          this.x = b.x; this.y = b.y; this.wp = b.wp;
+        }
         note('water');
       }
       if (r.burn || r.poison || r.slow || r.curse) note(type);
@@ -278,20 +420,24 @@ export const TD = (() => {
     die() {
       if (this.dead) return;
       super.die();
-      const n = killReward(this.wave) * (this.kind === 'legend' ? 20 : this.kind === 'boss' ? 10 : 1);
+      // (Un envío de un rival da la mitad: si no, enviar le regalaría monedas.)
+      const n = Math.ceil(killReward(this.wave) * (this.kind === 'legend' ? 20 : this.kind === 'boss' ? 10 : 1) * (this.sent ? 0.5 : 1));
       // Hada (si es ella quien lo derrota) y Día de Pago (si cae cerca de un Meowth...).
       const fairy = this.lastType === 'fairy' ? ROLES.fairy.bounty || 0 : 0;
       const pay = aurasAt(this.x, this.y, auraSources()).bounty;
       const bonus = Math.ceil(n * (fairy + pay));
       if (fairy) note('fairy');
       if (pay) note('bounty');
-      // Cobráis todos (en grupo, cada uno en su cartera).
-      for (const u of Object.keys(purse)) purse[u] += n + bonus;
+      // Cobráis todos (en grupo, cada uno en su cartera); en la Arena, sólo el dueño del carril.
+      const ln = arena ? lanes[this.lane] : null;
+      if (ln) { ln.kills++; if (ln.uid in purse) purse[ln.uid] += n + bonus; }
+      else for (const u of Object.keys(purse)) purse[u] += n + bonus;
       // De vez en cuando, una baya que cura al héroe (como antes, cuando soltaban gemas).
       if (!this.remote && Math.random() < HEAL_DROP) G.Pickups.drop('heal', this.x, this.y);
       if (this.chief) {
         floatText(this.x, this.y - this.bodyH - 10, '+' + (n + bonus), '#ffd23f');
-        announce('¡' + this.name + ' derrotado!', 2.4);
+        // (En la Arena cae uno en cada carril: el aviso grande sería uno por jugador.)
+        if (!arena) announce('¡' + this.name + ' derrotado!', 2.4);
         // Derrotarlo lo desbloquea: pasa a la tienda (de todos) para el resto de la partida.
         unlockTrophy(this.dex);
         if (coop) G.Coop.broadcast(['tq', this.dex]);
@@ -356,7 +502,7 @@ export const TD = (() => {
   const shots = new WeakMap<object, number>();
 
   /** Para el HUD del juego (ui/hud.ts): el reloj; sin el de arriba (la Defensa tiene su marcador). */
-  const st = { get time() { return time; }, noClock: true, noLevel: true };
+  const st = { get time() { return time; }, noClock: true, noLevel: true, noDown: true };
 
   // ---------------- quién lleva la partida ----------------
 
@@ -583,13 +729,22 @@ export const TD = (() => {
     G.Weather.reset();
     G.Path.clear();
     G.Hazards.clear();
-    // En grupo, el mismo mundo para todos (la semilla del anfitrión).
-    G.World.reset(coop ? coop.seed : Math.floor(Math.random() * 1e6), CLEAR);
-    G.World.setBiome(0, true);
-
     const TS = G.World.TS;
     map = mapById(coop ? coop.map : opts && opts.map);
-    paths = map.routes.map(r => r.map(([tx, ty]) => ({ x: tx * TS, y: ty * TS, r: 0, level: 1 })));
+    // Arena: un carril (un laberinto) por jugador, en fila; si no, el mapa en el centro.
+    arena = !!(coop && coop.arena && coop.members.length >= 2);
+    const n = arena ? coop!.members.length : 0;
+    lanes = arena ? coop!.members.map((m, i) => {
+      const blocked = new Uint8Array(MAZE_COLS * Math.round(MAZE_H / CELL));
+      return { uid: m.uid, cx: (i - (n - 1) / 2) * ARENA_SPACING, cy: 0, lives: ARENA_LIVES, out: 0, outWave: 0, kills: 0,
+               blocked, dist: flow(blocked), route: [], income: 0 };
+    }) : [];
+    outs = 0; watchLane = 0; sendQ = []; sendTo = '';
+    paths = arena ? [] : map.routes.map(r => r.map(([tx, ty]) => ({ x: tx * TS, y: ty * TS, r: 0, level: 1 })));
+    // En grupo, el mismo mundo para todos (la semilla del anfitrión); en la Arena, el claro cubre todos los carriles.
+    const far = arena ? Math.hypot((n - 1) / 2 * ARENA_SPACING + MAZE_W, MAZE_H / 2) : 0;
+    G.World.reset(coop ? coop.seed : Math.floor(Math.random() * 1e6), CLEAR + Math.ceil(far / TS));
+    G.World.setBiome(0, true);
     lens = paths.map(p => pathLengths(p));
     longest = Math.max(...lens.map(l => l[l.length - 1]));
     bound = 20 * TS;
@@ -600,6 +755,8 @@ export const TD = (() => {
     for (const u of coop ? coop.members.map(m => m.uid) : [me]) { purse[u] = START_MONEY; heroLv[u] = 1; }
     towers = []; nextTowerId = 1; placing = null; selected = null; pendingEvo = null; powers = {}; trophies = [];
     pool = candidates();
+    // Arena: el muro (Sudowoodo), siempre a mano.
+    if (arena) { pool = pool.filter(c => c.dex !== WALL_DEX); pool.unshift({ dex: WALL_DEX, lent: true }); }
     team = cleanTeam(opts && opts.team);
     if (!opts || !Array.isArray(opts.team)) { if (!team.length) team = cleanTeam(save.tdTeam); }
     shopFilter = 'all';                // empieza en Todos (los favoritos salen primero igual)
@@ -613,21 +770,34 @@ export const TD = (() => {
       G.Coop.begin(coop, pl, coopApi);
       if (!coop.watch) G.Social.setPlaying(true);
     }
+    // Arena: cada héroe empieza en el centro de su carril.
+    if (arena) {
+      rebuildMazes();
+      const h = home(); pl.x = h.x; pl.y = h.y;
+      for (const p of G.Coop.puppets()) { const l = lanes[laneIx(p.uid || '')]; if (l) { p.x = l.cx; p.y = l.cy; } }
+    }
     G.Camera.x = pl.x; G.Camera.y = pl.y; G.Camera.shake = 0;
     G.Sprites.preload([mon.dex], 8000, pl.shiny);
     G.Audio.music(G.BIOME_MUSIC[0]);
 
     Run.state = 'playing';
     // Ranking: el servidor apunta cuándo empieza (en grupo, el anfitrión).
-    if (hosting()) G.Ranking.runStarted(coop ? 'e' : 'd');
+    if (hosting()) G.Ranking.runStarted(arena ? 'a' : coop ? 'e' : 'd');
     phase = 'break'; phaseT = FIRST_BREAK;
     buildUI();
-    G.Spawner.say(coop ? 'Defended juntos: cada uno compra sus torres con sus monedas' : 'Compra torres en la tienda y plántalas junto al camino', 4, true);
+    G.Spawner.say(arena ? 'Arena: defiende tu carril; gana el último en pie' : coop ? 'Defended juntos: cada uno compra sus torres con sus monedas' : 'Compra torres en la tienda y plántalas junto al camino', 4, true);
   }
 
   /** Cómo ha ido la partida (lo que el anfitrión manda a todos al acabar). */
   function summary(dead: boolean) {
-    return { dead, w: cleared, l: Math.max(0, lives), k: pl ? pl.kills : 0, s: Math.floor(time), won, flawless, wave, map: map.id };
+    return { dead, w: cleared, l: Math.max(0, lives), k: pl ? pl.kills : 0, s: Math.floor(time), won, flawless, wave, map: map.id,
+             // Arena: el puesto de cada uno (por uid), la oleada en la que cayó y lo que derrotó en su carril.
+             arena: arena ? podium() : undefined };
+  }
+  /** Arena: los puestos de ahora (el que sigue en pie, 1.º; quien cayó antes, peor). */
+  function podium() {
+    const places = arenaPlaces(lanes.map(l => l.out));
+    return lanes.map((l, i) => ({ uid: l.uid, place: places[i], wave: l.out ? l.outWave : wave, kills: l.kills, lives: Math.max(0, l.lives) }));
   }
 
   /** Se acaba la partida (la base cae, se abandona o, en grupo, el anfitrión la termina). */
@@ -662,9 +832,13 @@ export const TD = (() => {
     G.Audio.music(null);
     G.Audio.sfx(d.dead && !d.won ? 'gameover' : d.won ? 'legend' : 'back');
 
+    // Arena: lo tuyo sale de tu fila del podio (el resumen es el del anfitrión).
+    const mineA = d.arena ? d.arena.find(r => r.uid === me) || null : null;
+    if (mineA) { d = { ...d, w: mineA.place === 1 ? d.w : Math.max(0, mineA.wave - 1), k: mineA.kills, l: mineA.lives, won: false, flawless: false }; }
     // La cuenta: monedas, estadísticas, misiones y logros (en grupo, cada uno los suyos).
     const save = G.DB.save;
-    const coins = tampered ? 0 : defenseCoins(d.w, d.k, d.won);
+    const prize = mineA && d.arena!.length >= 2 ? ARENA_PRIZE[mineA.place - 1] || 0 : 0;
+    const coins = tampered ? 0 : defenseCoins(d.w, d.k, d.won) + prize;
     save.coins += coins;
     save.stats.coinsEarned += coins;
     save.stats.totalKills += d.k;
@@ -672,8 +846,13 @@ export const TD = (() => {
     G.Progress.checkAch();
     G.DB.commit(true);
 
+    // Arena: el anfitrión sube el podio (victorias y podios, net/ranking.ts).
+    if (d.arena && wasHost && !tampered) {
+      G.Ranking.submitArena({ map: d.map, waves: d.wave, secs: d.s,
+        places: d.arena.map(r => { const m = members.find(x => x.uid === r.uid); return { uid: r.uid, place: r.place, wave: r.wave, dex: m ? m.dex : 25, shiny: !!(m && m.shiny) }; }) });
+    }
     // Ranking de Defensa: oleadas superadas y, a igualdad, vidas que quedaban (en grupo lo sube el anfitrión).
-    if (!tampered && d.w > 0) {
+    else if (!d.arena && !tampered && d.w > 0) {
       const mark = { waves: d.w, lives: d.l, secs: d.s, kills: d.k };
       if (!group) G.Ranking.submitDefense(Object.assign(mark, { dex: pl.dex, shiny: pl.shiny }));
       else if (wasHost) G.Ranking.submitDefenseGroup(Object.assign(mark, { members: members.map(m => ({ uid: m.uid, dex: m.dex, shiny: m.shiny })) }));
@@ -682,9 +861,11 @@ export const TD = (() => {
     const back = () => { pl = null!; towers = []; G.EnemyMgr.clear(); G.Flow.afterRun(); };
     G.RunUI.showOver({
       dead: d.dead, time: d.s, level: pl.level, kills: d.k, bosses: 0, coins, record: false, t1: 0, t10: 0, judge: null,
-      cells: [['Oleadas superadas', d.w], ['Vidas', d.l], ['Derrotados', d.k], ['Tiempo', G.U.mmss(d.s)]],
+      cells: mineA ? [['Puesto', mineA.place + '.º de ' + d.arena!.length], ['Oleada', mineA.wave], ['Derrotados', d.k], ['Tiempo', G.U.mmss(d.s)]]
+        : [['Oleadas superadas', d.w], ['Vidas', d.l], ['Derrotados', d.k], ['Tiempo', G.U.mmss(d.s)]],
       moves: pl.moves, caught: [],
       breakdown: tampered ? 'Partida tocada desde la consola: sin premio'
+        : d.arena ? podiumText(d.arena) + (prize ? ' · premio ' + prize : '')
         : `oleadas ${d.w * 10} · derrotados ${Math.floor(d.k / 5)}${d.won ? ' · victoria ' + WIN_COINS : ''}`
     }, back, G.Flow.retry(group, normal, back, () => {
       // Mismo mapa y mismo equipo; el mismo Pokémon es el de la cuenta.
@@ -693,9 +874,15 @@ export const TD = (() => {
       G.Game.start('td', again);
     }));
     if (group) G.Flow.overGroup(normal);
-    document.getElementById('over-title')!.textContent =
-      d.won ? (d.wave > LAST_WAVE ? '¡Victoria! · y en el sin fin, hasta la oleada ' + d.wave : '¡Victoria! · las ' + LAST_WAVE + ' oleadas')
+    document.getElementById('over-title')!.textContent = mineA
+      ? (mineA.place === 1 ? '¡Has ganado la Arena!' : 'Arena · ' + mineA.place + '.º puesto')
+      : d.won ? (d.wave > LAST_WAVE ? '¡Victoria! · y en el sin fin, hasta la oleada ' + d.wave : '¡Victoria! · las ' + LAST_WAVE + ' oleadas')
       : d.dead ? 'La base ha caído · oleada ' + d.wave : 'Defensa terminada · oleada ' + d.wave;
+  }
+
+  /** Arena: "1.º Ana · 2.º Beto · 3.º Tú" (los nombres de la sala). */
+  function podiumText(rows: { uid: string; place: number }[]) {
+    return rows.slice().sort((a, b) => a.place - b.place).map(r => r.place + '.º ' + nameOf(r.uid)).join(' · ');
   }
 
   function everyone() { return coop && G.Coop.active ? G.Coop.players() : [pl]; }
@@ -724,24 +911,27 @@ export const TD = (() => {
 
   /** "Siguiente oleada" antes de tiempo: más monedas cuanto antes (para todos). */
   function callWave() {
-    if (phase !== 'break' || Run.state !== 'playing') return;
+    // Arena: el ritmo es el mismo para todos (adelantarla sería adelantársela a los demás); sólo la primera.
+    if (phase !== 'break' || Run.state !== 'playing' || (arena && wave > 0)) return;
     if (guest()) { G.Coop.toHost(['tw']); return; }
     if (wave > 0) payAll(Math.max(0, Math.floor(phaseT)) * 2, pl.x, pl.y - 40);
     startWave();
   }
 
   /** Vida de los enemigos en grupo: cuantos más sois (y más torres hay), más aguantan. */
-  const groupHp = () => (coop && G.Coop.active ? 1 + 0.85 * (G.Coop.players().length - 1) : 1);
+  const groupHp = () => (coop && G.Coop.active && !arena ? 1 + 0.85 * (G.Coop.players().length - 1) : 1);
 
   /** Saca un enemigo de la oleada (los normales primero; el jefe, al final). */
   /**
    * @param bossDex  (pruebas) el jefe que sale, en vez del de la oleada
    * @param lane     por qué entrada (el jefe, por la que le toque: bossGate)
+   * @param quiet    sin el aviso de que llega (la Arena lo da una vez para todos los carriles)
    */
-  function spawnEnemy(chief: boolean, bossDex = 0, lane = chief ? bossGate(wave, paths.length) : 0) {
-    const path = paths[lane];
+  /** @param lane  en la Arena, el carril (en `lanes`); si no, por qué camino */
+  function spawnEnemy(chief: boolean, bossDex = 0, lane = chief ? bossGate(wave, paths.length) : 0, quiet = false) {
     const w = waveAt(wave);
-    const dex = chief ? bossDex || w.boss! : w.pool[Math.floor(Math.random() * w.pool.length)];
+    // (`bossDex` también fija el normal: en la Arena sale el mismo en cada carril.)
+    const dex = bossDex || (chief ? w.boss! : w.pool[Math.floor(Math.random() * w.pool.length)]);
     const mon = G.DEX_BY[dex];
     const kind = !chief ? 'normal' : w.legend ? 'legend' : 'boss';
     // Vida y velocidad: la curva de la oleada, ajustadas un poco con los stats del Pokémon.
@@ -750,18 +940,43 @@ export const TD = (() => {
     if (chief) { hp *= bossHpMul(kind === 'legend'); spd *= 0.7; }
     // Sin experiencia: en la Defensa no sueltan gemas (no servían para nada); se cobra en monedas.
     const def = { dex, name: mon.name, behavior: 'chase' as const, hp: Math.round(hp), spd, dmg: 10, xp: 0 };
-    const e = new Walker(def, path[0].x + G.U.rand(-10, 10), path[0].y + G.U.rand(-10, 10), { hp: 1, spd: 1, dmg: 1 });
+    const at = spawnPoint(lane);
+    const e = new Walker(def, at.x, at.y, { hp: 1, spd: 1, dmg: 1 });
     e.kind = kind;
     e.wave = wave;
     e.lane = lane;
+    e.hurtAnimMin = HURT_ANIM_MIN;
     G.EnemyMgr.add(e);
     if (chief) {
       bigger(e, kind);
       // Con varias entradas, por cuál: que vaya a ayudar quien no la defiende.
-      announce(paths.length > 1 && map.gates ? '¡Llega ' + mon.name + ' por ' + map.gates[lane] + '!' : '¡Llega ' + mon.name + '!', 2.6);
-      G.Audio.sfx('legend');
+      if (!quiet) announce(paths.length > 1 && map.gates ? '¡Llega ' + mon.name + ' por ' + map.gates[lane] + '!' : '¡Llega ' + mon.name + '!', 2.6);
+      if (!quiet) G.Audio.sfx('legend');
       if (coop) G.Coop.broadcast(['tb', e.id, kind]);
     }
+  }
+
+  /** Dónde sale un enemigo: la entrada de su camino; en la Arena, una casilla al azar de la fila de arriba de su carril. */
+  function spawnPoint(lane: number) {
+    if (arena) {
+      const ln = lanes[lane], c = cellCenter(cellIx(Math.floor(Math.random() * MAZE_COLS), 0));
+      return { x: ln.cx + c.x, y: ln.cy + c.y - CELL * 0.3 };
+    }
+    const path = paths[lane];
+    return { x: path[0].x + G.U.rand(-10, 10), y: path[0].y + G.U.rand(-10, 10) };
+  }
+  /** Arena: sale un monstruo enviado por `from` en el carril L. */
+  function spawnSent(L: number, k: number, from: string) {
+    const s = SENDS[k], mon = G.DEX_BY[s.dex], ln = lanes[L];
+    if (!s || !mon || !ln || ln.out) return;
+    const wv = Math.max(1, wave);
+    const def = { dex: s.dex, name: mon.name, behavior: 'chase' as const, hp: Math.round(waveHp(wv) * s.hp * hpMul), spd: WALK * (1 + wv * 0.025) * s.spd, dmg: 10, xp: 0 };
+    const at = spawnPoint(L);
+    const e = new Walker(def, at.x, at.y, { hp: 1, spd: 1, dmg: 1 });
+    e.kind = s.boss ? 'boss' : 'normal'; e.wave = wv; e.lane = L; e.fly = !!s.fly; e.sent = from;
+    e.hurtAnimMin = HURT_ANIM_MIN;
+    G.EnemyMgr.add(e);
+    if (s.boss) { bigger(e, 'boss'); if (coop) G.Coop.broadcast(['tb', e.id, 'boss']); }
   }
 
   /** Un jefe o legendario se ve más grande (también su copia en los invitados). */
@@ -780,24 +995,41 @@ export const TD = (() => {
     for (let i = list.length - 1; i >= 0; i--) {
       const e = list[i];
       if (e.dead || !(e instanceof Walker)) continue;
-      const path = paths[e.lane], l = lens[e.lane];
-      reach = Math.max(reach, pathProgress(e.x, e.y, e.wp, path, l) / l[l.length - 1]);
-      const to = path[e.wp];
-      if (G.U.dist2(e.x, e.y, to.x, to.y) > 18 * 18) continue;
-      if (e.wp + 1 < path.length) { e.wp++; continue; }
+      if (arena) {
+        // Arena: ha llegado abajo (más allá del centro de la última fila).
+        const ln = lanes[e.lane];
+        if (!ln || e.y < ln.cy + MAZE_H / 2 - CELL * 0.4) continue;
+      } else {
+        const path = paths[e.lane], l = lens[e.lane];
+        reach = Math.max(reach, pathProgress(e.x, e.y, e.wp, path, l) / l[l.length - 1]);
+        const to = path[e.wp];
+        if (G.U.dist2(e.x, e.y, to.x, to.y) > 18 * 18) continue;
+        if (e.wp + 1 < path.length) { e.wp++; continue; }
+      }
       // Ha llegado a la base: fuera, sin botín ni animación.
       list.splice(i, 1);
       if (coop && G.Coop.isHost) G.Coop.enemyGone(e, false);
-      lives -= leakCost(e.kind === 'boss', e.kind === 'legend'); leaked++;
+      const cost = leakCost(e.kind === 'boss', e.kind === 'legend');
+      leaked++;
       G.FX.burst(e.x, e.y - 10, '#ff5f6d', 14, 160);
-      G.Camera.kick(0.5);
-      G.Audio.sfx('hurt');
-      if (e.chief) announce(e.name + ' ha llegado a la base', 2.4);
+      // Arena: le cuesta a quien defiende ese carril (y sólo él lo nota).
+      const ln = arena ? lanes[e.lane] : null;
+      if (ln) {
+        ln.lives -= cost;
+        floatText(e.x, e.y - 30, '-' + cost, '#ff5f6d');
+        if (ln.uid === me) { G.Camera.kick(0.5); G.Audio.sfx('hurt'); }
+      } else {
+        lives -= cost;
+        G.Camera.kick(0.5);
+        G.Audio.sfx('hurt');
+        if (e.chief) announce(e.name + ' ha llegado a la base', 2.4);
+      }
       sendState();
     }
   }
 
   function tickPhase(dt: number) {
+    if (arena) { arenaTick(dt); return; }
     if (phase === 'wave') {
       if (toSpawn > 0 || bossLeft > 0) {
         spawnT -= dt;
@@ -825,13 +1057,86 @@ export const TD = (() => {
     } else if ((phaseT -= dt) <= 0) startWave();
   }
 
+  /**
+   * Anfitrión, Arena: las oleadas van por tiempo (una cada ARENA_WAVE_GAP s, iguales para todos: el mismo
+   * Pokémon en cada carril a la vez); al empezar cada una, cada uno cobra el premio de la oleada y sus
+   * ingresos. Y salen los envíos pendientes.
+   */
+  function arenaTick(dt: number) {
+    const up = lanes.map((l, i) => (l.out ? -1 : i)).filter(i => i >= 0);
+    for (const q of sendQ) q.t -= dt;
+    for (const q of sendQ.filter(q => q.t <= 0)) spawnSent(q.L, q.k, q.from);
+    sendQ = sendQ.filter(q => q.t > 0);
+    if (phase === 'break') { if ((phaseT -= dt) <= 0) { startWave(); phaseT = ARENA_WAVE_GAP; } return; }
+    if (toSpawn > 0 || bossLeft > 0) {
+      spawnT -= dt;
+      if (spawnT <= 0) {
+        const w = waveAt(wave);
+        if (toSpawn > 0) {
+          const dex = w.pool[Math.floor(Math.random() * w.pool.length)];
+          for (const L of up) spawnEnemy(false, dex, L);
+          toSpawn--;
+          spawnT = toSpawn > 0 ? waveGap(wave) : 2;
+        } else {
+          for (const L of up) spawnEnemy(true, 0, L, true);
+          announce('¡Llega ' + G.DEX_BY[w.boss!].name + '!', 2.6);
+          G.Audio.sfx('legend');
+          bossLeft = 0;
+        }
+      }
+    }
+    if ((phaseT -= dt) > 0) return;
+    // La siguiente oleada: premio e ingresos para los que siguen en pie.
+    cleared = wave;
+    for (const L of up) { const ln = lanes[L]; purse[ln.uid] = (purse[ln.uid] || 0) + waveBonus(wave) + ln.income; }
+    if (!knockedOut()) { const ln = myLane(); if (ln) G.FX.dmgText(pl.x, pl.y - 40, '+' + (waveBonus(wave) + ln.income), '#ffd23f'); }
+    if (wave >= MAX_WAVE) { end(false); return; }
+    startWave();
+    phaseT = ARENA_WAVE_GAP;
+  }
+
+  // ---------------- envíos (Arena) ----------------
+
+  /** A quién va un envío de `from`: a `want` si sigue en pie (y no es él); si no, al siguiente que siga en pie. */
+  function sendTarget(from: string, want = '') {
+    const ok = (u: string) => u !== from && lanes[laneIx(u)] && !lanes[laneIx(u)].out;
+    if (want && ok(want)) return want;
+    const k = laneIx(from);
+    for (let d = 1; d < lanes.length; d++) { const l = lanes[(k + d) % lanes.length]; if (ok(l.uid)) return l.uid; }
+    return '';
+  }
+  /** Envías el monstruo `k` (de SENDS) a tu rival elegido. */
+  function send(k: number) {
+    const s = SENDS[k];
+    if (!arena || !s || knockedOut() || Run.state !== 'playing' || watching()) return;
+    if (cash() < s.cost) { G.Spawner.say('Te faltan monedas', 1.4, true); G.Audio.sfx('back'); return; }
+    const to = sendTarget(me, sendTo);
+    if (!to) return;
+    G.Audio.sfx('confirm');
+    if (guest()) { G.Coop.toHost(['tk', k, to]); return; }
+    doSend(me, k, to);
+  }
+  /** Anfitrión: `from` envía el monstruo `k` a `to` (si le llega y los dos siguen en pie): sube sus ingresos. */
+  function doSend(from: string, k: number, to: string) {
+    const s = SENDS[k], fl = lanes[laneIx(from)], tl = lanes[laneIx(to)];
+    if (!s || !fl || fl.out || !tl || tl.out || from === to) return;
+    if (!pay(from, s.cost)) return;
+    fl.income += s.income;
+    const L = laneIx(to);
+    for (let i = 0; i < s.n; i++) sendQ.push({ L, k, from, t: 0.35 * i });
+    floatText(tl.cx, tl.cy - MAZE_H / 2 - 30, memberName(from) + ' → ' + (s.n > 1 ? s.n + '× ' : '') + G.DEX_BY[s.dex].name, colorOf(from) || '#ffffff');
+    sendState();
+    refreshUI();
+  }
+
   // ---------------- monedas ----------------
 
   /** Cobráis todos (por oleada, por adelantarla): cada uno en su cartera. */
   function payAll(n: number, x: number, y: number) {
     if (!(n > 0)) return;
-    for (const u of Object.keys(purse)) purse[u] += n;
-    G.FX.dmgText(x, y, '+' + n, '#ffd23f');
+    // (En la Arena, sólo los que siguen en pie.)
+    for (const u of Object.keys(purse)) if (!arena || (lanes[laneIx(u)] && !lanes[laneIx(u)].out)) purse[u] += n;
+    if (!knockedOut()) G.FX.dmgText(x, y, '+' + n, '#ffd23f');
   }
   /** Cobra `uid` (lo que devuelve una torre vendida). */
   function earn(uid: string, n: number, x: number, y: number) {
@@ -861,7 +1166,7 @@ export const TD = (() => {
   /** Lo que cuesta como trofeo (el jefe o legendario derrotado, si no lo tienes). */
   const trophyCostOf = (dex: number) => trophyCost(G.DEX_BY[dex].rarity, !!G.DEX_BY[dex].leg);
   const isTrophy = (dex: number) => pool.some(c => c.dex === dex && c.trophy);
-  const costOf = (dex: number) => (isTrophy(dex) ? trophyCostOf(dex) : costFor(dex, G.DEX_BY[dex].rarity));
+  const costOf = (dex: number) => (arena && dex === WALL_DEX ? WALL_COST : isTrophy(dex) ? trophyCostOf(dex) : costFor(dex, G.DEX_BY[dex].rarity));
 
   /** Un jefe o legendario derrotado pasa a tu tienda (si no lo tenías ya). */
   function unlockTrophy(dex: number) {
@@ -886,11 +1191,11 @@ export const TD = (() => {
    * @param again  sigues plantando la misma (Mayús): la vista previa se queda donde estaba el ratón
    */
   function startPlacing(dex: number, again = false) {
-    if (!inPool(dex) || Run.state !== 'playing') return;
+    if (!inPool(dex) || Run.state !== 'playing' || knockedOut()) return;
     if (placing && placing.dex === dex && !again) { cancelPlacing(); return; }      // pulsarla otra vez la suelta
     if (cash() < costOf(dex)) { G.Spawner.say('Te faltan monedas', 1.4, true); G.Audio.sfx('back'); return; }
     const preview = makeTower(dex);
-    placing = { dex, preview, range: SUPPORT[dex] ? auraRadius(1) : rangeOf(preview) };
+    placing = { dex, preview, range: arena && dex === WALL_DEX ? 0 : SUPPORT[dex] ? auraRadius(1) : rangeOf(preview) };
     lastDex = dex;
     selected = null; pendingEvo = null;
     if (!again) { ghostByPointer = false; ghost.x = pl.x; ghost.y = pl.y; }
@@ -899,8 +1204,19 @@ export const TD = (() => {
   }
   function cancelPlacing() { placing = null; refreshUI(); }
 
-  /** Motivo por el que no se puede plantar en (x, y), o '' si se puede. */
-  const whyNot = (x: number, y: number) => placementError(x, y, { paths, towers: towers.map(t => t.p), bound });
+  /**
+   * Motivo por el que `owner` no puede plantar en (x, y), o '' si se puede. En la Arena, sólo en su
+   * carril: se mira como si su mapa estuviera en el centro (sus caminos y sus torres).
+   */
+  function whyNotFor(owner: string, x: number, y: number) {
+    if (!arena) return placementError(x, y, { paths, towers: towers.map(t => t.p), bound });
+    // Arena: en una casilla de su carril que no tape el paso ni encierre a nadie (td-maze.ts).
+    const L = laneIx(owner), ln = lanes[L];
+    if (!ln || ln.out) return 'Ya no juegas';
+    return blockError(cellAt(x - ln.cx, y - ln.cy), ln.blocked, monsterCells(L));
+  }
+  /** Motivo por el que no puedes plantar en (x, y), o '' si se puede. */
+  const whyNot = (x: number, y: number) => whyNotFor(me, x, y);
 
   /**
    * Intenta plantar la torre que se está colocando en (x, y).
@@ -939,15 +1255,18 @@ export const TD = (() => {
    */
   function plant(owner: string, dex: number, x: number, y: number, shiny: boolean, trophy?: boolean): Tower | null {
     if (!G.DEX_BY[dex] || !G.startMoveOf(dex) || !Number.isFinite(x) || !Number.isFinite(y)) return null;
-    if (whyNot(x, y)) return null;
+    // Arena: en el centro de su casilla.
+    if (arena) { const ln = lanes[laneIx(owner)], i = ln ? cellAt(x - ln.cx, y - ln.cy) : -1; if (i >= 0) { const c = cellCenter(i); x = ln.cx + c.x; y = ln.cy + c.y; } }
+    if (whyNotFor(owner, x, y)) return null;
     // Un trofeo sólo se puede pedir si de verdad se ha ganado en esta partida.
     if (trophy && !trophies.includes(dex)) return null;
-    const cost = trophy === undefined ? costOf(dex) : trophy ? trophyCostOf(dex) : costFor(dex, G.DEX_BY[dex].rarity);
+    const cost = arena && dex === WALL_DEX ? WALL_COST : trophy === undefined ? costOf(dex) : trophy ? trophyCostOf(dex) : costFor(dex, G.DEX_BY[dex].rarity);
     if (!pay(owner, cost)) { if (owner === me) G.Spawner.say('Te faltan monedas', 1.4, true); return null; }
     const p = makeTower(dex, shiny);
     p.x = x; p.y = y;
     const t: Tower = { id: nextTowerId++, owner, p, dex, shiny, level: 1, base: cost, spent: cost, mode: 'first', atk: p.atkMul, buff: noBuff(), learned: [] };
     towers.push(t);
+    if (arena) rebuildMaze(laneIx(owner));
     G.FX.ring(x, y, 8, 110, G.U.TYPE_COLOR[G.DEX_BY[dex].types[0]], 0.6, 5);
     if (owner === me) G.Audio.sfx('confirm');
     sendTower(t);
@@ -956,6 +1275,7 @@ export const TD = (() => {
 
   /** Sube un nivel la torre: más ataque y, en los niveles de evolución, evoluciona. */
   function upgrade(t: Tower) {
+    if (isWall(t)) return;                         // (un muro no se mejora)
     if (guest()) { G.Coop.toHost(['tu', t.id]); return; }
     const c = upgradeCost(t.base, t.level);
     if (c == null || evoOf(t) || !pay(t.owner, c)) return;
@@ -999,7 +1319,7 @@ export const TD = (() => {
   const learnCost = (t: Tower) => Math.round(t.base * (1.5 + 0.5 * t.learned.length));
   /** Lo que le falta por aprender (de sus tipos); vacío si no puede aprender más. */
   function learnable(t: Tower): string[] {
-    if (SUPPORT[t.dex] || t.learned.length >= LEARN_MAX) return [];
+    if (SUPPORT[t.dex] || isWall(t) || t.learned.length >= LEARN_MAX) return [];
     const known = new Set(t.p.activeGroup().map(m => m.id));
     return towerPool(t.dex).filter(id => !known.has(id));
   }
@@ -1072,6 +1392,7 @@ export const TD = (() => {
     const i = towers.indexOf(t);
     if (i < 0 || evoOf(t)) return;
     towers.splice(i, 1);
+    if (arena) rebuildMaze(laneIx(t.owner));
     earn(t.owner, sellValue(t.spent), t.p.x, t.p.y - 30);
     G.Projectiles.clearOrbs(t.p);
     if (selected === t) selected = null;
@@ -1138,7 +1459,7 @@ export const TD = (() => {
       if (!placing || Run.mode !== TD) return;
       // Con el dedo, mover es usar el joystick: la torre fantasma sólo sigue al ratón.
       if (e.pointerType !== 'mouse') return;
-      const p = toWorld(e); ghost.x = p.x; ghost.y = p.y; ghostByPointer = true;
+      const p = toWorld(e), g = snap(p.x, p.y); ghost.x = g.x; ghost.y = g.y; ghostByPointer = true;
     });
     cv.addEventListener('contextmenu', e => { if (Run.mode === TD && Run.state === 'playing') e.preventDefault(); });
     cv.addEventListener('pointerdown', e => { down = { id: e.pointerId, x: e.clientX, y: e.clientY, t: performance.now(), button: e.button }; });
@@ -1306,15 +1627,31 @@ export const TD = (() => {
       G.Spectate.tick();
       return;
     }
+    // Arena, ya fuera: el héroe no juega (caído, sin levantarse) y la cámara mira el carril de otro.
+    if (knockedOut()) {
+      pl.dead = true; pl.hp = 0;
+      if (coop && G.Coop.active) for (const p of G.Coop.puppets()) { p.netUpdate(dt); G.Combat.ghostOrbit(p, dt, time); }
+      const l = lanes[watchLane] && !lanes[watchLane].out ? lanes[watchLane] : lanes.find(x => !x.out) || lanes[watchLane];
+      G.Camera.follow(camFree ? camFree.x : l.cx, camFree ? camFree.y : l.cy, dt);
+      G.World.update(dt, G.Camera);
+      return;
+    }
     // Héroe caído: se levanta solo al rato (la base aguanta mientras con las torres).
     if (pl.dead) {
       downT += dt;
       if (downT > 5) { downT = 0; pl.revive(0.5); }
     }
     pl.update(dt);
-    // El mapa es el claro: el héroe no se va más allá.
-    const far = Math.hypot(pl.x, pl.y);
-    if (far > bound) { pl.x *= bound / far; pl.y *= bound / far; }
+    // El mapa es el claro: el héroe no se va más allá (en la Arena, de su carril).
+    const h = home();
+    if (arena) {
+      // Arena: dentro de su carril (con un poco de margen a los lados).
+      pl.x = G.U.clamp(pl.x, h.x - MAZE_W / 2 - 80, h.x + MAZE_W / 2 + 80);
+      pl.y = G.U.clamp(pl.y, h.y - MAZE_H / 2 - 80, h.y + MAZE_H / 2 + 80);
+    } else {
+      const far = Math.hypot(pl.x - h.x, pl.y - h.y);
+      if (far > bound) { pl.x = h.x + (pl.x - h.x) * bound / far; pl.y = h.y + (pl.y - h.y) * bound / far; }
+    }
     if (coop && G.Coop.active) for (const p of G.Coop.puppets()) { p.netUpdate(dt); G.Combat.ghostOrbit(p, dt, time); }
     // La cámara sigue al héroe, salvo si la has llevado a otro sitio con el minimapa (al mover al héroe, vuelve).
     if (pl.walking) camFree = null;
@@ -1335,7 +1672,7 @@ export const TD = (() => {
     G.EnemyMgr.rebuildGrid();
     march();
     trackEnemies(dt);
-    if (placing && !ghostByPointer) { ghost.x = pl.x; ghost.y = pl.y; }
+    if (placing && !ghostByPointer) { const g = snap(pl.x, pl.y); ghost.x = g.x; ghost.y = g.y; }
 
     aimAhead(pl);
     G.Combat.tick(dt, pl, time);
@@ -1343,7 +1680,7 @@ export const TD = (() => {
     for (const t of towers) {
       const p = t.p;
       p.update(dt);
-      if (isSupport(t)) continue;                 // los de apoyo no atacan
+      if (isSupport(t) || isWall(t)) continue;    // los de apoyo (y los muros de la Arena) no atacan
       // Sólo apunta a enemigos a su alcance (la lógica del héroe buscaba hasta 520
       // de distancia, y rocas o hierba si no había nadie), y elige según su modo.
       const tg = targetFor(p, t.mode);
@@ -1369,8 +1706,47 @@ export const TD = (() => {
     G.FX.update(dt);
 
     if (coop && (stateT -= dt) <= 0) sendState();
-    if (lives <= 0) end(true);
+    if (arena) arenaCheck();
+    else if (lives <= 0) end(true);
   }
+
+  /**
+   * Anfitrión, Arena: caen a la vez todos los que se han quedado sin vidas (comparten puesto): fuera
+   * sus torres y los enemigos de su carril. Si queda uno (o ninguno), se acaba.
+   */
+  function arenaCheck() {
+    const down = lanes.filter(l => !l.out && l.lives <= 0);
+    if (down.length) {
+      outs++;
+      for (const ln of down) {
+        ln.lives = 0; ln.out = outs; ln.outWave = Math.max(1, wave);
+        for (const t of towers.slice()) if (t.owner === ln.uid) {
+          towers.splice(towers.indexOf(t), 1);
+          G.Projectiles.clearOrbs(t.p);
+          if (selected === t) selected = null;
+          if (coop) G.Coop.broadcast(['tr', t.id]);
+        }
+        const L = lanes.indexOf(ln), list = G.EnemyMgr.all();
+        for (let i = list.length - 1; i >= 0; i--) {
+          const e = list[i];
+          if (!(e instanceof Walker) || e.lane !== L) continue;
+          list.splice(i, 1);
+          if (coop && G.Coop.isHost) G.Coop.enemyGone(e, false);
+        }
+      }
+      rebuildMazes();
+      sendQ = sendQ.filter(q => !lanes[q.L].out);
+      const left = lanes.filter(l => !l.out).length;
+      const who = down.map(l => memberName(l.uid)).join(' y ');
+      announce(left ? '¡' + who + (down.length > 1 ? ' han caído' : ' ha caído') + '! Quedan ' + left : '¡' + who + ' han caído a la vez!', 3);
+      if (knockedOut()) { cancelPlacing(); selected = null; watchLane = Math.max(0, lanes.findIndex(l => !l.out)); }
+      sendState();
+      refreshUI();
+    }
+    if (lanes.filter(l => !l.out).length <= 1) end(true);
+  }
+  /** El apodo de un jugador de la sala (también el tuyo, no "Tú": el aviso lo ven todos). */
+  function memberName(uid: string) { const m = coop && coop.members.find(x => x.uid === uid); return m ? m.name : '?'; }
 
   /**
    * Un paso en el invitado: tu héroe (sus golpes van al anfitrión), las copias de los
@@ -1379,12 +1755,14 @@ export const TD = (() => {
    */
   function stepGuest(dt: number) {
     time += dt;
+    // (Las copias de los enemigos las crea el cooperativo: también, sólo con golpes fuertes.)
+    for (const e of G.EnemyMgr.all()) e.hurtAnimMin = HURT_ANIM_MIN;
     heroStep(dt);
     G.Spawner.tickBanner(dt);
     G.EnemyMgr.update(dt, everyone());
     G.EnemyMgr.rebuildGrid();
     trackEnemies(dt);
-    if (placing && !ghostByPointer) { ghost.x = pl.x; ghost.y = pl.y; }
+    if (placing && !ghostByPointer) { const g = snap(pl.x, pl.y); ghost.x = g.x; ghost.y = g.y; }
     if (!watching()) { aimAhead(pl); G.Combat.tick(dt, pl, time); }
     applyAuras();
     for (const t of towers) {
@@ -1398,7 +1776,7 @@ export const TD = (() => {
     if (!watching()) G.Pickups.update(dt, [pl], onCollect);
     G.Hazards.update(dt);
     G.FX.update(dt);
-    if (phase === 'break') phaseT = Math.max(0, phaseT - dt);
+    if (phase === 'break' || arena) phaseT = Math.max(0, phaseT - dt);
   }
 
   function idle(dt: number) { G.FX.update(dt * 0.25); pl.anim.update(dt * 0.25); }
@@ -1412,7 +1790,7 @@ export const TD = (() => {
   /** Anfitrión: vidas, oleada, cuenta atrás, monedas de cada uno... */
   const stateEv = (): TdHostEv => ['tg', lives, wave, phase === 'wave' ? 1 : 0, Math.round(phaseT * 10) / 10,
                          toSpawn + bossLeft + G.EnemyMgr.all().filter(e => !e.dead).length,
-                         fast ? 1 : 0, cleared, won ? 1 : 0, { ...purse }, leaked, pl.kills];
+                         fast ? 1 : 0, cleared, won ? 1 : 0, { ...purse }, leaked, pl.kills, lanes.map(l => [l.lives, l.out, l.income])];
   function sendState() {
     if (!coop || !G.Coop.isHost) return;
     stateT = 0.25;
@@ -1427,7 +1805,7 @@ export const TD = (() => {
     switch (ev[0]) {
       case 'tp': {
         const x = +ev[2], y = +ev[3];
-        const why = Number.isFinite(x) && Number.isFinite(y) ? whyNot(x, y) : 'Ahí no';
+        const why = Number.isFinite(x) && Number.isFinite(y) ? whyNotFor(from, x, y) : 'Ahí no';
         if (why) { G.Coop.broadcast(['tn', from, why]); break; }
         if (!plant(from, ev[1] | 0, x, y, !!ev[4], !!ev[5])) G.Coop.broadcast(['tn', from, 'Te faltan monedas']);
         break;
@@ -1439,6 +1817,7 @@ export const TD = (() => {
       case 'th': heroUp(from); break;
       case 'tw': callWave(); break;
       case 'tl': if (his && typeof ev[2] === 'string') learn(t!, ev[2]); break;
+      case 'tk': if (arena && typeof ev[2] === 'string') doSend(from, ev[1] | 0, ev[2]); break;
     }
   }
 
@@ -1462,6 +1841,15 @@ export const TD = (() => {
         const was = wave;
         lives = ev[1]; wave = ev[2]; phase = ev[3] ? 'wave' : 'break'; phaseT = ev[4]; leftShown = ev[5];
         fast = !!ev[6]; cleared = ev[7]; won = !!ev[8]; purse = ev[9] || {}; leaked = ev[10]; pl.kills = ev[11] || 0;
+        // Arena: las vidas de cada carril y quién ha caído.
+        if (arena && Array.isArray(ev[12])) {
+          const wasOut = knockedOut();
+          ev[12].forEach((a: unknown, i: number) => {
+            const l = lanes[i];
+            if (l && Array.isArray(a)) { l.lives = +a[0] || 0; l.out = +a[1] || 0; l.income = +a[2] || 0; }
+          });
+          if (!wasOut && knockedOut()) { cancelPlacing(); selected = null; watchLane = Math.max(0, lanes.findIndex(l => !l.out)); hudKey = ''; }
+        }
         if (wave !== was) preloadWave(wave + 1);
         break;
       }
@@ -1501,6 +1889,7 @@ export const TD = (() => {
     } else if (level > t.level) G.FX.ring(t.p.x, t.p.y, 8, 90, G.U.TYPE_COLOR[G.DEX_BY[dex].types[0]], 0.6, 5);
     while (t.level < level) { t.level++; levelMove(t.p); t.atk *= 1.12; }
     t.owner = owner; t.mode = mode; t.base = base; t.spent = spent; t.shiny = !!shiny;
+    rebuildMazes();
     // Los ataques aprendidos (la copia sólo los necesita para las órbitas y el panel).
     for (const m of learned) if (!t.learned.includes(m)) { t.learned.push(m); teach(t.p, m, t.level); }
     refreshUI();
@@ -1509,6 +1898,7 @@ export const TD = (() => {
     const t = towerById(id);
     if (!t) return;
     towers.splice(towers.indexOf(t), 1);
+    rebuildMazes();
     G.Projectiles.clearOrbs(t.p);
     if (selected === t) selected = null;
     if (pendingEvo && pendingEvo.tower === t) pendingEvo = null;
@@ -1543,6 +1933,8 @@ export const TD = (() => {
     lost(msg: string) { G.UI.toast(msg, 3000); finish(summary(false), false); },
     /** Anfitrión: un compañero se ha ido para siempre; sus torres pasan a ser tuyas (siguen defendiendo). */
     mateLeft(m: Mate) {
+      // Arena: quien se va cae (sus torres y sus enemigos, fuera; la comprobación lo hace en el paso).
+      if (arena) { const l = lanes[laneIx(m.uid)]; if (l && !l.out) l.lives = 0; return; }
       let n = 0;
       for (const t of towers) {
         if (t.owner !== m.uid) continue;
@@ -1574,6 +1966,14 @@ export const TD = (() => {
       if (G.Input.tap('keym')) toggleMap();
       return;
     }
+    // Arena, ya fuera: Q/E o Tab cambian de carril (los que siguen en pie); M, el minimapa.
+    if (knockedOut()) {
+      const up = lanes.map((l, i) => (l.out ? -1 : i)).filter(i => i >= 0);
+      const step = G.Input.tap('keyq') ? -1 : G.Input.tap('keye') || G.Input.tap('tab') ? 1 : 0;
+      if (step && up.length) { const k = up.indexOf(watchLane); watchLane = up[((k < 0 ? 0 : k + step) + up.length) % up.length]; camFree = null; hudKey = ''; }
+      if (G.Input.tap('keym')) toggleMap();
+      return;
+    }
     if (placing && (G.Input.tap('enter') || G.Input.tap('space') || G.Input.tap('numpadenter'))) tryPlace(ghost.x, ghost.y, shiftHeld());
     // R: otra vez la última torre que compraste, sin ir a la tienda.
     if (G.Input.tap('keyr') && lastDex && !placing) startPlacing(lastDex);
@@ -1602,6 +2002,8 @@ export const TD = (() => {
   // seleccionada. Abajo: qué se está colocando y por qué no se puede ahí.
 
   let hud: HTMLElement | null = null, shop: HTMLElement | null = null, panel: HTMLElement | null = null, tip: HTMLElement | null = null;
+  /** Arena: el panel de envíos (a quién, qué y tus ingresos). */
+  let sendBox: HTMLElement | null = null;
   /** El minimapa (abajo a la derecha) y su lienzo. */
   let mapBox: HTMLElement | null = null, mapCv: HTMLCanvasElement | null = null;
   let mapOpen = true;
@@ -1622,6 +2024,15 @@ export const TD = (() => {
       #td-hud .td-stat b { font-size: 22px; }
       #td-hud .td-stat small { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
       #td-hud .td-money b { color: var(--gold); }
+      #td-send { position: fixed; right: 8px; top: 64px; z-index: 30; width: 214px; padding: 8px; max-height: calc(100vh - 260px); overflow: auto; }
+      #td-send h3 { margin: 0 0 6px; font-size: 15px; }
+      #td-send .td-send-list { display: flex; flex-direction: column; gap: 4px; }
+      #td-send .td-slot { display: flex; align-items: center; gap: 6px; text-align: left; width: 100%; }
+      #td-send .td-slot span { display: flex; flex-direction: column; line-height: 1.1; }
+      #td-send .td-send-to { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+      #td-send .td-send-to button { padding: 2px 7px; font-size: 12px; }
+      #td-send .td-send-to button.on { outline: 2px solid var(--gold); }
+      #td-send p { margin: 6px 0 0; font-size: 12px; }
       #td-hud .td-money.bump b { animation: td-bump .35s; }
       #td-hud .td-lives.low b { color: #ff5f6d; }
       #td-hud .td-wave { max-width: 260px; text-align: center; line-height: 1.15; }
@@ -1724,6 +2135,25 @@ export const TD = (() => {
     tip.id = 'td-tip';
     tip.className = 'box';
     buildMap();
+    // Arena: el panel de envíos.
+    sendBox = null;
+    if (arena && !watching()) {
+      sendBox = document.createElement('div');
+      sendBox.id = 'td-send';
+      sendBox.className = 'box';
+      sendBox.innerHTML = `<h3>Enviar</h3><div class="td-send-to" data-k="to"></div><div class="td-send-list"></div><p class="sub" data-k="inc"></p>`;
+      const list = sendBox.querySelector('.td-send-list') as HTMLElement;
+      SENDS.forEach((sd, k) => {
+        const b = document.createElement('button');
+        b.className = 'btn small td-slot'; b.dataset.send = String(k);
+        b.title = G.DEX_BY[sd.dex].name + (sd.fly ? ' · vuela: no sigue el laberinto' : '') + ' · +' + sd.income + ' de ingresos por oleada';
+        b.appendChild(G.UI.spriteCanvas(sd.dex, 34, 30, { scale: 1 }));
+        b.insertAdjacentHTML('beforeend', `<span><b>${sd.n > 1 ? sd.n + '× ' : ''}${G.DEX_BY[sd.dex].name}</b><em style="font-style:normal"><span class="td-cost" style="display:inline">${sd.cost}</span> · +${sd.income}${sd.fly ? ' · vuela' : ''}</em></span>`);
+        b.onclick = e => { e.stopPropagation(); send(k); };
+        list.appendChild(b);
+      });
+      G.Sprites.preload(SENDS.map(sd => sd.dex), 4000);
+    }
     // Espectador: sólo se mira (sin tienda ni panel ni monedas propias).
     if (watching()) {
       shop.style.display = 'none'; panel.style.display = 'none'; tip.style.display = 'none';
@@ -1732,7 +2162,7 @@ export const TD = (() => {
         if (el) el.classList.add('td-watch-hide');
       }
     }
-    for (const el of [hud, shop, panel, tip, mapBox!]) {
+    for (const el of [hud, shop, panel, tip, mapBox!, ...(sendBox ? [sendBox] : [])]) {
       // Lo que se pulsa en la interfaz no llega al mapa.
       el.addEventListener('pointerdown', e => e.stopPropagation());
       document.body.appendChild(el);
@@ -1780,7 +2210,9 @@ export const TD = (() => {
       b.dataset.dex = String(c.dex);
       b.title = mon.name + (r ? ' · ' + r.name + ': ' + r.desc : '');
       b.appendChild(G.UI.spriteCanvas(c.dex, 40, 35, { scale: 1 }));
-      b.insertAdjacentHTML('beforeend', `<span><b>${mon.name}</b><em style="font-style:normal">${k ? auraChip(k) : typeChip(t)} <span class="td-cost" style="display:inline">${costOf(c.dex)}</span>${c.trophy ? ' <small class="td-trophy">trofeo</small>' : ''}</em></span>`);
+      const chip = arena && c.dex === WALL_DEX ? tag('#8a7a5a', 'Muro') : k ? auraChip(k) : typeChip(t);
+      if (arena && c.dex === WALL_DEX) b.title = mon.name + ' · Muro: no ataca, sólo corta el paso (para hacer el laberinto)';
+      b.insertAdjacentHTML('beforeend', `<span><b>${mon.name}</b><em style="font-style:normal">${chip} <span class="td-cost" style="display:inline">${costOf(c.dex)}</span>${c.trophy ? ' <small class="td-trophy">trofeo</small>' : ''}</em></span>`);
       b.onclick = e => { e.stopPropagation(); startPlacing(c.dex); };
       list.appendChild(b);
     }
@@ -1789,8 +2221,8 @@ export const TD = (() => {
   }
 
   function hideUI() {
-    for (const id of ['td-hud', 'td-shop', 'td-panel', 'td-tip', 'td-bar', 'td-map']) { const el = document.getElementById(id); if (el) el.remove(); }
-    hud = shop = panel = tip = mapBox = null; mapCv = null;
+    for (const id of ['td-hud', 'td-shop', 'td-panel', 'td-tip', 'td-bar', 'td-map', 'td-send']) { const el = document.getElementById(id); if (el) el.remove(); }
+    hud = shop = panel = tip = mapBox = sendBox = null; mapCv = null;
   }
 
   // ---------------- minimapa ----------------
@@ -1799,7 +2231,14 @@ export const TD = (() => {
   // al mover al héroe, con C o con el botón. M lo esconde.
 
   /** Radio del mundo que cabe en el minimapa (el claro entero: la entrada queda un poco fuera del borde). */
-  const mapR = () => CLEAR * G.World.TS;
+  const mapR = () => (arena ? MAZE_H / 2 + 100 : CLEAR * G.World.TS);
+  /** El centro del minimapa: el del mapa; en la Arena, el del carril más cerca de la cámara (el que miras). */
+  function mapCenter() {
+    if (!arena) return { x: 0, y: 0 };
+    let best = lanes[0], bd = Infinity;
+    for (const l of lanes) { const d = G.U.dist2(l.cx, l.cy, G.Camera.x, G.Camera.y); if (d < bd) { bd = d; best = l; } }
+    return best ? { x: best.cx, y: best.cy } : { x: 0, y: 0 };
+  }
 
   function buildMap() {
     mapBox = document.createElement('div');
@@ -1821,16 +2260,16 @@ export const TD = (() => {
     // Pulsar o arrastrar: la cámara a ese punto.
     let dragging = false;
     const go = (e: PointerEvent) => {
-      const r = mapCv!.getBoundingClientRect(), R = mapR();
+      const r = mapCv!.getBoundingClientRect(), R = mapR(), c = mapCenter();
       let x = ((e.clientX - r.left) / r.width * 2 - 1) * R, y = ((e.clientY - r.top) / r.height * 2 - 1) * R;
       const d = Math.hypot(x, y);
       if (d > R) { x *= R / d; y *= R / d; }
-      camFree = { x, y };
+      camFree = { x: c.x + x, y: c.y + y };
     };
     mapCv.addEventListener('pointerdown', e => {
       if (G.Pings.available() && (G.Pings.armed || e.altKey)) {
-        const r = mapCv!.getBoundingClientRect(), R = mapR();
-        G.Pings.send(((e.clientX - r.left) / r.width * 2 - 1) * R, ((e.clientY - r.top) / r.height * 2 - 1) * R);
+        const r = mapCv!.getBoundingClientRect(), R = mapR(), c = mapCenter();
+        G.Pings.send(c.x + ((e.clientX - r.left) / r.width * 2 - 1) * R, c.y + ((e.clientY - r.top) / r.height * 2 - 1) * R);
         return;
       }
       dragging = true; mapCv!.setPointerCapture(e.pointerId); go(e);
@@ -1856,25 +2295,40 @@ export const TD = (() => {
     const css = mapCv.getBoundingClientRect().width || 170, dpr = Math.min(2, window.devicePixelRatio || 1);
     const S = Math.round(css * dpr);
     if (mapCv.width !== S) { mapCv.width = S; mapCv.height = S; }
-    const ctx = mapCv.getContext('2d')!, R = mapR(), k = S / (2 * R);
-    const X = (x: number) => S / 2 + x * k, Y = (y: number) => S / 2 + y * k;
+    const ctx = mapCv.getContext('2d')!, R = mapR(), k = S / (2 * R), c = mapCenter();
+    const X = (x: number) => S / 2 + (x - c.x) * k, Y = (y: number) => S / 2 + (y - c.y) * k;
     ctx.clearRect(0, 0, S, S);
-    // El claro y su borde (hasta donde se puede construir).
-    ctx.fillStyle = 'rgba(40, 90, 50, 0.9)';
-    ctx.beginPath(); ctx.arc(S / 2, S / 2, S / 2, 0, 6.2832); ctx.fill();
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)'; ctx.lineWidth = 1; ctx.setLineDash([3 * dpr, 3 * dpr]);
-    ctx.beginPath(); ctx.arc(S / 2, S / 2, bound * k, 0, 6.2832); ctx.stroke(); ctx.setLineDash([]);
-    // Los caminos, sus entradas y la base.
-    for (const path of paths) {
-      if (path.length < 2) continue;
-      ctx.strokeStyle = 'rgba(214, 186, 132, 0.95)'; ctx.lineWidth = Math.max(2, 42 * k); ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-      ctx.beginPath(); ctx.moveTo(X(path[0].x), Y(path[0].y)); for (const p of path) ctx.lineTo(X(p.x), Y(p.y)); ctx.stroke();
-    }
-    for (const path of paths) {
-      if (path.length < 2) continue;
-      const a = path[0], b = path[path.length - 1];
-      ctx.fillStyle = '#ff5f6d'; ctx.beginPath(); ctx.arc(X(a.x), Y(a.y), 3.5 * dpr, 0, 6.2832); ctx.fill();
-      ctx.fillStyle = '#4fb4ff'; ctx.beginPath(); ctx.arc(X(b.x), Y(b.y), 4.5 * dpr, 0, 6.2832); ctx.fill();
+    if (arena) {
+      // Arena: los carriles (el que miras, en el centro): su laberinto y la ruta de ahora.
+      for (const l of lanes) {
+        ctx.globalAlpha = l.out ? 0.35 : 1;
+        ctx.fillStyle = 'rgba(150, 118, 76, 0.9)'; ctx.fillRect(X(l.cx - MAZE_W / 2), Y(l.cy - MAZE_H / 2), MAZE_W * k, MAZE_H * k);
+        ctx.fillStyle = '#ff5f6d'; ctx.fillRect(X(l.cx - MAZE_W / 2), Y(l.cy - MAZE_H / 2), MAZE_W * k, 3 * dpr);
+        ctx.fillStyle = '#4fb4ff'; ctx.fillRect(X(l.cx - MAZE_W / 2), Y(l.cy + MAZE_H / 2) - 3 * dpr, MAZE_W * k, 3 * dpr);
+        ctx.strokeStyle = 'rgba(255, 240, 200, 0.9)'; ctx.lineWidth = Math.max(1.5, 8 * k);
+        ctx.beginPath();
+        l.route.forEach((ix, n) => { const c = cellCenter(ix); if (n) ctx.lineTo(X(l.cx + c.x), Y(l.cy + c.y)); else ctx.moveTo(X(l.cx + c.x), Y(l.cy + c.y)); });
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+    } else {
+      // El claro y su borde (hasta donde se puede construir).
+      ctx.fillStyle = 'rgba(40, 90, 50, 0.9)';
+      ctx.beginPath(); ctx.arc(S / 2, S / 2, S / 2, 0, 6.2832); ctx.fill();
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)'; ctx.lineWidth = 1; ctx.setLineDash([3 * dpr, 3 * dpr]);
+      ctx.beginPath(); ctx.arc(S / 2, S / 2, bound * k, 0, 6.2832); ctx.stroke(); ctx.setLineDash([]);
+      // Los caminos, sus entradas y la base.
+      for (const path of paths) {
+        if (path.length < 2) continue;
+        ctx.strokeStyle = 'rgba(214, 186, 132, 0.95)'; ctx.lineWidth = Math.max(2, 42 * k); ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+        ctx.beginPath(); ctx.moveTo(X(path[0].x), Y(path[0].y)); for (const p of path) ctx.lineTo(X(p.x), Y(p.y)); ctx.stroke();
+      }
+      for (const path of paths) {
+        if (path.length < 2) continue;
+        const a = path[0], b = path[path.length - 1];
+        ctx.fillStyle = '#ff5f6d'; ctx.beginPath(); ctx.arc(X(a.x), Y(a.y), 3.5 * dpr, 0, 6.2832); ctx.fill();
+        ctx.fillStyle = '#4fb4ff'; ctx.beginPath(); ctx.arc(X(b.x), Y(b.y), 4.5 * dpr, 0, 6.2832); ctx.fill();
+      }
     }
     // Las torres: del color de su ataque (los apoyos, dorados) y, en grupo, con el de su dueño alrededor.
     for (const t of towers) {
@@ -1938,7 +2392,34 @@ export const TD = (() => {
       b.classList.toggle('on', !!placing && placing.dex === dex);
     });
     paintPanel();
+    paintSend();
     tipKey = '-';                 // se repinta el aviso de abajo en el próximo fotograma
+  }
+
+  /** Arena: el panel de envíos (qué se puede pagar, a quién y tus ingresos). */
+  let sendKey = '';
+  function paintSend() {
+    if (!sendBox) return;
+    sendBox.style.display = knockedOut() ? 'none' : '';
+    const money = cash();
+    sendBox.querySelectorAll<HTMLButtonElement>('[data-send]').forEach(b => { b.disabled = money < SENDS[+b.dataset.send!].cost; });
+    const to = sendTarget(me, sendTo), ln = myLane();
+    const key = to + '|' + lanes.map(l => l.out + ':' + l.lives).join(',') + '|' + (ln ? ln.income : 0) + '|' + wave;
+    if (key === sendKey) return;
+    sendKey = key;
+    const box = sendBox.querySelector('[data-k=to]') as HTMLElement;
+    box.innerHTML = '<span class="sub">A:</span>';
+    for (const l of lanes) {
+      if (l.uid === me || l.out) continue;
+      const b = document.createElement('button');
+      b.className = 'btn small' + (l.uid === to ? ' on' : '');
+      b.style.color = colorOf(l.uid) || '';
+      b.textContent = memberName(l.uid) + ' ♥' + l.lives;
+      b.onclick = e => { e.stopPropagation(); sendTo = l.uid; sendKey = ''; paintSend(); };
+      box.appendChild(b);
+    }
+    (sendBox.querySelector('[data-k=inc]') as HTMLElement).textContent =
+      G.I18n.f('Cada oleada cobras {x} + {x} de ingresos', waveBonus(Math.max(1, wave)), ln ? ln.income : 0);
   }
 
   /** Botones para enseñar a la torre los ataques que le faltan (o por qué no puede). */
@@ -1982,6 +2463,14 @@ export const TD = (() => {
         <button class="btn small gold" data-a="up"${c == null || money < c ? ' disabled' : ''}>${c == null ? 'Al máximo' : 'Mejorar ataque · ' + c}</button>
         <button class="btn small ghost" data-a="close">Cerrar</button>`;
       (panel.querySelector('[data-a=up]') as HTMLElement).onclick = () => upgradeHero();
+    } else if (isWall(selected)) {
+      // Arena: un muro (Sudowoodo) sólo estorba: se vende, y nada más.
+      const t = selected;
+      panel.innerHTML = `<h3>${G.DEX_BY[t.dex].name} · muro</h3>
+        <p>No ataca: corta el paso para alargar el laberinto.</p>
+        ${mine(t) ? `<button class="btn small" data-a="sell">Vender · +${sellValue(t.spent)}</button>` : ''}
+        <button class="btn small ghost" data-a="close">Cerrar</button>`;
+      if (mine(t)) (panel.querySelector('[data-a=sell]') as HTMLElement).onclick = () => sell(t);
     } else {
       const t = selected;
       const c = upgradeCost(t.base, t.level);
@@ -2024,21 +2513,28 @@ export const TD = (() => {
     const left = guest() ? leftShown : toSpawn + bossLeft + G.EnemyMgr.all().filter(e => !e.dead).length;
     const next = waveAt(wave + 1), cur = waveAt(Math.max(1, wave));
     // Hasta la victoria, "oleada n/30"; en el sin fin, sólo el número.
-    const of = (n: number) => n > LAST_WAVE ? String(n) : n + '/' + LAST_WAVE;
+    const of = (n: number) => n > LAST_WAVE || arena ? String(n) : n + '/' + LAST_WAVE;       // (la Arena no acaba en la 30)
+    const myLives = arena ? Math.max(0, (myLane() || { lives: 0 }).lives) : lives;
+    const watched = knockedOut() && lanes[watchLane] ? memberName(lanes[watchLane].uid) : '';
     const title = guest() && hostAway ? `Esperando a ${hostAway}…`
+      : knockedOut() ? `Has caído · mirando a ${watched}` + (G.Touch.active ? '' : ' (Q/E)')
+      : arena && phase === 'wave' ? `Oleada ${wave} · la siguiente en ${Math.max(1, Math.ceil(phaseT))} s`
       : phase === 'wave' ? `Oleada ${of(wave)} · ${cur.theme}` : `Oleada ${of(wave + 1)} en ${Math.max(1, Math.ceil(phaseT))} s · ${next.theme}`;
     const hint = phase === 'wave' ? `Quedan ${left} · ${cur.hint}` : next.hint;
     // En grupo, las monedas de cada compañero (con su color).
-    const mates = coop ? coop.members.filter(m => m.uid !== me).map(m => m.uid + ':' + (purse[m.uid] || 0)).join(',') : '';
-    const key = [lives, title, hint, phase, wave, fast, won, mates].join('|');
+    // (En la Arena, sus vidas, o que ha caído.)
+    const laneOf = (uid: string) => lanes[laneIx(uid)];
+    const mates = coop ? coop.members.filter(m => m.uid !== me).map(m => m.uid + ':' + (arena ? (laneOf(m.uid) ? laneOf(m.uid).lives + '/' + laneOf(m.uid).out : '') : purse[m.uid] || 0)).join(',') : '';
+    const key = [myLives, title, hint, phase, wave, fast, won, mates, knockedOut()].join('|');
     if (key !== hudKey) {
       hudKey = key;
-      (hud.querySelector('[data-k=lives]') as HTMLElement).textContent = String(Math.max(0, lives));
-      (hud.querySelector('.td-lives') as HTMLElement).classList.toggle('low', lives <= 8);
+      (hud.querySelector('[data-k=lives]') as HTMLElement).textContent = String(myLives);
+      (hud.querySelector('.td-lives') as HTMLElement).classList.toggle('low', myLives <= (arena ? 5 : 8));
       (hud.querySelector('[data-k=wave]') as HTMLElement).textContent = title;
       (hud.querySelector('[data-k=hint]') as HTMLElement).textContent = hint;
       const nb = hud.querySelector('[data-a=next]') as HTMLElement;
-      nb.style.display = phase === 'break' ? '' : 'none';
+      // (En la Arena, sólo para la primera: después el ritmo es el mismo para todos.)
+      nb.style.display = phase === 'break' && !(arena && wave > 0) && !knockedOut() ? '' : 'none';
       nb.textContent = wave === 0 ? '¡Empezar! (N)' : 'Ya (N)';
       const fb = hud.querySelector('[data-a=fast]') as HTMLButtonElement;
       fb.textContent = fast ? '×2' : '×1';
@@ -2048,9 +2544,16 @@ export const TD = (() => {
       const tm = hud.querySelector('[data-k=team]') as HTMLElement;
       tm.style.display = coop ? '' : 'none';
       if (coop) {
-        tm.innerHTML = coop.members.filter(m => m.uid !== me).map(m =>
-          `<span translate="no" style="color:${colorOf(m.uid)}">${esc(m.name)} <b>${purse[m.uid] || 0}</b></span>`).join('');
+        tm.innerHTML = coop.members.filter(m => m.uid !== me).map(m => {
+          const l = arena ? laneOf(m.uid) : null;
+          const v = l ? (l.out ? 'fuera' : '♥ ' + Math.max(0, l.lives)) : String(purse[m.uid] || 0);
+          return `<span translate="no" style="color:${colorOf(m.uid)}${l && l.out ? ';opacity:.5' : ''}">${esc(m.name)} <b>${v}</b></span>`;
+        }).join('');
       }
+      // Arena, ya fuera: sin tienda ni panel (no se compra), y sin monedas.
+      if (shop) shop.style.display = knockedOut() || watching() ? 'none' : '';
+      const money = hud.querySelector('.td-money') as HTMLElement | null;
+      if (money && !watching()) money.style.display = knockedOut() ? 'none' : '';
     }
     // Abajo: qué estás colocando, y si el sitio vale.
     const err = placing ? whyNot(ghost.x, ghost.y) : '';
@@ -2071,9 +2574,10 @@ export const TD = (() => {
 
   /** El camino, la base, y los alcances (al colocar o con una torre seleccionada). */
   function drawGround(ctx: CanvasRenderingContext2D) {
-    if (!paths.length || paths[0].length < 2) return;
+    if (!arena && (!paths.length || paths[0].length < 2)) return;
     ctx.save();
     ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    if (arena) drawArenaFloor(ctx);
     // Todos los caminos en un solo trazo (así el tramo que comparten no se oscurece dos veces).
     const trace = () => { ctx.beginPath(); for (const path of paths) { ctx.moveTo(path[0].x, path[0].y); for (const p of path) ctx.lineTo(p.x, p.y); } };
     const path = paths[0];
@@ -2081,14 +2585,17 @@ export const TD = (() => {
     if (placing) {
       trace(); ctx.strokeStyle = 'rgba(255, 95, 109, 0.22)'; ctx.lineWidth = PATH_CLEAR * 2; ctx.stroke();
       ctx.fillStyle = 'rgba(255, 95, 109, 0.22)';
-      for (const e of [...paths.map(p => p[0]), path[path.length - 1]]) { ctx.beginPath(); ctx.arc(e.x, e.y, ENDS_CLEAR, 0, 6.2832); ctx.fill(); }
+      for (const e of [...paths.map(p => p[0]), ...bases()]) { ctx.beginPath(); ctx.arc(e.x, e.y, ENDS_CLEAR, 0, 6.2832); ctx.fill(); }
       for (const t of towers) { ctx.beginPath(); ctx.arc(t.p.x, t.p.y, TOWER_GAP, 0, 6.2832); ctx.fill(); }
       // Lo que ocupa cada torre (no hay casillas: es un círculo; dos torres no pueden solaparse).
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)'; ctx.lineWidth = 1.5;
       for (const t of towers) { ctx.beginPath(); ctx.arc(t.p.x, t.p.y, TOWER_GAP / 2, 0, 6.2832); ctx.stroke(); }
       // El borde del mapa.
-      ctx.strokeStyle = 'rgba(255, 95, 109, 0.5)'; ctx.lineWidth = 3; ctx.setLineDash([12, 10]);
-      ctx.beginPath(); ctx.arc(0, 0, bound, 0, 6.2832); ctx.stroke(); ctx.setLineDash([]);
+      if (!arena) {
+        ctx.strokeStyle = 'rgba(255, 95, 109, 0.5)'; ctx.lineWidth = 3; ctx.setLineDash([12, 10]);
+        const h = home();
+        ctx.beginPath(); ctx.arc(h.x, h.y, bound, 0, 6.2832); ctx.stroke(); ctx.setLineDash([]);
+      }
     }
     trace(); ctx.strokeStyle = 'rgba(60, 44, 28, 0.55)'; ctx.lineWidth = 50; ctx.stroke();
     trace(); ctx.strokeStyle = 'rgba(214, 186, 132, 0.85)'; ctx.lineWidth = 42; ctx.stroke();
@@ -2108,11 +2615,12 @@ export const TD = (() => {
         ctx.restore();
       }
     }
-    // La base: lo que defiendes.
-    const b = path[path.length - 1];
-    ctx.fillStyle = 'rgba(79, 180, 255, 0.35)';
-    ctx.beginPath(); ctx.arc(b.x, b.y, 34, 0, 6.2832); ctx.fill();
-    ctx.strokeStyle = '#4fb4ff'; ctx.lineWidth = 4; ctx.stroke();
+    // La base: lo que defiendes (en la Arena, la de cada carril).
+    for (const b of bases()) {
+      ctx.fillStyle = 'rgba(79, 180, 255, 0.35)';
+      ctx.beginPath(); ctx.arc(b.x, b.y, 34, 0, 6.2832); ctx.fill();
+      ctx.strokeStyle = '#4fb4ff'; ctx.lineWidth = 4; ctx.stroke();
+    }
     // Las entradas.
     ctx.fillStyle = 'rgba(255, 95, 109, 0.35)';
     for (const p of paths) { const a = p[0]; ctx.beginPath(); ctx.arc(a.x, a.y, 26, 0, 6.2832); ctx.fill(); }
@@ -2157,6 +2665,58 @@ export const TD = (() => {
     }
     ctx.restore();
   }
+  /**
+   * Arena: cada carril, su cuadrícula, la entrada (arriba, roja) y la salida (abajo, azul), la ruta que siguen
+   * ahora los monstruos y, encima, de quién es y sus vidas. Al colocar: la casilla (verde o roja) y la ruta
+   * que quedaría con la torre ahí.
+   */
+  function drawArenaFloor(ctx: CanvasRenderingContext2D) {
+    const fs = Math.max(30, 22 / (G.Camera.scale || 1)), rows = Math.round(MAZE_H / CELL);
+    lanes.forEach(l => {
+      const x0 = l.cx - MAZE_W / 2, y0 = l.cy - MAZE_H / 2, col = colorOf(l.uid) || '#ffffff';
+      ctx.globalAlpha = l.out ? 0.35 : 1;
+      ctx.fillStyle = 'rgba(150, 118, 76, 0.55)'; ctx.fillRect(x0, y0, MAZE_W, MAZE_H);
+      ctx.fillStyle = 'rgba(255, 95, 109, 0.28)'; ctx.fillRect(x0, y0, MAZE_W, CELL * FREE_ROWS);
+      ctx.fillStyle = 'rgba(79, 180, 255, 0.32)'; ctx.fillRect(x0, y0 + MAZE_H - CELL * FREE_ROWS, MAZE_W, CELL * FREE_ROWS);
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.07)'; ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (let c = 1; c < MAZE_COLS; c++) { ctx.moveTo(x0 + c * CELL, y0); ctx.lineTo(x0 + c * CELL, y0 + MAZE_H); }
+      for (let r = 1; r < rows; r++) { ctx.moveTo(x0, y0 + r * CELL); ctx.lineTo(x0 + MAZE_W, y0 + r * CELL); }
+      ctx.stroke();
+      ctx.strokeStyle = col; ctx.lineWidth = 4; ctx.strokeRect(x0, y0, MAZE_W, MAZE_H);
+      drawRoute(ctx, l, l.route, 'rgba(255, 240, 200, 0.55)', false);
+      ctx.font = '800 ' + Math.round(fs) + 'px Pixelify,"Segoe UI",system-ui,sans-serif'; ctx.textAlign = 'center';
+      ctx.fillStyle = col;
+      ctx.fillText(memberName(l.uid) + (l.out ? ' · ' + G.I18n.t('fuera') : ' · ♥ ' + l.lives), l.cx, y0 - fs * 0.5);
+    });
+    ctx.globalAlpha = 1;
+    const ln = myLane();
+    if (!placing || !ln) return;
+    const i = cellAt(ghost.x - ln.cx, ghost.y - ln.cy);
+    if (i < 0) return;
+    const err = whyNot(ghost.x, ghost.y), c = cellCenter(i);
+    ctx.fillStyle = err ? 'rgba(255, 95, 109, 0.4)' : 'rgba(95, 224, 138, 0.35)';
+    ctx.fillRect(ln.cx + c.x - CELL / 2, ln.cy + c.y - CELL / 2, CELL, CELL);
+    if (err) return;
+    const b = ln.blocked.slice(); b[i] = 1;
+    const d = flow(b);
+    drawRoute(ctx, ln, routeFrom(cellIx(Math.floor(MAZE_COLS / 2), 0), d, b), 'rgba(95, 224, 138, 0.95)', true);
+  }
+  /** Arena: una ruta (casillas) dibujada sobre su carril. */
+  function drawRoute(ctx: CanvasRenderingContext2D, ln: Lane, route: number[], color: string, dash: boolean) {
+    if (route.length < 2) return;
+    ctx.strokeStyle = color; ctx.lineWidth = dash ? 5 : 7; ctx.setLineDash(dash ? [12, 9] : []);
+    ctx.beginPath();
+    route.forEach((i, k) => { const c = cellCenter(i); if (k) ctx.lineTo(ln.cx + c.x, ln.cy + c.y); else ctx.moveTo(ln.cx + c.x, ln.cy + c.y); });
+    ctx.lineTo(ln.cx + cellCenter(route[route.length - 1]).x, ln.cy + MAZE_H / 2);
+    ctx.stroke(); ctx.setLineDash([]);
+  }
+  /** Las bases (el final de los caminos; con varias entradas es la misma, y en la Arena, una por carril). */
+  function bases() {
+    const out: { x: number; y: number }[] = [];
+    for (const p of paths) { const b = p[p.length - 1]; if (!out.some(o => o.x === b.x && o.y === b.y)) out.push(b); }
+    return out;
+  }
   function ring(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, rgb: string) {
     ctx.fillStyle = `rgba(${rgb}, 0.16)`;
     ctx.strokeStyle = `rgba(${rgb}, 0.85)`;
@@ -2197,7 +2757,7 @@ export const TD = (() => {
     const { ctx, w, h, dpr } = v;
     // La interfaz sólo se ve con la partida en marcha (no en la pausa ni en el resumen).
     const show = Run.state === 'playing';
-    for (const el of [hud, shop, panel, tip, mapBox]) if (el) el.style.visibility = show ? '' : 'hidden';
+    for (const el of [hud, shop, panel, tip, mapBox, sendBox]) if (el) el.style.visibility = show ? '' : 'hidden';
     if (show) paintHud();
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -2233,13 +2793,36 @@ export const TD = (() => {
     openTeam,
     // ---- para las pruebas ----
     debugBuy(dex: number) { startPlacing(dex); },
+    debugCancel() { cancelPlacing(); },
     debugPlace(x: number, y: number) { tryPlace(x, y); },
+    /** La vista previa de la torre que se coloca, a (x, y), como si la llevara el ratón (vídeos y pruebas). */
+    debugGhost(x: number, y: number) { const g = snap(x, y); ghost.x = g.x; ghost.y = g.y; ghostByPointer = true; },
+    /** Arena, ya fuera: mira el carril del siguiente (1) o del anterior (-1) que sigue en pie (como Q/E). */
+    debugWatch(step: number) {
+      const up = lanes.map((l, i) => (l.out ? -1 : i)).filter(i => i >= 0);
+      if (!knockedOut() || !up.length) return;
+      const k = up.indexOf(watchLane); watchLane = up[((k < 0 ? 0 : k + Math.sign(step)) + up.length) % up.length]; camFree = null; hudKey = '';
+    },
+    /** (Vídeos) saca ya un jefe por el camino `path` (en la Arena, cada carril tiene los suyos). → su id */
+    debugBossAt(dex: number, path: number, legend = false) {
+      if (!hosting() || !G.DEX_BY[dex] || !(arena ? lanes[path] : paths[path])) return null;
+      spawnEnemy(true, dex, path, true);
+      const e = G.EnemyMgr.all().filter((x): x is Walker => x instanceof Walker && x.chief).pop();
+      if (e && legend && e.kind !== 'legend') { e.kind = 'legend'; bigger(e, 'legend'); }
+      return e ? e.id : null;
+    },
     debugUpgrade(i: number) { if (towers[i]) upgrade(towers[i]); },
     debugEvolve(to: number) { if (pendingEvo && pendingEvo.options.includes(to)) chooseEvo(pendingEvo.tower, to); },
     debugSelect(i: number) { selected = towers[i] || null; refreshUI(); },
     debugCycleMode(i: number) { if (towers[i]) cycleMode(towers[i]); },
     debugHero() { upgradeHero(); },
     debugLives(n: number) { if (hosting()) { lives = n; tampered = true; sendState(); } },
+    /** Arena: envía el monstruo `k` (de SENDS) a `to` (o al de siempre), como con su botón. */
+    debugSend(k: number, to = '') { const was = sendTo; if (to) sendTo = to; send(k); sendTo = was; },
+    /** (Vídeos y pruebas) las monedas de `uid` (anfitrión; sin marcar la partida: el vídeo enseña el podio y el ranking). */
+    debugMoney(uid: string, n: number) { if (hosting() && uid in purse && n >= 0) { purse[uid] = n; sendState(); refreshUI(); } },
+    /** Arena: las vidas del carril de `uid` (sin marcar la partida: las pruebas miran el podio y el ranking). */
+    debugLaneLives(uid: string, n: number) { const l = lanes[laneIx(uid)]; if (hosting() && l) { l.lives = n; sendState(); } },
     debugWin() { if (hosting()) { wave = LAST_WAVE; phase = 'wave'; toSpawn = 0; bossLeft = 0; G.EnemyMgr.clear(); tampered = true; } },
     finishWon,
     debugSell(i: number) { if (towers[i]) sell(towers[i]); },
@@ -2276,7 +2859,8 @@ export const TD = (() => {
     get placing() { return placing ? { dex: placing.dex, x: ghost.x, y: ghost.y } : null; },
     get info() {
       return {
-        wave, lives, leaked, phase, money: cash(), reach: Math.round(reach * 100) / 100, team: team.slice(), shop: pool.map(c => c.dex), heroLevel, won,
+        // (En la Arena, las de tu carril.)
+        wave, lives: arena ? Math.max(0, (myLane() || { lives: 0 }).lives) : lives, leaked, phase, money: cash(), reach: Math.round(reach * 100) / 100, team: team.slice(), shop: pool.map(c => c.dex), heroLevel, won,
         evo: pendingEvo ? pendingEvo.options.slice() : null,
         selected: selected === 'hero' ? 'hero' : selected ? towers.indexOf(selected) : null,
         powers: { ...powers },
@@ -2292,6 +2876,8 @@ export const TD = (() => {
         towers: towers.map(t => ({ id: t.id, owner: t.owner, dex: t.dex, level: t.level, mode: t.mode, x: Math.round(t.p.x), y: Math.round(t.p.y), shots: shots.get(t.p) || 0,
                                    moves: t.p.activeGroup().map(m => m.id), learned: t.learned.slice(), spent: t.spent })),
         evo: pendingEvo ? { id: pendingEvo.tower.id, options: pendingEvo.options.slice() } : null,
+        arena, out: knockedOut(),
+        lanes: lanes.map(l => ({ uid: l.uid, cx: l.cx, cy: l.cy, lives: l.lives, out: l.out, income: l.income, route: l.route.length, len: l.dist[cellIx(Math.floor(MAZE_COLS / 2), 0)], walls: l.blocked.reduce((a, b) => a + b, 0) })),
       };
     },
     get player() { return pl; }, get time() { return time; }

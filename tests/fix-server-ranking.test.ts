@@ -141,3 +141,53 @@ describe('aviso de inicio de partida', () => {
     expect(n('/start')).toBe(1);
   });
 });
+
+describe('Arena', () => {
+  const places = [{ uid: '2', place: 1, wave: 9, dex: 6, shiny: true }, { uid: '1', place: 2, wave: 7, dex: 25, shiny: false }];
+  const res = { map: 'valle', waves: 8, secs: 600, places };
+
+  test('submitArena sube a /arena tras el aviso, con reintentos, y avisa con el modo "a"', async () => {
+    replies['POST /ranking/start'] = [ok()];
+    replies['POST /ranking/arena'] = [err(429, 'x'), ok({ id: 3, counted: 2 })];
+    R.runStarted('a');
+    expect(await R.submitArena(res)).toEqual([]);
+    expect(calls.map(c => c.path)).toEqual(['/ranking/start', '/ranking/arena', '/ranking/arena']);
+    expect(calls[0].body).toEqual({ mode: 'a' });
+    expect(calls.at(-1)!.body).toEqual({ mode: 'a', map: 'valle', waves: 8, secs: 600, places });
+    expect(results).toEqual([{ mode: 'a', ok: true, better: [] }]);
+  });
+
+  test('un rechazo trae su motivo, no lanza y no se reintenta; sin sesión no hace nada', async () => {
+    replies['POST /ranking/arena'] = [err(403, 'Los jugadores no coinciden con tu sala.')];
+    expect(await R.submitArena(res)).toEqual([]);
+    expect(n('/arena')).toBe(1);
+    expect(results[0]).toMatchObject({ mode: 'a', ok: false, reason: 'Los jugadores no coinciden con tu sala.' });
+    replies['POST /ranking/arena'] = [null];
+    expect(await R.submitArena(res)).toEqual([]);                          // red caída: reintenta y acaba diciéndolo
+    expect(results.at(-1).reason).toMatch(/conexión/);
+    calls = []; results = []; session = null;
+    expect(await R.submitArena(res)).toEqual([]);
+    expect(calls.length + results.length).toBe(0);
+  });
+
+  test('una Arena de un solo jugador no cuenta ("skipped")', async () => {
+    expect(await R.submitArena({ ...res, places: places.slice(0, 1) })).toEqual([]);
+    expect(calls.length).toBe(0);
+    expect(results[0]).toMatchObject({ mode: 'a', ok: false, skipped: true });
+  });
+
+  test('topArena pide el periodo (y los amigos) y devuelve filas y tu puesto', async () => {
+    const row = { uid: '1', name: 'Ana', dex: 25, shiny: false, wins: 2, podiums: 3, games: 4 };
+    replies['GET /ranking/arena/top?period=w'] = [ok({ rows: [row], mine: { ...row, pos: 7 } })];
+    expect(await R.topArena('w')).toEqual({ rows: [row], mine: { ...row, pos: 7 } });
+    (G as any).Social = { friends: [{ uid: '5', status: 'ok' }, { uid: '6', status: 'wait' }] };
+    replies['GET /ranking/arena/top?period=a&circle=5'] = [ok({ rows: [], mine: null })];
+    expect(await R.topArena('a', true)).toEqual({ rows: [], mine: null });
+    (G as any).Social = { friends: [] };
+    session = null;
+    expect(await R.topArena('d')).toEqual({ rows: [], mine: null });
+    session = { token: 't', uid: '1', name: 'Ana' };
+    replies['GET /ranking/arena/top?period=d'] = [err(500, 'Error del servidor.')];
+    await expect(R.topArena('d')).rejects.toThrow('Error del servidor.');
+  });
+});

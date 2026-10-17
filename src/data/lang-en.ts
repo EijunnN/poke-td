@@ -436,6 +436,13 @@ G.I18n.add({
   'en solitario': 'solo', 'en grupo': 'in a group', 'Nv. {x} · {x} derrotados': 'Lv. {x} · {x} defeated',
   '¡Nueva mejor marca {x} en el ranking!': 'New best record {x} on the leaderboard!', 'de la semana': 'of the week', 'del mes': 'of the month', 'del año': 'of the year', 'histórico': 'all-time',
 
+  // Ranking de la Arena
+  '{x} Arena': '{x} Arena', 'Arena': 'Arena', '· podio y victorias': '· podium and wins',
+  '{x} victoria': '{x} win', '{x} victorias': '{x} wins', '{x} podio': '{x} podium', '{x} podios': '{x} podiums',
+  '{x} partida': '{x} game', '{x} partidas': '{x} games',
+  'Todavía no hay partidas de Arena aquí. ¡Sé el primero!': 'No Arena games here yet. Be the first!',
+  'Una partida de Arena necesita al menos 2 jugadores.': 'An Arena game needs at least 2 players.',
+
   // ---------------- ajustes ----------------
   'Sonido': 'Sound', 'Gráficos': 'Graphics', 'Controles': 'Controls', 'Cuenta': 'Account', 'Acerca de': 'About', 'Música': 'Music', 'Efectos': 'Effects',
   'Silenciar todo': 'Mute all', 'Activar sonido': 'Unmute', 'Calidad': 'Quality', 'Auto': 'Auto', 'Alta': 'High', 'Media': 'Medium', 'Baja': 'Low',

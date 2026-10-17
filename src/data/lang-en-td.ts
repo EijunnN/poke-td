@@ -95,6 +95,21 @@ G.I18n.add({
   'No se pudo entrar a mirar.': 'Could not start watching.', 'Sal de tu sala para mirar otra partida.': 'Leave your room to watch another game.',
 
   // ---------------- sala ----------------
+  // Arena (Defensa: cada uno su carril; gana el último en pie).
+  'Variante:': 'Variant:', 'Juntos': 'Together', 'En la Arena caben {x}': 'The Arena fits {x}',
+  'Arena: cada uno su carril, sin camino: haces el laberinto con tus torres y envías monstruos a los rivales. Gana el último en pie.':
+    'Arena: everyone has their own lane with no path: you build the maze with your towers and send monsters to your rivals. The last one standing wins.',
+  'Enviar': 'Send', 'A:': 'To:', 'Muro': 'Wall', 'vuela': 'flies', 'Cada oleada cobras {x} + {x} de ingresos': 'Each wave you earn {x} + {x} income',
+  'Oleada {x} · la siguiente en {x} s': 'Wave {x} · next one in {x} s', '{x} · muro': '{x} · wall',
+  'No ataca: corta el paso para alargar el laberinto.': 'It does not attack: it blocks the way to make the maze longer.',
+  'Fuera de tu carril': 'Outside your lane', 'Ahí entran o salen: déjalo libre': 'They come in or out there: keep it clear',
+  'Ya hay algo ahí': 'Something is already there', 'Hay un monstruo ahí': 'There is a monster there',
+  'Taparías el camino': 'You would block the way', 'Dejarías a un monstruo encerrado': 'You would trap a monster',
+  'Arena: defiende tu carril; gana el último en pie': 'Arena: defend your lane; the last one standing wins',
+  'Has caído · mirando a {x}': 'You are out · watching {x}', 'Has caído · mirando a {x} (Q/E)': 'You are out · watching {x} (Q/E)',
+  '¡Has ganado la Arena!': 'You won the Arena!', 'Arena · {x}.º puesto': 'Arena · place {x}', 'Puesto': 'Place', '{x}.º de {x}': '{x} of {x}',
+  '¡{x} ha caído! Quedan {x}': '{x} is out! {x} left', '¡{x} han caído! Quedan {x}': '{x} are out! {x} left',
+  '¡{x} han caído a la vez!': '{x} are out at the same time!', 'Ya no juegas': 'You are out', 'premio {x}': 'prize {x}', 'fuera': 'out',
   'Código:': 'Code:', 'Copiar enlace': 'Copy link', 'Cambiar código': 'Change code', 'Sacar de la sala': 'Remove from the room',
   'Quien abra el enlace entra en la sala, aunque no sea tu amigo': 'Whoever opens the link joins the room, even if they are not your friend',
   'El código y el enlace de ahora dejan de valer': 'The current code and link stop working',

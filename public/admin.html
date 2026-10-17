@@ -56,7 +56,7 @@
   const app = document.getElementById('app');
   const upd = document.getElementById('upd');
   const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const MODES = { s: 'Survivor', g: 'Survivor en grupo', d: 'Defensa', e: 'Defensa en grupo' };
+  const MODES = { s: 'Survivor', g: 'Survivor en grupo', d: 'Defensa', e: 'Defensa en grupo', a: 'Arena' };
   let range = 1;           // días del gráfico de conectados (1 o 7)
   let last = null;
 
@@ -143,12 +143,12 @@
     const online = d.online.length ? `<table><tr><th>Jugador</th><th>Estado</th><th>Conectado</th><th>Sala</th></tr>${d.online.map(o => {
       const room = d.rooms.find(r => r.id === o.room);
       const state = o.play ? '<span class="dot play"></span>En partida' : o.watching ? '<span class="dot"></span>Mirando una sala' : '<span class="dot"></span>En el menú';
-      return `<tr><td translate="no"><b>${esc(o.name)}</b></td><td>${state}</td><td>${ago(o.since)}</td><td>${room ? `${esc(room.host)} · ${room.mode === 'td' ? 'Defensa' : 'Survivor'}` : '<span class="sub">—</span>'}</td></tr>`;
+      return `<tr><td translate="no"><b>${esc(o.name)}</b></td><td>${state}</td><td>${ago(o.since)}</td><td>${room ? `${esc(room.host)} · ${room.mode === 'td' ? 'Defensa' : room.mode === 'arena' ? 'Arena' : 'Survivor'}` : '<span class="sub">—</span>'}</td></tr>`;
     }).join('')}</table>` : '<p class="sub">Nadie conectado ahora mismo.</p>';
 
     const rooms = d.rooms.length ? `<table><tr><th>Anfitrión</th><th>Modo</th><th>Estado</th><th>Jugadores</th><th>Abierta hace</th></tr>${d.rooms.map(r => `<tr>
       <td translate="no"><b>${esc(r.host)}</b> ${r.pub ? '<span class="tag blue">pública</span>' : '<span class="tag">privada</span>'}</td>
-      <td>${r.mode === 'td' ? 'Defensa · ' + esc(r.map) : 'Survivor'}</td>
+      <td>${r.mode === 'td' ? 'Defensa · ' + esc(r.map) : r.mode === 'arena' ? 'Arena · ' + esc(r.map) : 'Survivor'}</td>
       <td>${r.started ? '<span class="tag gold">jugando ' + ago(r.started) + '</span>' : 'En el vestíbulo'}${r.watchers ? ` <span class="sub">· ${r.watchers} mirando</span>` : ''}</td>
       <td translate="no">${r.members.filter(m => !m.spec).length}/${r.max} · ${r.members.map(m => `<span class="dot ${m.away ? 'away' : ''}"></span>${esc(m.name)}${m.spec ? ' (mira)' : ''}`).join(' ')}</td>
       <td>${ago(r.created)}</td></tr>`).join('')}</table>` : '<p class="sub">No hay salas abiertas.</p>';

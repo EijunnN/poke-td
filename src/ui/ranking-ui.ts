@@ -1,11 +1,14 @@
 import { G } from '../g';
 /* ============ ranking-ui.js — pantalla del ranking ============
- * Pestañas Solo / Grupo, periodo (diario ... histórico), todos o sólo amigos,
+ * Pestañas Solo / Grupo / Defensa / Defensa en grupo / Arena, periodo (diario ... histórico), todos o sólo amigos,
  * filtro por Pokémon (sólo en el histórico) y tu puesto abajo aunque no salgas
  * en el top. Las listas y los puestos los calcula el servidor (ver ranking.ts).
+ * La Arena no lleva marcas sino un podio por cuenta (victorias, podios y partidas; server/arena.ts):
+ * sin filtro por Pokémon ni reportes.
  */
 type RankRow = Awaited<ReturnType<typeof G.Ranking.top>>[number];
 type MyRank = NonNullable<Awaited<ReturnType<typeof G.Ranking.myRank>>>;
+type ArenaRow = Awaited<ReturnType<typeof G.Ranking.topArena>>['rows'][number];
 
 export const RankingUI = (() => {
   const $ = G.UI.$;
@@ -56,14 +59,15 @@ export const RankingUI = (() => {
       }
     };
     mk($('rk-mode'), [['s', `<b>${G.Icons.html('user', 16)} Solo</b>`], ['g', `<b>${G.Icons.html('friends', 16)} Grupo</b>`],
-                      ['d', `<b>${G.Icons.html('shield', 16)} Defensa</b>`], ['e', `<b>${G.Icons.html('shield', 16)} Defensa en grupo</b>`]],
+                      ['d', `<b>${G.Icons.html('shield', 16)} Defensa</b>`], ['e', `<b>${G.Icons.html('shield', 16)} Defensa en grupo</b>`],
+                      ['a', `<b>${G.Icons.html('crown', 16)} Arena</b>`]],
        mode, k => {
          mode = k;
-         // En Defensa no hay tablas por Pokémon.
-         if (defense() && dex) { dex = null; $<HTMLInputElement>('rk-poke').value = ''; $('rk-clear').classList.add('hidden'); }
+         // En Defensa y en la Arena no hay tablas por Pokémon.
+         if ((defense() || arena()) && dex) { dex = null; $<HTMLInputElement>('rk-poke').value = ''; $('rk-clear').classList.add('hidden'); }
        }, 'gen-tab');
-    $<HTMLInputElement>('rk-poke').classList.toggle('hidden', defense());
-    $('rk-what').textContent = defense() ? '· oleadas superadas' : '· tiempo aguantado';
+    $<HTMLInputElement>('rk-poke').classList.toggle('hidden', defense() || arena());
+    $('rk-what').textContent = arena() ? '· podio y victorias' : defense() ? '· oleadas superadas' : '· tiempo aguantado';
     mk($('rk-period'), G.Ranking.PERIODS, period, k => {
       period = k;
       if (k !== 'a' && dex) { dex = null; $<HTMLInputElement>('rk-poke').value = ''; $('rk-clear').classList.add('hidden'); }
@@ -75,6 +79,8 @@ export const RankingUI = (() => {
   /** La marca: tiempo, o en Defensa la puntuación oleadas·100 + vidas (td-waves.ts, defenseScore). */
   /** ¿Pestaña de Defensa (solo o en grupo)? Su marca es una puntuación, no un tiempo. */
   const defense = () => mode === 'd' || mode === 'e';
+  /** ¿Pestaña de la Arena? No tiene marcas: es un podio por cuenta. */
+  const arena = () => mode === 'a';
   const fmt = (t: number) => !defense() ? fmtT(t) : G.I18n.f('Oleada {x}', Math.floor(t / 100));
   /** En Defensa, las vidas que quedaban. */
   const livesOf = (t: number) => t % 100;
@@ -84,6 +90,7 @@ export const RankingUI = (() => {
     const list = $('rk-list');
     list.innerHTML = '<p class="sub">Cargando…</p>';
     $('rk-me').innerHTML = '';
+    if (arena()) { await loadArena(my); return; }
     let rows: RankRow[] = [], me: MyRank | null = null;
     try {
       [rows, me] = await Promise.all([
@@ -118,6 +125,57 @@ export const RankingUI = (() => {
       : me ? (en ? `<span translate="no">Your best ${where} rank ${pn}: <b class="gold">#${me.pos}</b> · ${fmt(me.t)}</span>`
                  : `Tu mejor puesto ${pn} ${where}: <b class="gold">#${me.pos}</b> · ${fmt(me.t)}`)
       : (en ? `<span translate="no">You don't have a ${where} record ${pn} yet.</span>` : `Aún no tienes marca ${pn} ${where}.`);
+  }
+
+  /** "3 victorias · 5 podios · 12 partidas" (con el singular cuando toca). */
+  function arenaStats(r: ArenaRow) {
+    const one = (n: number, s: string, p: string) => G.I18n.f(n === 1 ? s : p, n);
+    return [one(r.wins, '{x} victoria', '{x} victorias'), one(r.podiums, '{x} podio', '{x} podios'), one(r.games, '{x} partida', '{x} partidas')].join(' · ');
+  }
+
+  async function loadArena(my: number) {
+    const list = $('rk-list');
+    let res: Awaited<ReturnType<typeof G.Ranking.topArena>>;
+    try {
+      res = await G.Ranking.topArena(period, scope === 'friends');
+    } catch (e) {
+      if (my !== token) return;
+      const err = e as { code?: string; message?: string };
+      list.innerHTML = '<p class="sub">No se pudo cargar el ranking (' + esc(err.code || err.message) + ').</p>';
+      return;
+    }
+    if (my !== token) return;
+    $('rk-mod').classList.toggle('hidden', !G.Ranking.isAdmin());
+    list.innerHTML = '';
+    if (!res.rows.length) list.innerHTML = '<p class="sub">Todavía no hay partidas de Arena aquí. ¡Sé el primero!</p>';
+    const uid = G.Social.uid;
+    res.rows.forEach((r, i) => list.appendChild(arenaRowEl(r, i + 1, r.uid === uid)));
+
+    const en = G.I18n.lang === 'en';
+    const pn = en ? { d: 'today', w: 'this week', m: 'this month', y: 'this year', a: 'of all time' }[period]
+                  : { d: 'de hoy', w: 'de esta semana', m: 'de este mes', y: 'de este año', a: 'de siempre' }[period];
+    const me = res.mine;
+    $('rk-me').innerHTML = !G.Social.me ? 'Elige un apodo (en Amigos) para salir en el ranking.'
+      : me ? (en ? `<span translate="no">Your Arena rank ${pn}: <b class="gold">#${me.pos}</b> · ${arenaStats(me)}</span>`
+                 : `Tu puesto en la Arena ${pn}: <b class="gold">#${me.pos}</b> · ${arenaStats(me)}`)
+      : (en ? `<span translate="no">You haven't played an Arena game ${pn} yet.</span>` : `Aún no has jugado ninguna partida de Arena ${pn}.`);
+  }
+
+  /** Una cuenta del podio de la Arena: puesto, Pokémon de su última partida, nombre y "V victorias · P podios · N partidas". */
+  function arenaRowEl(r: ArenaRow, pos: number, mine: boolean) {
+    const el = document.createElement('div');
+    el.className = 'rk-row' + (mine ? ' mine' : '') + (pos <= 3 ? ' top' + pos : '');
+    el.insertAdjacentHTML('beforeend', `<span class="pos">${pos <= 3 ? G.Icons.html('trophy', 20) : ''}${pos}</span>`);
+    const mons = document.createElement('span');
+    mons.className = 'mons';
+    if (G.DEX_BY[r.dex]) mons.appendChild(G.UI.spriteCanvas(r.dex, 44, 40, { scale: 1, shiny: r.shiny }));
+    el.appendChild(mons);
+    el.insertAdjacentHTML('beforeend',
+      `<span class="who"><b translate="no"><a href="#" class="plink" data-u="${esc(r.uid)}">${esc(r.name)}</a></b><small>${arenaStats(r)}</small></span>
+       <span class="time">${r.wins}</span>`);
+    el.querySelectorAll<HTMLAnchorElement>('.plink').forEach(a => { a.onclick = e => { e.preventDefault(); G.ProfileUI.show(a.dataset.u!); }; });
+    el.appendChild(document.createElement('span'));          // (sin reportes: aquí no hay marcas que reportar)
+    return el;
   }
 
   function rowEl(r: RankRow, pos: number, mine: boolean, b: string, done: Set<string>) {

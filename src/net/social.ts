@@ -45,12 +45,12 @@ export interface Member { uid: string; name: string; dex: number; shiny: boolean
  */
 export interface Room {
   id: string; code: string; host: string; isHost: boolean; members: Member[]; open: boolean; started: boolean;
-  pub: boolean; mode: 'survivor' | 'td'; map: string; watchers: { uid: string; name: string }[];
+  pub: boolean; mode: 'survivor' | 'td' | 'arena'; map: string; watchers: { uid: string; name: string }[];
   /** Cuántos caben (Survivor 4; Defensa, según el mapa). */
   max: number;
 }
 /** Una sala de la lista de salas públicas. */
-export interface PublicRoom { id: string; host: string; hostName: string; mode: 'survivor' | 'td'; map: string; n: number; max: number; started: boolean; watchers: number }
+export interface PublicRoom { id: string; host: string; hostName: string; mode: 'survivor' | 'td' | 'arena'; map: string; n: number; max: number; started: boolean; watchers: number }
 export interface Invite { from: string; name: string; room: string; at: number }
 /** Perfil público de un jugador (lo que devuelve getProfile; el servidor puede omitir campos). */
 export interface PublicProfile {
@@ -79,7 +79,7 @@ export const Social = (() => {
    * Anfitrión: lo último que pediste para tu sala (pública o no, modo y mapa). Las respuestas del
    * servidor pueden llegar desordenadas respecto a lo que vas cambiando: mientras sea tu sala, manda esto.
    */
-  let want: { id: string; pub: boolean; mode: 'survivor' | 'td'; map: string } | null = null;
+  let want: { id: string; pub: boolean; mode: 'survivor' | 'td' | 'arena'; map: string } | null = null;
   /** La sala que miras como espectador y la partida que se juega en ella (o null). */
   let watching: { room: Room; cfg: CoopConfig } | null = null;
   const invites = new Map<string, Invite>();  // de quién -> invitación
@@ -260,7 +260,7 @@ export const Social = (() => {
   /** La sala tal y como la manda el servidor. */
   function toRoom(r: RoomWire): Room {
     return { id: r.id, code: typeof r.code === 'string' ? r.code : '', host: r.host, isHost: r.host === uid, members: r.members || [], open: !!r.open, started: !!r.started,
-             pub: !!r.pub, mode: r.mode === 'td' ? 'td' : 'survivor', map: typeof r.map === 'string' ? r.map : 'random',
+             pub: !!r.pub, mode: r.mode === 'td' || r.mode === 'arena' ? r.mode : 'survivor', map: typeof r.map === 'string' ? r.map : 'random',
              watchers: Array.isArray(r.watchers) ? r.watchers : [], max: typeof r.max === 'number' && Number.isInteger(r.max) && r.max > 0 ? r.max : MAX_PLAYERS };
   }
   /** Aplica la sala tal y como la manda el servidor. */
@@ -276,7 +276,7 @@ export const Social = (() => {
   // ---------------- salas públicas y espectadores ----------------
 
   /** Anfitrión: la sala sale (o deja de salir) en la lista de públicas, con a qué se juega. */
-  function setPublic(v: boolean, mode: 'survivor' | 'td', map: string) {
+  function setPublic(v: boolean, mode: 'survivor' | 'td' | 'arena', map: string) {
     if (!room || !room.isHost) return;
     const m = /^[a-z]{1,20}$/.test(map) ? map : 'random';
     // Ya, en local (el servidor lo confirmará): si no, lo que se pinte antes de su respuesta vería

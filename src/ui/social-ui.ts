@@ -148,10 +148,11 @@ import type { CoopConfig } from '../net/coop';
   export const LobbyUI = (() => {
     let membersKey = '';
     /**
-     * A qué se juega: hordas o Defensa (y en qué mapa). Lo elige el anfitrión y se lo
-     * cuenta a la sala con { k:'lobby', mode, map } (otra vez cuando entra alguien).
+     * A qué se juega: hordas o Defensa (en qué mapa, y si es Arena: cada uno su carril, gana el último
+     * en pie). Lo elige el anfitrión y se lo cuenta a la sala con { k:'lobby', mode, map, arena }
+     * (otra vez cuando entra alguien).
      */
-    let game: { mode: 'hordas' | 'td'; map: string } = { mode: 'hordas', map: 'random' };
+    let game: { mode: 'hordas' | 'td'; map: string; arena?: boolean } = { mode: 'hordas', map: 'random' };
     const tellGame = () => {
       const room = G.Social.room;
       if (!room || !room.isHost) return;
@@ -159,7 +160,8 @@ import type { CoopConfig } from '../net/coop';
       // El servidor tiene que saber a qué se juega (de eso depende cuántos caben, y la lista de públicas lo enseña).
       if (room.mode !== modeOf() || room.map !== game.map) G.Social.setPublic(room.pub, modeOf(), game.map);
     };
-    const modeOf = (): 'survivor' | 'td' => (game.mode === 'td' ? 'td' : 'survivor');
+    /** Lo que sabe el servidor (de eso depende cuántos caben): la Arena va aparte (8, sea cual sea el mapa). */
+    const modeOf = (): 'survivor' | 'td' | 'arena' => (game.mode === 'td' ? (game.arena ? 'arena' : 'td') : 'survivor');
 
     function init() {
       $('lobby-leave').onclick = async () => {
@@ -192,7 +194,7 @@ import type { CoopConfig } from '../net/coop';
       G.Net.on((from, msg) => {
         const room = G.Social.room;
         if (!msg || msg.k !== 'lobby' || !room || from !== room.host || room.isHost) return;
-        game = { mode: msg.mode === 'td' ? 'td' : 'hordas', map: typeof msg.map === 'string' ? msg.map.slice(0, 20) : 'random' };
+        game = { mode: msg.mode === 'td' ? 'td' : 'hordas', map: typeof msg.map === 'string' ? msg.map.slice(0, 20) : 'random', arena: msg.mode === 'td' && msg.arena === true };
         if (G.UI.isOpen('scr-lobby')) render();
       });
     }
@@ -206,7 +208,8 @@ import type { CoopConfig } from '../net/coop';
       const maps = [...G.TD_MAPS.map(m => [m.id, m.name]), ['random', 'Al azar']];
       const mapName = (maps.find(m => m[0] === game.map) || maps[maps.length - 1])[1];
       if (!room.isHost) {
-        box.innerHTML = `<span class="sub">Modo: <b>${game.mode === 'td' ? 'Defensa · ' + esc(mapName) : 'Survivor'}</b> · ${room.pub ? 'Sala pública' : 'Sala privada'} · caben ${room.max}</span>`;
+        box.innerHTML = `<span class="sub">Modo: <b>${game.mode === 'td' ? (game.arena ? 'Arena' : 'Defensa · ' + esc(mapName)) : 'Survivor'}</b> · ${room.pub ? 'Sala pública' : 'Sala privada'} · caben ${room.max}</span>`
+          + (game.arena ? '<p class="sub" style="margin:4px 0 0">Arena: cada uno su carril, sin camino: haces el laberinto con tus torres y envías monstruos a los rivales. Gana el último en pie.</p>' : '');
         return;
       }
       box.innerHTML = '<b>Modo:</b>';
@@ -220,6 +223,13 @@ import type { CoopConfig } from '../net/coop';
       chip('Survivor', game.mode === 'hordas', () => { game.mode = 'hordas'; });
       chip('Defensa', game.mode === 'td', () => { game.mode = 'td'; });
       if (game.mode === 'td') {
+        // Dentro de la Defensa: juntos, o Arena (cada uno su carril; gana el último en pie).
+        box.insertAdjacentHTML('beforeend', '<b style="margin-left:8px">Variante:</b>');
+        chip('Juntos', !game.arena, () => { game.arena = false; });
+        chip('Arena', !!game.arena, () => { game.arena = true; });
+      }
+      // (La Arena tiene su laberinto: sin mapa.)
+      if (game.mode === 'td' && !game.arena) {
         box.insertAdjacentHTML('beforeend', '<b style="margin-left:8px">Mapa:</b>');
         for (const [id, name] of maps) chip(name, game.map === id, () => { game.map = id; });
       }
@@ -377,7 +387,7 @@ import type { CoopConfig } from '../net/coop';
       }
       $('lobby-note').textContent = !room.isHost
         ? (room.started ? 'El anfitrión aún está en el resumen de la partida.' : G.Social.amSpec() ? 'Mirarás la partida sin jugar; al acabar vuelves aquí.' : 'Cuando el anfitrión empiece, entraréis todos a la vez.')
-        : over > 0 ? (game.mode === 'td' ? 'En este mapa caben ' + room.max : 'En el Survivor caben ' + room.max) + ': sobra' + (over > 1 ? 'n ' + over : ' 1') + '. Elige otro modo o mapa.'
+        : over > 0 ? (game.mode === 'td' ? (game.arena ? 'En la Arena caben ' : 'En este mapa caben ') + room.max : 'En el Survivor caben ' + room.max) + ': sobra' + (over > 1 ? 'n ' + over : ' 1') + '. Elige otro modo o mapa.'
         : players.length < 2 ? (lookN ? 'Hace falta al menos otro jugador (los que sólo miran no cuentan).' : 'Necesitas al menos un amigo en la sala.')
         : connecting ? 'Conectando con tus amigos…' : 'La partida empieza para todos a la vez.';
     }
@@ -389,12 +399,12 @@ import type { CoopConfig } from '../net/coop';
       if (!room.isHost) { G.Social.setSpec(!G.Social.amSpec()); return; }
       const players = room.members.filter(m => !m.spec);
       if (players.length < 2 || players.length > room.max) return;
-      const cfg: CoopConfig & { k: string; mode?: 'survivor' | 'td'; map?: string } = {
+      const cfg: CoopConfig & { k: string } = {
         k: 'start', seed: Math.floor(Math.random() * 1e6), host: room.host,
         members: players.map(m => ({ uid: m.uid, name: m.name, dex: m.dex, shiny: !!m.shiny }))
       };
       // Defensa: el mapa elegido (o uno al azar, el mismo para todos).
-      if (game.mode === 'td') { cfg.mode = 'td'; cfg.map = game.map === 'random' ? G.U.pick(G.TD_MAPS).id : game.map; }
+      if (game.mode === 'td') { cfg.mode = 'td'; cfg.map = game.map === 'random' ? G.U.pick(G.TD_MAPS).id : game.map; if (game.arena) cfg.arena = true; }
       G.Social.setOpen(false);
       G.Net.broadcast({ ...cfg });
       G.Flow.startCoop(cfg);
@@ -405,7 +415,7 @@ import type { CoopConfig } from '../net/coop';
       return [...room.watchers, ...room.members.filter(m => m.spec).map(m => ({ uid: m.uid, name: m.name }))];
     }
 
-    return { init, open, close, render, lookers, get game() { return { ...game }; }, setGame(mode: 'hordas' | 'td', map = 'random') { game = { mode, map }; tellGame(); render(); } };
+    return { init, open, close, render, lookers, get game() { return { ...game }; }, setGame(mode: 'hordas' | 'td', map = 'random', arena = false) { game = { mode, map, arena: mode === 'td' && arena }; tellGame(); render(); } };
   })();
   G.LobbyUI = LobbyUI;
 

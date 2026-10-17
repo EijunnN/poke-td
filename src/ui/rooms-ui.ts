@@ -74,7 +74,7 @@ export const RoomsUI = (() => {
         const r = await G.Social.createRoom();
         if (!r) { G.UI.toast('No se pudo crear la sala.', 2600); return; }
         const g = G.LobbyUI.game;
-        G.Social.setPublic(true, g.mode === 'td' ? 'td' : 'survivor', g.map);
+        G.Social.setPublic(true, g.mode === 'td' ? (g.arena ? 'arena' : 'td') : 'survivor', g.map);
       }
       G.LobbyUI.open();
     };
@@ -110,7 +110,7 @@ export const RoomsUI = (() => {
     busy = true;
     const list = $('rooms-list');
     try {
-      const rooms = (await G.Social.listRooms()).filter(r => filter === 'all' || r.mode === filter);
+      const rooms = (await G.Social.listRooms()).filter(r => filter === 'all' || r.mode === filter || (filter === 'td' && r.mode === 'arena'));
       if (!G.UI.isOpen('scr-rooms')) return;
       list.innerHTML = rooms.length ? '' : '<p class="sub" style="margin:0">No hay salas públicas ahora mismo. Crea la tuya con «Crear sala pública».</p>';
       $('rooms-create').textContent = G.Social.room ? 'Ir a tu sala' : 'Crear sala pública';
@@ -118,7 +118,7 @@ export const RoomsUI = (() => {
       for (const r of rooms) {
         const el = document.createElement('div');
         el.className = 'fr-row rooms-row';
-        const what = r.mode === 'td' ? 'Defensa · ' + esc(mapName(r.map)) : 'Survivor';
+        const what = r.mode === 'td' ? 'Defensa · ' + esc(mapName(r.map)) : r.mode === 'arena' ? 'Arena · ' + esc(mapName(r.map)) : 'Survivor';
         const state = r.started ? 'Jugando' + (r.watchers ? ' · ' + r.watchers + ' mirando' : '') : 'En la sala';
         el.innerHTML = `<i class="dot ${r.started ? 'play' : 'on'}"></i><b translate="no">${esc(r.hostName)}</b>
           <span class="st">${what} · ${r.n}/${r.max} · ${state}</span><span class="grow"></span>`;

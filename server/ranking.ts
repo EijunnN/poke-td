@@ -5,7 +5,8 @@
  * Jugadores
  *   POST   /api/ranking/start   { mode }                        -> { ok }
  *          El servidor apunta la hora a la que empieza la partida (en grupo, la
- *          del anfitrión). mode: 's' solitario · 'g' grupo · 'd' Defensa (tower defense) · 'e' Defensa en grupo.
+ *          del anfitrión). mode: 's' solitario · 'g' grupo · 'd' Defensa (tower defense) · 'e' Defensa en grupo
+ *          · 'a' Arena (aquí sólo se avisa: su resultado se sube a /api/ranking/arena, ver server/arena.ts).
  *   POST   /api/ranking/submit  { mode:'s', t, lv, kills, dex, shiny }
  *                               { mode:'g', t, lv, kills, members:[{ uid, dex, shiny }] }
  *                                                               -> { ok, better:['d','w','m','a'] }
@@ -105,20 +106,22 @@ const MIN_T = 60;
 /** Ninguna marca real pasa de 1 h (la Sentencia de Arceus acaba las partidas hacia el minuto 31-32). */
 const MAX_T = 3600;
 /** Margen sobre el tiempo real transcurrido desde /start. */
-const GRACE_S = 30;
-const MAX_DEX = 2000;
+export const GRACE_S = 30;
+export const MAX_DEX = 2000;
 /** Lo más grande que puede ser un equipo: en el Survivor, 4; en la Defensa, los del mapa más grande. */
 const MAX_TEAM = 4;
 const MAX_TEAM_TD = MAX_ROOM;
 /** Los modos: solitario, grupo, Defensa y Defensa en grupo. */
 type Mode = 's' | 'g' | 'd' | 'e';
 const isMode = (m: unknown): m is Mode => m === 's' || m === 'g' || m === 'd' || m === 'e';
+/** Los modos que se avisan con /start: los de arriba y la Arena ('a'), que sube su resultado por server/arena.ts, no por /submit. */
+const isRunMode = (m: unknown) => isMode(m) || m === 'a';
 /** ¿Marca de Defensa (puntuación en vez de tiempo, sin tablas por Pokémon)? */
 const isDefense = (m: string) => m === 'd' || m === 'e';
 /** ¿Marca de un equipo? */
 const isGroup = (m: string) => m === 'g' || m === 'e';
 /** Una partida de Defensa no dura más de esto (en segundos de partida). */
-const MAX_DEFENSE_S = 3 * 3600;
+export const MAX_DEFENSE_S = 3 * 3600;
 
 // ---------------- periodos ----------------
 
@@ -153,7 +156,7 @@ function validBoard(b: unknown): b is string {
 }
 /** El id de una marca: un uid o varios (equipo) unidos con '_'. */
 const ENTRY_RE = /^[1-9]\d{0,12}(?:_[1-9]\d{0,12}){0,7}$/;
-const UID_RE = /^[1-9]\d{0,12}$/;
+export const UID_RE = /^[1-9]\d{0,12}$/;
 
 // ---------------- tipos ----------------
 
@@ -331,7 +334,7 @@ export function createRanking(db: Db, opts: RankingOptions = {}): Module {
   async function start(req: Request, uid: number) {
     const b = await readBody(req, 1024);
     if (b instanceof Response) return b;
-    if (!isMode(b.mode)) return fail(400, 'Modo no válido.');
+    if (!isRunMode(b.mode)) return fail(400, 'Modo no válido.');
     q.setRun.run(uid, now(), b.mode);
     return json({ ok: true });
   }

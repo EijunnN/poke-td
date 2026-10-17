@@ -5,7 +5,7 @@
  *     online    quién está conectado ahora (WebSocket abierto): nombre, si está en partida, su sala
  *     rooms     las salas abiertas, con sus miembros
  *     counts    cuentas (total, nuevas), activas (24 h, 7 días) y el máximo de conectados desde el arranque
- *     modes24h  cuántas cuentas empezaron una partida en las últimas 24 h, por modo (s, g, d, e)
+ *     modes24h  cuántas cuentas empezaron una partida en las últimas 24 h, por modo (s, g, d, e, a)
  *     history   conectados cada 5 min (últimos 7 días): [{ t, n, play, rooms }]
  *     daily     jugadores distintos que se conectaron cada día (últimos 30, días en UTC): [{ day, n }]
  *     recent    las últimas cuentas creadas

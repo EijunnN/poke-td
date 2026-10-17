@@ -5,7 +5,8 @@ import type { MoveInstance } from '../data/moves';
  * Se dibuja en coordenadas de PANTALLA (sin la transformación de cámara).
  */
 /** Lo que el modo le cuenta al HUD: el reloj y qué piezas ocultar (la Defensa lleva las suyas). */
-interface HudState { time: number; noLevel?: boolean; noClock?: boolean }
+/** `noDown`: sin el aviso de caído del Survivor (en la Defensa el héroe se levanta solo, y en la Arena quien cae ya no vuelve). */
+interface HudState { time: number; noLevel?: boolean; noClock?: boolean; noDown?: boolean }
 
 export const HUD = (() => {
   const F = (w: number, s: number) => `${w} ${s}px Pixelify,"Segoe UI",system-ui,sans-serif`;
@@ -192,7 +193,7 @@ export const HUD = (() => {
     }
 
     // En cooperativo la lista del grupo baja para hacerle sitio a los efectos.
-    if (G.Coop.active) drawCoop(ctx, w, h, pl, px, py + (bx > px ? 84 : 40));
+    if (G.Coop.active) drawCoop(ctx, w, h, pl, px, py + (bx > px ? 84 : 40), !!st.noDown);
 
     // Grieta: flecha grande que late en el borde si no se ve, y si se ve, una
     // flecha que bota encima; en la arena, cuenta atrás.
@@ -430,7 +431,7 @@ export const HUD = (() => {
    *   y a cuántos metros están (roja y parpadeando si está caído).
    * - Si has caído tú: aviso y barra de "te están levantando".
    */
-  function drawCoop(ctx: CanvasRenderingContext2D, w: number, h: number, pl: Player, px: number, top: number) {
+  function drawCoop(ctx: CanvasRenderingContext2D, w: number, h: number, pl: Player, px: number, top: number, noDown = false) {
     const cam = G.Camera;
     const t = performance.now() / 1000;
     let y = top;
@@ -491,7 +492,7 @@ export const HUD = (() => {
     }
 
     // Tú, caído.
-    if (pl.dead) {
+    if (pl.dead && !noDown) {
       ctx.save();
       ctx.textAlign = 'center';
       ctx.font = F(800, 20);

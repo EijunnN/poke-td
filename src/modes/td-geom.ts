@@ -201,17 +201,51 @@ export function bossGate(wave: number, gates: number): number {
 }
 /** Jugadores en una sala del Survivor (está hecho para 4: colores, cartas de nivel compartidas, dificultad). */
 export const SURVIVOR_PLAYERS = 4;
+/** Jugadores en una Arena: cada uno con su carril (ver arenaCenters). */
+export const ARENA_PLAYERS = 8;
 /**
  * Cuántos caben en una sala según a qué se juega: Survivor, 4; Defensa, los del mapa (con el
- * mapa al azar, los del más pequeño: tiene que caber en el que salga).
+ * mapa al azar, los del más pequeño: tiene que caber en el que salga); Arena, 8 (un carril cada uno).
  */
 export function roomMax(mode: string, map: string): number {
+  if (mode === 'arena') return ARENA_PLAYERS;
   if (mode !== 'td') return SURVIVOR_PLAYERS;
   const m = MAPS.find(x => x.id === map);
   return m ? m.players : Math.min(...MAPS.map(x => x.players));
 }
 /** Lo más que puede tener una sala (el mapa más grande). */
-export const MAX_ROOM = Math.max(SURVIVOR_PLAYERS, ...MAPS.map(m => m.players));
+export const MAX_ROOM = Math.max(SURVIVOR_PLAYERS, ARENA_PLAYERS, ...MAPS.map(m => m.players));
+// ---------------- Arena ----------------
+
+/**
+ * Distancia entre los centros de dos carriles de la Arena (unidades de mundo). Cada carril es una copia
+ * del mapa (radio 24 tiles = 768); entre dos quedan ~660 de vacío, más que lo que vuela un proyectil
+ * (520) y que cualquier alcance o aura: nada de un carril llega al de al lado.
+ */
+export const ARENA_GAP = 2200;
+/**
+ * Dónde va el centro del carril de cada jugador: hasta 4, en fila; de 5 a 8, en dos filas (la de arriba
+ * con los que sobran de la mitad). Todo centrado en (0, 0).
+ */
+export function arenaCenters(n: number, gap = ARENA_GAP): Pt[] {
+  if (!(n > 0)) return [];
+  const rows = n <= 4 ? [n] : [Math.ceil(n / 2), Math.floor(n / 2)];
+  const out: Pt[] = [];
+  rows.forEach((cols, r) => {
+    const y = rows.length === 1 ? 0 : (r - 0.5) * gap;
+    for (let c = 0; c < cols; c++) out.push({ x: (c - (cols - 1) / 2) * gap, y });
+  });
+  return out;
+}
+/**
+ * Puestos de una Arena: el que sigue en pie (out = 0) va primero; luego, quien cayó más tarde (`out`
+ * mayor). Los que cayeron a la vez comparten puesto. → el puesto de cada uno, en el mismo orden
+ */
+export function arenaPlaces(outs: number[]): number[] {
+  const key = (o: number) => (o === 0 ? Infinity : o);
+  return outs.map(o => 1 + outs.filter(x => key(x) > key(o)).length);
+}
+
 /** El mapa con ese id (el primero si no existe). */
 export const mapById = (id: unknown) => MAPS.find(m => m.id === id) || MAPS[0];
 /** Uno al azar. */

@@ -51,6 +51,8 @@ export interface CoopConfig {
   k?: string; seed: number; host: string; members: CoopMember[]; watch?: boolean;
   /** A qué se juega (por defecto, Survivor) y, en la Defensa, en qué mapa. */
   mode?: 'survivor' | 'td'; map?: string;
+  /** Defensa en Arena: cada uno su carril y gana el último en pie (modes/td.ts). */
+  arena?: boolean;
   /** Viene de "Volver a intentarlo": quien no esté en `members` (volvió a la sala) no se une como espectador. */
   again?: boolean;
 }
@@ -112,7 +114,7 @@ export type TdHostEv =
   | ['tn', uid: string, why: string]
   | ['tt', id: number, owner: string, dex: number, x: number, y: number, level: number, mode: TargetMode, shiny: number, base: number, spent: number, learned: string[]]
   | ['tg', lives: number, wave: number, inWave: number, phaseT: number, left: number, fast: number, cleared: number, won: number,
-         purse: Record<string, number>, leaked: number, kills: number];
+         purse: Record<string, number>, leaked: number, kills: number, lanes?: [lives: number, out: number, income: number][]];
 export type HostEv = CoreHostEv | SystemHostEv | TdHostEv;
 /** Invitado -> anfitrión. */
 type CoreGuestEv =
@@ -123,7 +125,7 @@ type CoreGuestEv =
   | ['lp'] | ['hs'] | ['he'] | ['re'] | ['bye'] | ['ws'];
 export type TdGuestEv =
   | ['tw'] | ['th'] | ['tp', dex: number, x: number, y: number, shiny: number, trophy: number]
-  | ['tu', id: number] | ['ts', id: number] | ['tl', id: number, move: string] | ['te', id: number, to: number]
+  | ['tu', id: number] | ['ts', id: number] | ['tl', id: number, move: string] | ['tk', send: number, to: string] | ['te', id: number, to: number]
   | ['tm', id: number, mode: TargetMode];
 export type GuestEv = CoreGuestEv | TdGuestEv;
 export type Ev = HostEv | GuestEv;
@@ -187,7 +189,7 @@ export const Coop = (() => {
   /** Resumen de una partida en grupo: la cuenta de "Volver a intentarlo" (ver againOpen). La lleva el anfitrión; los invitados sólo reciben el estado. */
   let ag: { cb: (st: AgainState) => void; host: boolean; team: Set<string>; ready: Set<string>; gone: Set<string> } | null = null;
   let lastTeam: string[] = [];          // anfitrión: quienes seguían en la partida al acabar (los que se fueron antes no cuentan)
-  let lastGame: { mode?: 'survivor' | 'td'; map?: string } = {};   // a qué se jugaba (para repetirlo)
+  let lastGame: { mode?: 'survivor' | 'td'; map?: string; arena?: boolean } = {};   // a qué se jugaba (para repetirlo)
 
   // ---------------- escalado de dificultad ----------------
 
@@ -210,7 +212,7 @@ export const Coop = (() => {
     api = cb;
     members = cfg.members;
     mates.clear();
-    ag = null; lastGame = { mode: cfg.mode, map: cfg.map };
+    ag = null; lastGame = { mode: cfg.mode, map: cfg.map, arena: cfg.arena };
     outEv = []; flushT = 0; waiting = new Set(); holds = new Set(); broken = [];
     hostAway = false; stalled = false; lastHostAt = performance.now();
     // Espectador: en cuanto tiene la partida montada, pide el estado entero (lo que el anfitrión
@@ -790,7 +792,7 @@ export const Coop = (() => {
         k: 'start', seed: Math.floor(Math.random() * 1e6), host: me!, again: true,
         members: stay.map(m => ({ uid: m.uid, name: m.name, dex: m.dex, shiny: !!m.shiny }))
       };
-      if (lastGame.mode === 'td') { cfg.mode = 'td'; cfg.map = lastGame.map; }
+      if (lastGame.mode === 'td') { cfg.mode = 'td'; cfg.map = lastGame.map; if (lastGame.arena) cfg.arena = true; }
       G.Net.broadcast({ ...cfg });
       G.Flow.startCoop(cfg);
       return;

@@ -35,7 +35,8 @@
  *   { k:'inv', to }                               (anfitrión) invita a un amigo
  *   { k:'inv.no', from }                          rechazas una invitación
  *   { k:'g', to?, d }                             mensaje de partida para otro miembro (o para todos si no hay `to`)
- *   { k:'room.pub', v, mode, map }                (anfitrión) sala pública o privada, y a qué se juega (de eso
+ *   { k:'room.pub', v, mode, map }                (anfitrión) sala pública o privada, y a qué se juega ('survivor', 'td' o
+ *                                                 'arena', la Defensa en la que cada uno tiene su carril; de eso
  *                                                 depende cuántos caben: Survivor 4, Defensa según el mapa)
  *   { k:'rooms.list' }                            -> ack { rooms: [{ id, host, hostName, mode, map, n, max, started, watchers }] }
  *                                                 las salas públicas (para entrar sin invitación, o mirar si ya juegan)
@@ -145,7 +146,7 @@ interface Member { uid: number; name: string; dex: number; shiny: boolean; spec?
  * Lo público de una sala: si sale en la lista, a qué se juega y la partida en curso (`cfg`, lo
  * que mandó el anfitrión al empezar; el espectador lo necesita para montar la suya).
  */
-interface RoomInfo { pub: boolean; mode: 'survivor' | 'td'; map: string; cfg: Record<string, unknown> | null; code: string }
+interface RoomInfo { pub: boolean; mode: 'survivor' | 'td' | 'arena'; map: string; cfg: Record<string, unknown> | null; code: string }
 /** `started`: cuándo empezó la partida en grupo (0 si la sala sigue en el vestíbulo). */
 interface Room {
   id: string; host: number; open: boolean; started: number; created: number; members: Map<number, Member>;
@@ -164,7 +165,7 @@ function readInfo(s: string | undefined): RoomInfo {
   try {
     const v = JSON.parse(s || '{}');
     if (v && typeof v === 'object') {
-      i.pub = v.pub === true; i.mode = v.mode === 'td' ? 'td' : 'survivor';
+      i.pub = v.pub === true; i.mode = v.mode === 'td' || v.mode === 'arena' ? v.mode : 'survivor';
       if (typeof v.map === 'string' && v.map.length <= 20) i.map = v.map;
       if (v.cfg && typeof v.cfg === 'object') i.cfg = v.cfg;
       if (typeof v.code === 'string' && CODE_RE.test(v.code)) i.code = v.code;
@@ -569,7 +570,7 @@ export function createRealtime(db: Db, opts: RealtimeOptions = {}) {
       }
 
       case 'room.pub': {
-        if (typeof m.v !== 'boolean' || (m.mode !== 'survivor' && m.mode !== 'td') || typeof m.map !== 'string' || !/^[a-z]{1,20}$/.test(m.map)) return bad('Mensaje no válido.');
+        if (typeof m.v !== 'boolean' || (m.mode !== 'survivor' && m.mode !== 'td' && m.mode !== 'arena') || typeof m.map !== 'string' || !/^[a-z]{1,20}$/.test(m.map)) return bad('Mensaje no válido.');
         const r = roomOf.get(c.id);
         if (!r) return no('No estás en ninguna sala.');
         if (r.host !== c.id) return bad('Sólo el anfitrión gobierna la sala.');
@@ -761,6 +762,7 @@ export function createRealtime(db: Db, opts: RealtimeOptions = {}) {
     r.info.cfg = {
       k: 'start', seed: Number.isInteger(d.seed) ? d.seed : 0, host: String(r.host),
       mode: d.mode === 'td' ? 'td' : undefined, map: typeof d.map === 'string' && d.map.length <= 20 ? d.map : undefined,
+      arena: d.mode === 'td' && d.arena === true ? true : undefined,
       // En el orden de la partida (de él salen los colores de cada uno).
       members: [...new Set<number>([...listed.filter(plays), r.host])].map(u => {
         const mm = r.members.get(u)!;

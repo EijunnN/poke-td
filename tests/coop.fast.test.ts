@@ -948,6 +948,90 @@ describe('cooperativo', () => {
     expect(await B.allErrors()).toEqual([]);
   });
 
+  // ---------------- Arena (Line Tower Wars: cada uno su laberinto, envíos al rival; gana el último en pie) ----------------
+
+  /** El centro (en el mundo) de la casilla (col, fila) del carril de `l` (td-maze.ts: 11×26 de 48). */
+  const cell = (l: { cx: number; cy: number }, c: number, r: number) => ({ x: l.cx + (c + 0.5) * 48 - 264, y: l.cy + (r + 0.5) * 48 - 624 });
+
+  test('Arena: cada uno su laberinto (muros, sin tapar el paso), envíos que suben los ingresos; quien se queda sin vidas cae', async () => {
+    await click(A, '#btn-again');
+    await click(B, '#btn-again');
+    await waitPage(A, 'A de vuelta en la sala', () => G.Social.room && G.Social.room.members.length === 2 && G.Game.state === 'ui');
+    await waitPage(B, 'B de vuelta en la sala', () => G.Social.room && G.Game.state === 'ui');
+    await A.eval(() => G.LobbyUI.setGame('td', 'valle', true));
+    await waitPage(B, 'B ve que se juega a la Arena', () => G.LobbyUI.game.mode === 'td' && G.LobbyUI.game.arena === true);
+    expect(await B.eval(() => document.getElementById('lobby-mode').textContent)).toContain('Arena');
+    await waitPage(A, 'la sala es de Arena', () => G.Social.room.mode === 'arena' && G.Social.room.max === 8);
+    await waitPage(A, 'A puede empezar', () => !(document.getElementById('lobby-start') as HTMLButtonElement).disabled);
+    await click(A, '#lobby-start');
+    for (const d of [A, B]) await waitPage(d, 'en la Arena', () => G.Run.mode && G.Run.mode.id === 'td' && G.Coop.active && G.Game.state === 'playing' && G.TD.net.arena);
+    const lanes = await A.eval(() => G.TD.net.lanes);
+    expect(lanes.map((l: any) => l.uid)).toEqual([uidA, uidB]);
+    expect(Math.abs(lanes[0].cx - lanes[1].cx)).toBeGreaterThan(1200);
+    // (Ningún número de daño sale roto: una quemadura en la Arena daba NaN.)
+    for (const d of [A, B]) await d.eval(() => { const w = window as any, f = G.FX.dmgText.bind(G.FX); w.__bad = 0; G.FX.dmgText = (x: any, y: any, t: any, ...r: any[]) => { if (t == null || (typeof t === 'number' && !Number.isFinite(t))) w.__bad++; return f(x, y, t, ...r); }; });
+    for (const [d, l] of [[A, lanes[0]], [B, lanes[1]]] as const) expect(await d.eval(() => [G.Game.player.x, G.Game.player.y])).toEqual([l.cx, l.cy]);
+    // Sin obstáculos, la ruta baja recta (26 casillas: 25 pasos de 10); el muro (Sudowoodo) es lo primero de la tienda y cuesta 10.
+    expect([lanes[1].route, lanes[1].len]).toEqual([26, 250]);
+    expect(await B.eval(() => G.TD.shop[0])).toMatchObject({ dex: 185, cost: 10 });
+    // B levanta una pared con un hueco a la izquierda: la ruta se alarga (lo ven los dos).
+    const row = 8;
+    for (let c = 1; c < 11; c++) {
+      const p = cell(lanes[1], c, row);
+      await B.eval(q => { G.TD.debugBuy(185); G.TD.debugPlace(q.x, q.y); }, p);
+      await rig.run(2);
+    }
+    await waitPage(A, 'la pared de B, en el anfitrión', u => G.TD.net.lanes.find((l: any) => l.uid === u).walls === 10, uidB);
+    await waitPage(B, 'y en B', u => G.TD.net.lanes.find((l: any) => l.uid === u).walls === 10, uidB);
+    expect(await A.eval(u => G.TD.net.lanes.find((l: any) => l.uid === u).len, uidB)).toBeGreaterThan(250);
+    expect(await A.eval(u => G.TD.net.purse[u], uidB)).toBe(150 - 100);
+    // Tapar el hueco cerraría el paso: no se puede (ni lo acepta el anfitrión si se lo pide a mano).
+    const gap = cell(lanes[1], 0, row);
+    expect(await B.eval(q => G.TD.canPlace(q.x, q.y), gap)).toBe(false);
+    await B.eval(q => G.Coop.toHost(['tp', 185, q.x, q.y, 0, 0]), gap);
+    await rig.run(10);
+    expect(await A.eval(u => G.TD.net.lanes.find((l: any) => l.uid === u).walls, uidB)).toBe(10);
+    // Ni en el carril del otro, ni en las filas de entrada o salida.
+    expect(await B.eval(q => G.TD.canPlace(q.x, q.y), cell(lanes[0], 5, 10))).toBe(false);
+    expect(await B.eval(q => G.TD.canPlace(q.x, q.y), cell(lanes[1], 5, 0))).toBe(false);
+    // A envía tres Rattata a B: le cuestan 20, sube sus ingresos y salen por arriba del carril de B.
+    await A.eval(() => { for (const p of G.Coop.players()) { p.maxHp = p.hp = 1e7; p.atkMul = 0.001; } });
+    await B.eval(() => { const p = G.Game.player; p.maxHp = p.hp = 1e7; p.atkMul = 0.001; });
+    await A.eval(u => G.TD.debugSend(0, u), uidB);
+    await rig.run(10);
+    const la = await A.eval(u => G.TD.net.lanes.find((l: any) => l.uid === u), uidA);
+    expect(la.income).toBe(1);
+    expect(await A.eval(u => G.TD.net.purse[u], uidA)).toBe(150 - 20);
+    await rig.until('salen los Rattata en el carril de B', () => A.eval(l => G.EnemyMgr.all().filter((e: any) => !e.dead && e.dex === 19 && Math.abs(e.x - l.cx) < 300).length === 3, lanes[1]), 60);
+    expect(await A.eval(l => G.EnemyMgr.all().some((e: any) => !e.dead && Math.abs(e.x - l.cx) < 300), lanes[0])).toBe(false);
+    // Y siguen el laberinto: pasan por el hueco de la pared.
+    // Fuego en los dos carriles (quema cada medio segundo): los números, bien.
+    for (const l of lanes) await A.eval(l => { for (const e of G.EnemyMgr.all()) if (!e.dead && Math.abs(e.x - l.cx) < 300) e.applyBurn(3); }, l);
+    await rig.run(20);
+    for (const d of [A, B]) expect(await d.eval(() => (window as any).__bad)).toBe(0);
+    await rig.until('un Rattata pasa por el hueco', () => A.eval(([l, r]) => G.EnemyMgr.all().some((e: any) => !e.dead && e.dex === 19 && e.y > l.cy + (r + 1) * 48 - 624 && e.x < l.cx - 264 + 48 * 1.2), [lanes[1], row]), 600);
+    // (Las pruebas de antes marcan las cuentas: una cuenta marcada no sube al ranking; se desmarcan.)
+    rig.srv!.db.raw.run('DELETE FROM ranking_marked');
+    // A B sólo le queda una vida: el primero que llega abajo le hace caer; A (con las suyas) gana.
+    await A.eval(u => G.TD.debugLaneLives(u, 1), uidB);
+    await waitPage(B, 'B ve que le queda una', () => G.TD.info.lives === 1);
+    await A.eval(l => { const e = G.EnemyMgr.all().find((x: any) => !x.dead && Math.abs(x.x - l.cx) < 300); e.y = l.cy + 620; }, lanes[1]);
+    await rig.until('B cae y se acaba la Arena', () => A.eval(() => G.Game.state === 'over'), 200);
+    await waitPage(B, 'también para B', () => G.Game.state === 'over' && !G.Coop.active);
+    expect(await A.eval(() => document.getElementById('over-title').textContent)).toBe('¡Has ganado la Arena!');
+    expect(await B.eval(() => document.getElementById('over-title').textContent)).toBe('Arena · 2.º puesto');
+    const podium = await B.eval(() => document.getElementById('over-stats').textContent);
+    expect(podium).toContain('1.º ' + nameA);
+    expect(podium).toContain('2.º Tú');
+    await rig.until('el podio llega al ranking de la Arena', () => (rig.srv!.db.raw.query('SELECT COUNT(*) AS n FROM arena_places').get() as any).n >= 2, 80);
+    const places = rig.srv!.db.raw.query('SELECT user_id, place FROM arena_places ORDER BY place').all() as any[];
+    expect(places.map(p => [String(p.user_id), p.place])).toEqual([[uidA, 1], [uidB, 2]]);
+    // Para las pruebas de después (de hordas), la sala vuelve a las hordas.
+    await A.eval(() => G.LobbyUI.setGame('hordas'));
+    expect(await A.allErrors()).toEqual([]);
+    expect(await B.allErrors()).toEqual([]);
+  });
+
   // ---------------- salas públicas y espectadores (net/spectate.ts) ----------------
 
   let nameC = '', roomId = '';
