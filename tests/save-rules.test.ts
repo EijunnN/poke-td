@@ -10,8 +10,8 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { startServer } from './helpers';
 import { sha256 } from '../server/http';
-import { isMarkedAccount } from '../server/ranking';
-import { ACH_VALUE, BUDGET, LIMITS, judgeSave, readBudget } from '../server/save-rules';
+import { isMarkedAccount, markAccount } from '../server/ranking';
+import { ACH_VALUE, BUDGET, LIMITS, isSuspect, judgeSave, readBudget } from '../server/save-rules';
 
 let srv: ReturnType<typeof startServer>;
 let base = '';
@@ -55,7 +55,9 @@ function mkUser(): U {
 
 const put = (u: U, save: unknown, ver: number) => call('PUT', '/api/save', { save, base: ver }, u.token);
 const stored = async (u: U) => (await call('GET', '/api/save', undefined, u.token)).j;
-const marked = (u: U) => isMarkedAccount(srv.db, u.id);
+/** ¿Quedó apuntada como sospechosa? (Eso ya no la saca del ranking: `blocked` es la marca del admin.) */
+const marked = (u: U) => isSuspect(srv.db, u.id);
+const blocked = (u: U) => isMarkedAccount(srv.db, u.id);
 /** Hace como si el último guardado fuera de hace `secs` segundos (el reloj es el del servidor). */
 const age = (u: U, secs: number) => srv.db.raw.run('UPDATE saves SET updated = ? WHERE user_id = ?', [Date.now() - secs * 1000, u.id]);
 /** Deja una partida guardada saltándose las reglas (el punto de partida de la prueba). */
@@ -267,7 +269,7 @@ describe('PUT /api/save: partida de juego real', () => {
   });
 });
 
-describe('PUT /api/save: partidas imposibles se guardan y marcan la cuenta', () => {
+describe('PUT /api/save: partidas imposibles se guardan y la cuenta queda sospechosa (sin salir del ranking)', () => {
   async function marca(over: (s: any) => void, secs = 300) {
     const u = mkUser();
     const s = game({ created: Date.now() - 20 * 86400000, coins: 5000, tickets: { t1: 5, t10: 1 } }, 30);
@@ -293,7 +295,8 @@ describe('PUT /api/save: partidas imposibles se guardan y marcan la cuenta', () 
   ])('%s', async (_, over) => {
     const { u, r, nx } = await marca(over);
     expect(r.status).toBe(200);                                       // no se rechaza: nadie pierde progreso por un falso positivo
-    expect(marked(u)).toBe(true);                                     // pero la cuenta ya no sube marcas
+    expect(marked(u)).toBe(true);                                     // queda apuntada para el admin
+    expect(blocked(u)).toBe(false);                                   // pero sigue subiendo marcas al ranking
     const g = (await stored(u)).save;
     expect(g.coins).toBe(nx.coins);                                   // y se guarda lo que subió
     expect((await stored(u)).ver).toBe(r.j.ver);
@@ -313,12 +316,19 @@ describe('PUT /api/save: partidas imposibles se guardan y marcan la cuenta', () 
     expect(marked(u)).toBe(true);
   });
 
-  test('la cuenta marcada no puede subir al ranking, y al desmarcarla sí', async () => {
+  test('la sospechosa sigue subiendo al ranking; la que marca el admin no, y al desmarcarla sí', async () => {
     const { u } = await marca(s => { s.coins += 1e7; });
     expect(marked(u)).toBe(true);
+    const body = { mode: 's', t: 100, lv: 5, kills: 50, dex: 25, shiny: false };
+    const go = async () => {
+      await call('POST', '/api/ranking/start', { mode: 's' }, u.token);
+      srv.db.raw.run('UPDATE ranking_runs SET started = ? WHERE user_id = ?', [Date.now() - 500_000, u.id]);
+      return (await call('POST', '/api/ranking/submit', body, u.token)).status;
+    };
+    expect(await go()).toBe(200);
+    markAccount(srv.db, u.id);                                                             // lo marca el admin
     await call('POST', '/api/ranking/start', { mode: 's' }, u.token);
     srv.db.raw.run('UPDATE ranking_runs SET started = ? WHERE user_id = ?', [Date.now() - 500_000, u.id]);
-    const body = { mode: 's', t: 100, lv: 5, kills: 50, dex: 25, shiny: false };
     expect((await call('POST', '/api/ranking/submit', body, u.token)).status).toBe(403);
     srv.db.raw.run('DELETE FROM ranking_marked WHERE user_id = ?', [u.id]);                 // lo que hace el admin
     expect((await call('POST', '/api/ranking/submit', body, u.token)).status).toBe(200);
@@ -338,7 +348,7 @@ describe('PUT /api/save: partidas imposibles se guardan y marcan la cuenta', () 
 
   test('desmarcada por el admin, la cuenta vuelve a juzgarse desde lo que hay guardado', async () => {
     const { u, nx, r } = await marca(s => { s.coins += 1e7; });
-    srv.db.raw.run('DELETE FROM ranking_marked WHERE user_id = ?', [u.id]);
+    srv.db.raw.run('DELETE FROM save_suspects WHERE user_id = ?', [u.id]);
     age(u, 300);
     nx.coins += 1000;
     expect((await put(u, nx, r.j.ver)).status).toBe(200);

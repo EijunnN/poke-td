@@ -46,8 +46,7 @@
  *   ranking_members  quiénes forman la marca (con su Pokémon); si se va uno, se va la marca entera
  *   ranking_runs     cuándo empezó la última partida de cada cuenta (anti-trampas)
  *   ranking_reports  reportes de marcas sospechosas, uno por jugador y marca
- *   ranking_marked   cuentas marcadas: no pueden subir marcas (las marca el admin o el guardado de
- *                    una partida imposible, ver server/save-rules.ts)
+ *   ranking_marked   cuentas marcadas: no pueden subir marcas (sólo las marca el admin)
  *
  * Tablas del ranking: `board` = modo + '_' + periodo, p. ej. s_d20261013 (solitario,
  * hoy), g_w2026-42 (grupo, semana ISO), s_m202610, s_all2 (histórico) y s_all2_p25
@@ -565,7 +564,12 @@ export function createRanking(db: Db, opts: RankingOptions = {}): Module {
       case 'POST /ranking/start': case 'POST /ranking/submit': case 'POST /ranking/report': case 'DELETE /ranking/mine':
         if (!writeOk(String(uid))) return fail(429, 'Demasiadas peticiones. Espera un poco.');
         if (route === 'POST /ranking/start') return start(req, uid);
-        if (route === 'POST /ranking/submit') return submit(req, uid);
+        if (route === 'POST /ranking/submit') {
+          // (Si una marca no entra, que quede en el registro por qué: así se puede contestar a quien no sale.)
+          const r = await submit(req, uid);
+          if (r.status >= 400) console.warn(`[ranking] cuenta ${uid}: marca rechazada (${r.status}) ${((await r.clone().json().catch(() => ({}))) as { error?: string }).error ?? ''}`);
+          return r;
+        }
         if (route === 'POST /ranking/report') return report(req, uid);
         return removeMine(uid);
       case 'GET /ranking/top': case 'GET /ranking/rank':

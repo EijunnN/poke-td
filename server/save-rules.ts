@@ -4,17 +4,17 @@
  * PUT /api/save con cada partida que llega. Hay tres salidas:
  *
  *   ok       la partida se guarda tal cual (salvo lo de "nada conseguido se pierde")
- *   sus      se guarda IGUAL, pero la cuenta queda marcada: no puede subir marcas al
- *            ranking hasta que un admin la desmarque (server/ranking.ts, ranking_marked)
+ *   sus      se guarda IGUAL y la cuenta queda apuntada como sospechosa (tabla save_suspects y
+ *            el registro del servidor) para que la mire el admin. NO la saca del ranking: antes la
+ *            marcaba (ranking_marked) y, con falsos positivos, dejaba fuera a ella y a sus equipos
  *   reject   400, no se guarda: sólo si la partida no tiene forma de partida (campos
  *            con el tipo cambiado)
  *
  * Por qué una partida imposible NO se rechaza: un falso positivo (alguien que jugó
  * muchas horas sin conexión y sube todo de golpe, una cuenta local importada...)
  * perdería progreso legítimo para siempre, y rechazar a un tramposo tampoco le
- * quita nada: seguiría jugando con su copia local. Marcarlo sí: lo que le importa
- * (el ranking) se cierra, y el error se arregla con un clic del admin. Es lo que
- * hacía el original (el cliente reintentaba y subía con `sus = true`).
+ * quita nada: seguiría jugando con su copia local. Tampoco se marca la cuenta: el admin
+ * ve el aviso en el registro y, si hace falta, la marca a mano (Moderación).
  *
  * Por qué sí se rechaza la partida con la forma rota: el cliente siempre sube números
  * y objetos (db.ts, sanitize/migrate); si llegan otra cosa, es una petición a mano, y
@@ -46,15 +46,15 @@
  * no se expliquen (ésos llegan con tickets ya guardados: gastarlos en el gacha es otro guardado).
  * Calibrado con las cuentas reales (2026-10-16): la que más, 197 tiradas en 11,8 h contando los
  * premios de logros (≈0,3 por minuto); el depósito rellena 6 por minuto, y guarda hasta 80 (8 ×10:
- * una partida con mucha suerte). Un script que invente tickets lo vacía en minutos y queda marcado; uno
- * que invente Pokémon, a la primera, como antes (tests/save-rules.test.ts).
+ * una partida con mucha suerte). Un script que invente tickets lo vacía en minutos y salta el aviso; uno
+ * que invente Pokémon, a la primera (tests/save-rules.test.ts).
  *   Cambios respecto a las reglas originales: el tope de tiempo por guardado pasa de
  *   3 h a 12 h (el cliente ya no guarda cada 2 h y una tarde sin conexión no debe
  *   marcar a nadie) y el premio de cada logro se mira en una tabla con los premios
  *   del juego (ACH_VALUE; tests/save-rules.test.ts la compara con src/data/achievements.ts).
  */
 import type { Db } from './db';
-import { isMarkedAccount, markAccount } from './ranking';
+import { isMarkedAccount } from './ranking';
 
 type Obj = Record<string, any>;
 const isObj = (v: unknown): v is Obj => !!v && typeof v === 'object' && !Array.isArray(v);
@@ -197,6 +197,28 @@ export function judgeSave(prev: Obj | null, next: Obj, o: { secs: number; now: n
   return { kind: 'sus', save, why: p.why };
 }
 
+// ---------------- sospechosas (tabla save_suspects) ----------------
+
+const suspectsReady = new WeakSet<Db>();
+function ensureSuspects(db: Db) {
+  if (suspectsReady.has(db)) return;
+  db.raw.exec(`CREATE TABLE IF NOT EXISTS save_suspects (
+    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    at INTEGER NOT NULL,
+    why TEXT NOT NULL
+  )`);
+  suspectsReady.add(db);
+}
+/** ¿Algún guardado de la cuenta fue imposible? (Sólo informa: no cierra nada.) */
+export function isSuspect(db: Db, userId: number) {
+  ensureSuspects(db);
+  return !!db.raw.query<{ n: number }, [number]>('SELECT 1 AS n FROM save_suspects WHERE user_id = ?').get(userId);
+}
+function markSuspect(db: Db, userId: number, why: string, now: number) {
+  ensureSuspects(db);
+  db.raw.query<unknown, [number, number, string]>('INSERT OR IGNORE INTO save_suspects (user_id, at, why) VALUES (?, ?, ?)').run(userId, now, why);
+}
+
 // ---------------- depósito de margen (tabla save_budget) ----------------
 
 const budgetReady = new WeakSet<Db>();
@@ -226,7 +248,7 @@ function writeBudget(db: Db, userId: number, tokens: number, now: number) {
 /**
  * Lo que necesita PUT /api/save: juzga la partida contra la guardada de la cuenta.
  * @param base  versión que el cliente leyó; con otra, el guardado no se hará (409) y no se juzga
- * @returns la partida a guardar y, cuando se haya guardado, `stored()` (marca la cuenta si hacía falta)
+ * @returns la partida a guardar y, cuando se haya guardado, `stored()` (apunta el aviso si hacía falta)
  */
 export function vetSave(db: Db, userId: number, save: Obj, base: number):
   { ok: true; save: Obj; stored: () => void } | { ok: false; error: string } {
@@ -237,12 +259,14 @@ export function vetSave(db: Db, userId: number, save: Obj, base: number):
   const now = Date.now();
   const budget = readBudget(db, userId, now);
   // (Una partida guardada que no se puede leer no sirve de referencia: no se juzga.)
-  const v = judgeSave(prev, save, { secs: cur ? (now - cur.updated) / 1000 : 0, now, marked: isMarkedAccount(db, userId) || (!!cur && !prev), budget });
+  // (Una ya sospechosa o marcada no se vuelve a juzgar: llenaría el registro con el mismo aviso.)
+  const marked = isSuspect(db, userId) || isMarkedAccount(db, userId);
+  const v = judgeSave(prev, save, { secs: cur ? (now - cur.updated) / 1000 : 0, now, marked: marked || (!!cur && !prev), budget });
   if (v.kind === 'reject') return { ok: false, error: v.error };
   return {
     ok: true, save: v.save,
     stored: () => {
-      if (v.kind === 'sus') { markAccount(db, userId, now); console.warn(`[save] cuenta ${userId} marcada: ${v.why}`); }
+      if (v.kind === 'sus') { markSuspect(db, userId, v.why, now); console.warn(`[save] cuenta ${userId} sospechosa (no se marca): ${v.why}`); }
       writeBudget(db, userId, budget - (v.kind === 'ok' ? v.used ?? 0 : 0), now);
     },
   };
