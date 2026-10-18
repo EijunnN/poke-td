@@ -25,6 +25,8 @@ G.I18n.add({
   'Defensa · tus favoritos': 'Defense · your favorites',
   'En la partida puedes comprar cualquier Pokémon de tu colección. Los favoritos (hasta {x}) salen primero en la tienda.':
     'In the game you can buy any Pokémon from your collection. Your favorites (up to {x}) come first in the shop.',
+  'Buscar por nombre o número…': 'Search by name or number…', 'Buscar…': 'Search…', 'Buscar Pokémon': 'Search Pokémon',
+  'Ninguno se llama así': 'No Pokémon by that name', 'y {x} más: busca o filtra por tipo': 'and {x} more: search or filter by type',
   'Mapa:': 'Map:', 'Al azar': 'Random', 'Empezar': 'Start', 'Empezar · {x} favoritos': 'Start · {x} favorites',
   'Empezar · 1 favorito': 'Start · 1 favorite', 'préstamo': 'on loan', 'Apoyo': 'Support',
 
@@ -85,7 +87,8 @@ G.I18n.add({
   'No hay salas públicas ahora mismo. Crea la tuya con «Crear sala pública».': 'There are no public rooms right now. Create yours with “Create public room”.',
   'Ya estás en una sala: al unirte a otra, sales de la tuya. Para mirar una partida, sal antes de tu sala.': 'You are already in a room: joining another one takes you out of yours. To watch a game, leave your room first.',
   'Sala pública': 'Public room', 'Sala privada': 'Private room', 'Sala:': 'Room:', 'Privada': 'Private', 'Pública': 'Public',
-  'Caben {x}': 'Up to {x}', 'caben {x}': 'up to {x}', 'Sólo entran tus amigos, con invitación': 'Only your friends can join, with an invitation',
+  'Caben {x}': 'Up to {x}', 'caben {x}': 'up to {x}', 'Para {x} jugadores · caben {x}': 'Best for {x} players · up to {x}',
+  'Para {x} jugadores': 'Best for {x} players', 'para {x} jugadores': 'best for {x} players', 'Un mapa al azar': 'A random map', 'Sólo entran tus amigos, con invitación': 'Only your friends can join, with an invitation',
   'En este mapa caben {x}': 'This map fits {x}', 'En el Survivor caben {x}': 'Survivor fits {x}',
   '{x}: sobra 1. Elige otro modo o mapa.': '{x}: one player too many. Choose another mode or map.',
   '{x}: sobran {x}. Elige otro modo o mapa.': '{x}: {x} players too many. Choose another mode or map.',

@@ -6,7 +6,8 @@ import {
   evolvesAt, START_MONEY, MAX_LEVEL, PATH_CLEAR, TOWER_GAP, ENDS_CLEAR,
   pathLengths, pathProgress, stepBack, pickTarget, TARGET_MODES, TARGET_NAME, type TargetMode,
   ROLES, roleHit, SUPPORT, AURAS, AURA_KINDS, auraStrength, auraRadius, aurasAt, type AuraKind, type AuraTotals,
-  MAPS, mapById, randomMap, costFor, trophyCost, bossGate, arenaPlaces, type TdMap
+  MAPS, mapById, randomMap, costFor, trophyCost, bossGate, arenaPlaces, type TdMap,
+  mapHint,
 } from './td-geom';
 import { MAZE_COLS, MAZE_W, MAZE_H, CELL, FREE_ROWS, cellIx, cellAt, cellCenter, flow, stepFrom, stepBackFrom, routeFrom, blockError } from './td-maze';
 import { START_LIVES, LAST_WAVE, MAX_WAVE, WIN_COINS, waveAt, waveHp, waveCount, waveGap, bossHpMul, leakCost, defenseCoins } from './td-waves';
@@ -649,6 +650,7 @@ export const TD = (() => {
     el.innerHTML = `<div class="box wide" style="max-width:720px;width:100%">
       <div class="row between"><h2>Defensa · tus favoritos</h2><span class="row" style="gap:6px"><button class="btn small ghost" data-a="guide">¿Cómo se juega?</button><button class="btn small ghost" data-a="back">Volver</button></span></div>
       <p class="sub">En la partida puedes comprar cualquier Pokémon de tu colección. Los favoritos (hasta ${TEAM_MAX}) salen primero en la tienda.</p>
+      <input type="search" class="td-find" placeholder="Buscar por nombre o número…" aria-label="Buscar Pokémon">
       <div class="td-grid"></div>
       <div class="row td-maps" style="margin-top:10px;gap:6px;flex-wrap:wrap;align-items:center"><b>Mapa:</b></div>
       <div class="row" style="margin-top:12px;gap:8px"><button class="btn gold grow" data-a="go">Empezar</button></div>
@@ -657,6 +659,11 @@ export const TD = (() => {
     // El mapa: uno de los de td-geom.ts o al azar (se recuerda el último).
     let mapPick = G.DB.save.tdMap === 'random' || MAPS.some(m => m.id === G.DB.save.tdMap) ? G.DB.save.tdMap : MAPS[0].id;
     const maps = el.querySelector('.td-maps') as HTMLElement;
+    // (Debajo, para cuántos va mejor el elegido: con un amigo o más, mejor uno de varias entradas.)
+    const hint = document.createElement('p');
+    hint.className = 'sub td-map-hint';
+    hint.style.cssText = 'margin:6px 0 0;width:100%';
+    const showHint = () => { hint.textContent = mapHint(mapPick) || 'Un mapa al azar'; };
     for (const [id, name] of [...MAPS.map(m => [m.id, m.name]), ['random', 'Al azar']]) {
       const b = document.createElement('button');
       b.className = 'btn small' + (id === mapPick ? ' gold' : '');
@@ -665,9 +672,12 @@ export const TD = (() => {
       b.onclick = () => {
         mapPick = id;
         maps.querySelectorAll<HTMLElement>('[data-map]').forEach(x => x.classList.toggle('gold', x.dataset.map === id));
+        showHint();
       };
       maps.appendChild(b);
     }
+    maps.appendChild(hint);
+    showHint();
     const grid = el.querySelector('.td-grid') as HTMLElement;
     const go = el.querySelector('[data-a=go]') as HTMLButtonElement;
     const paint = () => {
@@ -690,6 +700,11 @@ export const TD = (() => {
       };
       grid.appendChild(b);
     }
+    // Buscador: esconde los que no casan (los elegidos se quedan elegidos aunque no se vean).
+    const find = el.querySelector('.td-find') as HTMLInputElement;
+    find.oninput = () => {
+      grid.querySelectorAll<HTMLElement>('.td-pick').forEach(b => { b.style.display = matches(+b.dataset.dex!, find.value) ? '' : 'none'; });
+    };
     paint();
     (el.querySelector('[data-a=back]') as HTMLElement).onclick = () => el.remove();
     (el.querySelector('[data-a=guide]') as HTMLElement).onclick = () => G.GuideUI.open('td');
@@ -760,6 +775,7 @@ export const TD = (() => {
     team = cleanTeam(opts && opts.team);
     if (!opts || !Array.isArray(opts.team)) { if (!team.length) team = cleanTeam(save.tdTeam); }
     shopFilter = 'all';                // empieza en Todos (los favoritos salen primero igual)
+    shopText = '';
     G.Sprites.preload(team, 4000);
     preloadWave(1);
     listenPointer();
@@ -2011,6 +2027,16 @@ export const TD = (() => {
   let camFree: { x: number; y: number } | null = null;
   /** Qué enseña la tienda: favoritos, todos, o un tipo. */
   let shopFilter = 'all';
+  /** Lo escrito en el buscador de la tienda. */
+  let shopText = '';
+  /** ¿El Pokémon `dex` casa con lo buscado? Por nombre (sin tildes ni mayúsculas) o por número ("25", "#025"). */
+  function matches(dex: number, text: string) {
+    const q = G.DexQuery.norm(text.trim()).replace(/^#/, '');
+    if (!q) return true;
+    if (/^\d+$/.test(q)) return String(dex).includes(String(+q));
+    const mon = G.DEX_BY[dex];
+    return !!mon && G.DexQuery.norm(mon.name).includes(q);
+  }
   let shopOpen = true;
 
   function styles() {
@@ -2045,6 +2071,10 @@ export const TD = (() => {
       #td-shop { position: fixed; left: 8px; top: 96px; z-index: 30; width: 214px; padding: 8px; display: flex; flex-direction: column; gap: 6px; max-height: calc(100vh - 150px); }
       #td-shop h3 { margin: 0; font-size: 16px; display: flex; justify-content: space-between; align-items: center; }
       #td-shop .td-filters { display: flex; flex-wrap: wrap; gap: 4px; }
+      .td-find { font: inherit; font-size: 13px; padding: 5px 8px; border-radius: 8px; border: 1px solid rgba(255,255,255,.25);
+        background: rgba(10,20,48,.6); color: var(--ink); width: 100%; box-sizing: border-box; }
+      #td-team .td-find { margin: 8px 0 4px; }
+      #td-shop.closed .td-find { display: none; }
       #td-shop .td-filters button, #td-shop select { font: inherit; font-size: 12px; padding: 2px 6px; border-radius: 6px; background: rgba(10,20,48,.6);
                 color: inherit; border: 1px solid rgba(244,248,255,.25); cursor: pointer; }
       #td-shop .td-filters button.on { border-color: var(--gold); color: var(--gold); }
@@ -2120,7 +2150,10 @@ export const TD = (() => {
     shop.id = 'td-shop';
     shop.className = 'box' + (shopOpen ? '' : ' closed');
     shop.innerHTML = `<h3>Tienda <button class="btn small ghost" data-a="toggle"></button></h3>
-      <div class="td-filters"></div><div class="td-list"></div>`;
+      <input type="search" class="td-find" placeholder="Buscar…" aria-label="Buscar Pokémon"><div class="td-filters"></div><div class="td-list"></div>`;
+    const find = shop.querySelector('.td-find') as HTMLInputElement;
+    find.value = shopText;
+    find.oninput = () => { shopText = find.value; buildShop(); };
     (shop.querySelector('[data-a=toggle]') as HTMLElement).onclick = () => {
       shopOpen = !shopOpen;
       shop!.classList.toggle('closed', !shopOpen);
@@ -2193,8 +2226,10 @@ export const TD = (() => {
     sel.onchange = () => { shopFilter = sel.value || 'all'; buildShop(); };
 
     const fav = (d: number) => team.indexOf(d);
+    // Con texto en el buscador se busca en toda la tienda (el filtro de tipo no cuenta).
     // En favoritos salen también los trofeos que vas ganando.
-    let items = shopFilter === 'fav' ? [...team.map(dex => ({ dex, lent: false, trophy: false })), ...pool.filter(c => c.trophy)]
+    let items = shopText.trim() ? pool.filter(c => matches(c.dex, shopText))
+              : shopFilter === 'fav' ? [...team.map(dex => ({ dex, lent: false, trophy: false })), ...pool.filter(c => c.trophy)]
               : shopFilter === 'all' ? pool.slice()
               : shopFilter === 'support' ? pool.filter(c => SUPPORT[c.dex])
               : pool.filter(c => attackType(c.dex) === shopFilter);
@@ -2216,7 +2251,8 @@ export const TD = (() => {
       b.onclick = e => { e.stopPropagation(); startPlacing(c.dex); };
       list.appendChild(b);
     }
-    if (more > 0) list.insertAdjacentHTML('beforeend', `<p class="td-more">y ${more} más: filtra por tipo</p>`);
+    if (more > 0) list.insertAdjacentHTML('beforeend', `<p class="td-more">y ${more} más: busca o filtra por tipo</p>`);
+    else if (!items.length) list.insertAdjacentHTML('beforeend', '<p class="td-more">Ninguno se llama así</p>');
     refreshUI();
   }
 

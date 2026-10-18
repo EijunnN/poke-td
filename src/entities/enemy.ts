@@ -961,7 +961,10 @@ export const EnemyMgr = (() => {
   function key(cx: number, cy: number) { return cx * 73856093 ^ cy * 19349663; }
 
   function rebuildGrid() {
-    grid.clear();
+    // Se vacían las casillas en vez de tirarlas (así no se crea basura cada fotograma); de vez en cuando,
+    // si se han juntado muchas (por donde ya no queda nadie), se empieza de cero.
+    if (grid.size > 4096) grid.clear();
+    else for (const b of grid.values()) b.length = 0;
     for (const e of list) {
       if (e.dead) continue;
       const k = key(Math.floor(e.x / CELL), Math.floor(e.y / CELL));

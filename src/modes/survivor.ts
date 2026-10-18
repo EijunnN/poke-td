@@ -21,6 +21,9 @@ export const Survivor = (() => {
   let pl: Player = null!;   // (null fuera de partida, ver endRun)
   let caught: { dex: number; isNew: boolean }[] = [];          // shinies conseguidos en esta run
   let biome = -1;
+  // Tu mejor tiempo (en solitario o en grupo, según la partida) al empezar; al pasarlo suena el tema
+  // del récord hasta el final, aunque salga un jefe. Sin marca anterior (o mirando) no hay récord.
+  let recordAt = 0, recordOn = false;
 
   const st = { get time() { return time; } };
 
@@ -76,6 +79,8 @@ export const Survivor = (() => {
     G.World.setBiome(0, true);
     biome = 0;
     time = 0; pendingLevels = 0;
+    recordAt = spectating ? 0 : (coop ? save.stats.bestGroupTime : save.stats.bestSoloTime) || 0;
+    recordOn = false;
     runReal = performance.now(); tampered = false;
 
     pl = new G.Player(mon, perks, !!save.partnerShiny && G.DB.ownsShiny(mon.dex));
@@ -597,7 +602,12 @@ export const Survivor = (() => {
     G.Weather.update(dt, time, pl);
     G.FX.update(dt);
 
-    G.Audio.music(G.Judgment.active ? G.Judgment.music : G.Rift.inArena ? 'rift' : G.EnemyMgr.bossAlive() ? 'boss' : G.BIOME_MUSIC[biome % G.BIOME_MUSIC.length]);
+    if (!recordOn && recordAt > 0 && time > recordAt) {
+      recordOn = true;
+      G.UI.toast('¡Nuevo récord! Has pasado tu mejor tiempo', 3600);
+      G.Audio.sfx('levelup');
+    }
+    G.Audio.music(G.Judgment.active ? G.Judgment.music : recordOn ? 'record' : G.Rift.inArena ? 'rift' : G.EnemyMgr.bossAlive() ? 'boss' : G.BIOME_MUSIC[biome % G.BIOME_MUSIC.length]);
     if (!coop || G.Coop.isHost) maybeLevelUp();
     if (pl.bonds > 0) offerBond(true);
     if (G.Coop.isHost) checkAllDown(dt);
@@ -639,6 +649,8 @@ export const Survivor = (() => {
     }
   }
 
+  /** La viñeta de la niebla, guardada por tamaño de pantalla (ver render). */
+  let fogG: CanvasGradient | null = null, fogW = 0, fogH = 0;
   function render(v: View) {
     const { ctx, w, h, dpr, frameDt, fps: fpsShown } = v;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -661,11 +673,17 @@ export const Survivor = (() => {
     // Niebla: la viñeta se cierra un poco (sin tapar el centro).
     const fog = G.Weather.vignette;
     if (fog > 0) {
-      const g = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.32, w / 2, h / 2, Math.max(w, h) * 0.62);
-      g.addColorStop(0, 'rgba(200,205,220,0)');
-      g.addColorStop(1, `rgba(200,205,220,${0.45 * fog})`);
-      ctx.fillStyle = g;
+      // (El degradado se guarda por tamaño; lo espesa de la niebla va en globalAlpha.)
+      if (!fogG || fogW !== w || fogH !== h) {
+        fogG = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.32, w / 2, h / 2, Math.max(w, h) * 0.62);
+        fogG.addColorStop(0, 'rgba(200,205,220,0)');
+        fogG.addColorStop(1, 'rgba(200,205,220,0.45)');
+        fogW = w; fogH = h;
+      }
+      ctx.globalAlpha = Math.min(1, fog);
+      ctx.fillStyle = fogG;
       ctx.fillRect(0, 0, w, h);
+      ctx.globalAlpha = 1;
     }
     if (!G.Judgment.cinematic) { G.HUD.draw(ctx, w, h, spectating ? G.Spectate.target() || pl : pl, st); G.Pings.drawHud(ctx, w, h); }
     G.Judgment.drawOverlay(ctx, w, h);

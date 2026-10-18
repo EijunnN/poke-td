@@ -171,19 +171,20 @@ export function stepBack(x: number, y: number, wp: number, d: number, path: Pt[]
  * Con varias entradas, las mismas monedas bastan si se planta con cabeza (entre dos caminos o
  * donde se juntan); sólo en las esquinas de cada uno, no. Medido con tools/td-balance.ts --cover.
  */
-export interface TdMap { id: string; name: string; en: string; players: number; routes: [number, number][][]; gates?: string[] }
+/** `players`: cuántos caben. `best`: para cuántos va mejor (se enseña al elegirlo): con más entradas, más jugadores. */
+export interface TdMap { id: string; name: string; en: string; players: number; best: [number, number]; routes: [number, number][][]; gates?: string[] }
 export const MAPS: TdMap[] = [
-  { id: 'valle', name: 'Valle', en: 'Valley', players: 6, routes: [[[-20, -8], [-8, -8], [-8, 6], [4, 6], [4, -6], [14, -6], [14, 8], [19, 8]]] },
-  { id: 'zigzag', name: 'Zigzag', en: 'Zigzag', players: 8, routes: [[[-20, -10], [10, -10], [10, 0], [-10, 0], [-10, 10], [19, 10]]] },
-  { id: 'espiral', name: 'Espiral', en: 'Spiral', players: 8, routes: [[[-20, 4], [-12, -12], [10, -12], [14, 6], [-4, 10], [-6, -3], [4, -3]]] },
+  { id: 'valle', name: 'Valle', en: 'Valley', players: 6, best: [1, 3], routes: [[[-20, -8], [-8, -8], [-8, 6], [4, 6], [4, -6], [14, -6], [14, 8], [19, 8]]] },
+  { id: 'zigzag', name: 'Zigzag', en: 'Zigzag', players: 8, best: [1, 4], routes: [[[-20, -10], [10, -10], [10, 0], [-10, 0], [-10, 10], [19, 10]]] },
+  { id: 'espiral', name: 'Espiral', en: 'Spiral', players: 8, best: [2, 5], routes: [[[-20, 4], [-12, -12], [10, -12], [14, 6], [-4, 10], [-6, -3], [4, -3]]] },
   // Dos entradas al oeste; los caminos van cada uno por su mitad y se juntan poco antes de la base.
   // Entre sus dos últimos tramos largos queda una franja desde la que se cubren los dos.
-  { id: 'cruce', name: 'Cruce', en: 'Crossing', players: 8, gates: ['el noroeste', 'el suroeste'], routes: [
+  { id: 'cruce', name: 'Cruce', en: 'Crossing', players: 8, best: [2, 6], gates: ['el noroeste', 'el suroeste'], routes: [
     [[-20, -6], [-12, -6], [-12, -14], [2, -14], [2, -8], [-6, -8], [-6, -4], [10, -4], [10, 0], [19, 0]],
     [[-20, 6], [-12, 6], [-12, 14], [2, 14], [2, 8], [-6, 8], [-6, 4], [10, 4], [10, 0], [19, 0]],
   ] },
   // Tres entradas (norte, oeste y sur) que se juntan cerca de la base.
-  { id: 'tridente', name: 'Tridente', en: 'Trident', players: 8, gates: ['el norte', 'el oeste', 'el sur'], routes: [
+  { id: 'tridente', name: 'Tridente', en: 'Trident', players: 8, best: [3, 8], gates: ['el norte', 'el oeste', 'el sur'], routes: [
     [[-10, -19], [-10, -13], [4, -13], [4, -8], [-4, -8], [-4, -4], [10, -4], [10, 0], [19, 0]],
     [[-20, 0], [-16, 0], [-16, -6], [-12, -6], [-12, 6], [-8, 6], [-8, 0], [10, 0], [19, 0]],
     [[-10, 19], [-10, 13], [4, 13], [4, 8], [-4, 8], [-4, 4], [10, 4], [10, 0], [19, 0]],
@@ -198,6 +199,11 @@ export function bossGate(wave: number, gates: number): number {
   if (gates <= 1) return 0;
   const k = Math.max(0, Math.floor(wave / 5) - 1);          // el k-ésimo jefe (0 = el de la 5)
   return (Math.floor(k / 2) + k % 2) % gates;
+}
+/** "Para 1–3 jugadores · caben 6" del mapa `id` ('' si no es uno de ellos, p. ej. al azar). */
+export function mapHint(id: string): string {
+  const m = MAPS.find(x => x.id === id);
+  return m ? `Para ${m.best[0]}–${m.best[1]} jugadores · caben ${m.players}` : '';
 }
 /** Jugadores en una sala del Survivor (está hecho para 4: colores, cartas de nivel compartidas, dificultad). */
 export const SURVIVOR_PLAYERS = 4;

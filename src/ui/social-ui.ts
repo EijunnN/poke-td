@@ -1,6 +1,7 @@
 import { G } from '../g';
 import type { Friend, Invite, Member, Room } from '../net/social';
 import type { CoopConfig } from '../net/coop';
+import { mapHint } from '../modes/td-geom';
 /* ============ social-ui.js — apodo, amigos, sala e invitaciones ============ */
   const $ = G.UI.$;
   const esc = (s: unknown) => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
@@ -208,7 +209,8 @@ import type { CoopConfig } from '../net/coop';
       const maps = [...G.TD_MAPS.map(m => [m.id, m.name]), ['random', 'Al azar']];
       const mapName = (maps.find(m => m[0] === game.map) || maps[maps.length - 1])[1];
       if (!room.isHost) {
-        box.innerHTML = `<span class="sub">Modo: <b>${game.mode === 'td' ? (game.arena ? 'Arena' : 'Defensa · ' + esc(mapName)) : 'Survivor'}</b> · ${room.pub ? 'Sala pública' : 'Sala privada'} · caben ${room.max}</span>`
+        const best = game.mode === 'td' && !game.arena ? mapHint(game.map).split(' · ')[0] : '';
+        box.innerHTML = `<span class="sub">Modo: <b>${game.mode === 'td' ? (game.arena ? 'Arena' : 'Defensa · ' + esc(mapName)) : 'Survivor'}</b>${best ? ' (' + best.toLowerCase() + ')' : ''} · ${room.pub ? 'Sala pública' : 'Sala privada'} · caben ${room.max}</span>`
           + (game.arena ? '<p class="sub" style="margin:4px 0 0">Arena: cada uno su carril, sin camino: haces el laberinto con tus torres y envías monstruos a los rivales. Gana el último en pie.</p>' : '');
         return;
       }
@@ -232,6 +234,8 @@ import type { CoopConfig } from '../net/coop';
       if (game.mode === 'td' && !game.arena) {
         box.insertAdjacentHTML('beforeend', '<b style="margin-left:8px">Mapa:</b>');
         for (const [id, name] of maps) chip(name, game.map === id, () => { game.map = id; });
+        const best = mapHint(game.map).split(' · ')[0];
+        if (best) box.insertAdjacentHTML('beforeend', `<span class="sub" style="margin-left:6px">${best}</span>`);
       }
       // Privada (sólo con invitación) o pública (sale en Salas públicas: cualquiera entra, o mira si ya jugáis).
       const row = document.createElement('div');

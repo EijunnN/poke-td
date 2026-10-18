@@ -208,6 +208,7 @@ G.I18n.add({
   '{x} · {x} DERROTADOS · {x} MONEDAS': '{x} · {x} DEFEATED · {x} COINS',
   'Arrastra el dedo para moverte · toca un ataque para cambiarlo': 'Drag your finger to move · tap a move to switch',
   'WASD moverse · 1-4 / Q / E o clic en un ataque para cambiarlo · Esc pausa': 'WASD move · 1-4 / Q / E or click a move to switch · Esc pause',
+  '¡Nuevo récord! Has pasado tu mejor tiempo': 'New record! You beat your best time',
   'El anfitrión ha terminado la partida': 'The host has ended the game', 'Se ha perdido la conexión con el anfitrión.': 'Lost connection to the host.',
 
   // ---------------- pausa y fin ----------------
@@ -336,7 +337,7 @@ G.I18n.add({
   'El servidor no registró el inicio de la partida.': 'The server did not register the start of the run.', 'El servidor la ha rechazado.': 'The server rejected it.',
   'Esta partida dura más de {x} minutos y el ranking no la admite.': 'This run lasts more than {x} minutes and the ranking does not accept it.',
   'Has abierto el juego en otra pestaña: aquí ya no te llegan invitaciones. Recarga para usar ésta.': 'You opened the game in another tab: invitations no longer reach this one. Reload to use this one.',
-  '<b>Normal</b> dibuja menos píxeles: va más fluido en móviles y pantallas de alta densidad.': '<b>Normal</b> draws fewer pixels: smoother on phones and high-density screens.',
+  '<b>Auto</b> la elige según tu pantalla (en portátiles y monitores, menos píxeles: se calientan menos). <b>Normal</b> dibuja menos píxeles: va más fluido en móviles y pantallas de alta densidad.': '<b>Auto</b> picks it for your screen (fewer pixels on laptops and monitors: they run cooler). <b>Normal</b> draws fewer pixels: smoother on phones and high-density screens.',
   '· La tirada ×10 garantiza al menos una Épica.': '· The ×10 pull guarantees at least one Epic.',
   '· Los repetidos dan Pokémonedas. Los shiny no se repiten.': '· Duplicates give PokéCoins. Shinies never repeat.',
   '· Los tickets se consiguen jugando: algunos Pokémon los sueltan al caer, y los jefes y los legendarios de las grietas, a veces, tickets ×10.': '· Tickets are earned by playing: some Pokémon drop them when defeated, and bosses and rift legendaries sometimes give ×10 tickets.',

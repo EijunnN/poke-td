@@ -88,7 +88,7 @@ export const ChatUI = (() => {
       #chat-btn { position: fixed; top: 10px; right: 64px; z-index: 40; width: 38px; height: 38px; border-radius: 12px;
         border: 2px solid rgba(255,255,255,.85); background: rgba(16,28,64,.78); color: #fff; display: grid; place-items: center;
         cursor: pointer; padding: 0; }
-      #chat-btn svg { width: 20px; height: 20px; }
+      #chat-btn svg { width: 22px; height: 22px; }
       #ping-btn { position: fixed; top: 10px; right: 110px; z-index: 40; width: 38px; height: 38px; border-radius: 12px;
         border: 2px solid rgba(255,255,255,.85); background: rgba(16,28,64,.78); color: #fff; display: grid; place-items: center;
         cursor: pointer; padding: 0; }
@@ -138,7 +138,8 @@ export const ChatUI = (() => {
     btn.id = 'chat-btn';
     btn.title = 'Chat (Enter o T) · frases rápidas (V)';
     btn.setAttribute('aria-label', 'Chat');
-    btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><path d="M4 5h16v11H9l-5 4z"/></svg><span class="dot"></span>`;
+    // Bocadillo redondeado con tres puntos (el de antes, un cuadrado de trazo, parecía una ventana).
+    btn.innerHTML = `<svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 3.5c-5 0-9 3.3-9 7.4 0 2.3 1.2 4.3 3.1 5.7-.2 1.4-.9 2.8-2 3.9 2.1-.1 4-.9 5.4-2.1.8.2 1.6.3 2.5.3 5 0 9-3.3 9-7.8s-4-7.4-9-7.4z"/><g fill="#1b2a4a"><circle cx="8" cy="11" r="1.5"/><circle cx="12" cy="11" r="1.5"/><circle cx="16" cy="11" r="1.5"/></g></svg><span class="dot"></span>`;
     btn.onclick = () => (open ? close() : openPanel(false));
     btn.addEventListener('pointerdown', e => e.stopPropagation());
 

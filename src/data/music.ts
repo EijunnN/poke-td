@@ -162,6 +162,30 @@ G.MUSIC.judgment = {
   drums: { kick: 'X..xX..xX..xX.xx', snare: '....X.......X..X', hat: 'x.x.x.x.x.x.x.x.' }
 };
 
+/* ---------------- Nuevo récord ----------------
+ * Suena desde que pasas tu mejor tiempo hasta el final (también con jefes):
+ * Re mayor, la melodía subiendo por octavas y las campanas acompañando. */
+G.MUSIC.record = {
+  bpm: 128,
+  chords: ['D', 'A', 'Bm', 'G', 'D', 'A', 'G', 'A',
+           'Bm', 'G', 'D', 'A', 'G', 'A', 'D', 'D'],
+  melody: [{ inst: 'lead', vel: 1, bars: [
+    'F#5:4 A5:4 D6:6 C#6:2', 'C#6:4 B5:2 A5:2 E5:8',
+    'D5:2 F#5:2 B5:4 A5:4 F#5:4', 'G5:6 F#5:2 E5:4 D5:4',
+    'F#5:2 A5:2 D6:4 E6:4 F#6:4', 'E6:6 C#6:2 A5:8',
+    'B5:4 D6:4 G6:4 F#6:2 E6:2', 'E6:12 -:4',
+    'F#6:4 D6:4 B5:4 D6:4', 'D6:4 B5:2 G5:2 D6:4 E6:4',
+    'F#6:6 E6:2 D6:4 A5:4', 'C#6:8 E6:8',
+    'D6:2 E6:2 F#6:4 G6:4 F#6:2 E6:2', 'E6:4 C#6:4 A5:4 E6:4',
+    'F#6:8 A6:8', 'D6:12 -:4'] }],
+  parts: [
+    { inst: 'bass', octave: 2, vel: 0.95, pattern: 'R.RO.RR.F.FO.FR.' },
+    { inst: 'bell', octave: 5, vel: 0.45, pattern: '0.2.1.3.0.2.1.3.' },
+    { inst: 'pad', octave: 3, vel: 0.7, pattern: 'C-------C-------' }
+  ],
+  drums: { kick: 'X...x.X.X...x.X.', snare: '....X.......X..x', hat: 'x.o.x.o.x.o.x.oo', shaker: 'o.o.o.o.o.o.o.o.' }
+};
+
 /** Tema de cada bioma durante la run. */
 export const BIOME_MUSIC: string[] = ['forest', 'cave', 'volcano'];
 G.BIOME_MUSIC = BIOME_MUSIC;

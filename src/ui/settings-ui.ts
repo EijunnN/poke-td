@@ -87,8 +87,8 @@ export const SettingsUI = (() => {
              `<button class="chip ${G.I18n.lang === v ? 'on' : ''}" data-lang="${v}">${l}</button>`).join('')}</div>`
         + section('Calidad', 'Cuántos efectos y partículas se dibujan. <b>Auto</b> la baja sola si el juego va a tirones (ahora: ' + auto + ').')
         + choice('quality', [['auto', 'Auto'], ['high', 'Alta'], ['mid', 'Media'], ['low', 'Baja']])
-        + section('Resolución', '<b>Normal</b> dibuja menos píxeles: va más fluido en móviles y pantallas de alta densidad.')
-        + choice('res', [['high', 'Alta'], ['normal', 'Normal']])
+        + section('Resolución', '<b>Auto</b> la elige según tu pantalla (en portátiles y monitores, menos píxeles: se calientan menos). <b>Normal</b> dibuja menos píxeles: va más fluido en móviles y pantallas de alta densidad.')
+        + choice('res', [['auto', 'Auto'], ['high', 'Alta'], ['normal', 'Normal']])
         + section('Pantalla')
         + toggle('dmgNumbers', 'Números de daño', 'Los números que salen al golpear y al recibir daño.')
         + toggle('calm', 'Menos sacudidas y destellos', 'La cámara tiembla menos y los fogonazos son suaves.')

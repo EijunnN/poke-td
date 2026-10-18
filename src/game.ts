@@ -82,7 +82,17 @@ export const Game = (() => {
   // Resolución interna: "Alta" (por defecto) hasta ×1,5; "Normal", ×1. En
   // pantallas ×2 dibujar el doble de píxeles era de lo que más costaba, y con
   // el pixel art no se nota.
-  const calcDpr = () => Math.min(G.Settings.get('res') === 'normal' ? 1 : 1.5, window.devicePixelRatio || 1);
+  const calcDpr = () => {
+    const dev = window.devicePixelRatio || 1, res = G.Settings.get('res');
+    if (res !== 'auto') return Math.min(res === 'normal' ? 1 : 1.5, dev);
+    // Auto: en pantallas grandes (portátil, monitor) ×1, que con el pixel art no se nota y es menos de la
+    // mitad de píxeles que ×1,5; en las pequeñas (móvil) hasta ×1,5 mientras no pase de AUTO_PX píxeles.
+    const css = innerWidth * innerHeight;
+    if (css >= AUTO_BIG) return 1;
+    return Math.max(1, Math.min(1.5, dev, Math.sqrt(AUTO_PX / Math.max(1, css))));
+  };
+  /** Pantallas de al menos tantos píxeles CSS cuentan como grandes; y los píxeles reales que se permiten en las pequeñas. */
+  const AUTO_BIG = 850_000, AUTO_PX = 1_300_000;
   let iw = 0, ih = 0, checkAt = 0, redraw = true;
   let settleTimers: ReturnType<typeof setTimeout>[] = [];
 

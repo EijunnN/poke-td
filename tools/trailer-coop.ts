@@ -18,6 +18,7 @@ import type { WsData } from '../server/realtime';
 import { sha256 } from '../server/http';
 import { FakeClock, installFakeNet, installHarness, type NetIn, type NetOut } from '../tests/fakes';
 import { startServer } from '../tests/helpers';
+import { MAZE_STYLES, mazeCells } from './trailer-mazes';
 
 declare const G: any;
 declare const window: any;
@@ -214,16 +215,10 @@ function botTick([zone, total]: [number, number]) {
   if (low && info.money >= 80) td.debugUpgrade(low.i);
 }
 
-/** El laberinto de un experto (td-maze.ts: 11×26 casillas de 48): una fila de piezas cada dos, con el hueco a un lado
- *  y al otro, para que bajen en zigzag de pared a pared; casi todo torres (los muros, entre ellas). */
-const MAZE_ROWS_PLAN = [3, 5, 7, 9, 11, 13, 15, 17, 19, 21];
-function mazePlan(l: { cx: number; cy: number }) {
-  const out: { x: number; y: number; tower: boolean; k: number }[] = [];
-  MAZE_ROWS_PLAN.forEach((r, k) => {
-    const gap = k % 2 ? 0 : 10;
-    for (let c = 0; c < 11; c++) if (c !== gap) out.push({ x: l.cx + (c + 0.5) * 48 - 264, y: l.cy + (r + 0.5) * 48 - 624, tower: c % 2 === 0, k: out.length });
-  });
-  return out;
+type Piece = { x: number; y: number; tower: boolean; k: number };
+function mazePlan(l: { cx: number; cy: number }, lane: number): Piece[] {
+  return mazeCells(MAZE_STYLES[lane % MAZE_STYLES.length]).map(([c, r, tower], k) =>
+    ({ x: l.cx + (c + 0.5) * 48 - 264, y: l.cy + (r + 0.5) * 48 - 624, tower, k }));
 }
 
 /** En la página, en la Arena: levanta su laberinto (window.__plan) con muros y torres, luego mejora; con __war, envía monstruos. */
@@ -447,7 +442,7 @@ async function main() {
     for (const d of [B, C, D]) await d.eval(() => { const h = [...document.querySelectorAll('#td-shop button')].find((b: any) => /Ocultar/.test(b.textContent)) as any; if (h) h.click(); });
     const lanes = await A.eval(() => G.TD.net.lanes) as { uid: string; cx: number; cy: number }[];
     const L = lanes[0];
-    const plans = lanes.map(mazePlan);
+    const plans = lanes.map((l, k) => mazePlan(l, k));
     for (const [k, d] of all.entries()) await d.eval(p => { (window as any).__plan = p; }, plans[k]);
     await A.eval(() => { (window as any).__hold = true; });
     for (const l of lanes) await A.eval(u => G.TD.debugMoney(u, 25000), l.uid);

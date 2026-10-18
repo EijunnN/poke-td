@@ -19,6 +19,17 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { d: '2026-10-18', title: ['Mapas de la Defensa y menos calor', 'Defense maps and less heat'], new: [
+    ['Survivor: cuando pasas tu mejor tiempo (en solitario o en grupo) sale «¡Nuevo récord!» y empieza a sonar un tema nuevo, que sigue hasta el final aunque salga un jefe.',
+     'Survivor: when you beat your best time (solo or in a group) you get “New record!” and a new theme starts playing, all the way to the end, even through bosses.'],
+  ], chg: [
+    ['Defensa: buscador por nombre o número al elegir tus favoritos y en la tienda de la partida (busca en toda la tienda, sin importar el filtro de tipo). Y un icono de chat nuevo.',
+     'Defense: search by name or number when picking your favorites and in the in-game shop (it searches the whole shop, whatever the type filter). And a new chat icon.'],
+    ['Resolución «Auto», ahora la de por defecto (Ajustes → Resolución): en portátiles y monitores dibuja a ×1, menos de la mitad de píxeles, y en el móvil sigue nítida. En los Mac con pantalla Retina el juego calentaba mucho el equipo; si prefieres la de antes, elige «Alta». Y algo menos de trabajo en cada fotograma (la niebla y los enemigos). Idea de joorgecamacho.',
+     '“Auto” resolution, now the default (Settings → Resolution): on laptops and monitors it draws at ×1, less than half the pixels, and it stays sharp on phones. On Macs with Retina displays the game made the computer run very hot; if you prefer the old one, choose “High”. And a bit less work every frame (fog and enemies). Idea by joorgecamacho.'],
+    ['Defensa: al elegir mapa se ve para cuántos jugadores va mejor y cuántos caben (Valle, 1–3; Zigzag, 1–4; Espiral, 2–5; Cruce, 2–6; Tridente, 3–8). Los de varias entradas piden más gente.',
+     'Defense: when picking a map you can see how many players it suits best and how many fit (Valley, 1–3; Zigzag, 1–4; Spiral, 2–5; Crossing, 2–6; Trident, 3–8). Maps with several entrances need more people.'],
+  ] },
   { d: '2026-10-17', title: ['Pausa con estadísticas, colección con buscador y arreglos', 'Stats in the pause, collection search and fixes'], new: [
     ['Pausa con pestañas: Resumen de la partida (tiempo, nivel, derrotados, jefes, movimientos y objeto), Estadísticas de tu Pokémon (con cuántas cartas de cada mejora llevas) y Daño, un medidor por movimiento (y por compañero en grupo) que también sale al acabar la partida. Las cartas de nivel dicen cuánto sube cada mejora y la barra de experiencia muestra números. Ideas de ZeroTrace, Saimon-NM y emiramirez24.',
      'The pause screen now has tabs: Summary of your run (time, level, defeated, bosses, moves and held item), Stats of your Pokémon (with how many cards of each upgrade you have) and Damage, a meter per move (and per teammate in a group) that also shows on the end screen. Level-up cards tell you how much each upgrade adds and the XP bar shows numbers. Ideas by ZeroTrace, Saimon-NM and emiramirez24.'],

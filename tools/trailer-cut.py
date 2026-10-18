@@ -56,7 +56,7 @@ ACT2 = [                                              # la Arena
     (['maze-build'], 0.4, 3, 'SIN CAMINO', 'Tus torres son el laberinto', {'mid': 1}),
     (['maze-preview'], 1.4, 2, 'NUNCA LO CIERRES', '', {'mid': 1}),
     (['maze-pan'], 0.0, 4, 'ZIGZAG', 'Cuanto más largo, mejor', {'zoom': 0, 'speed': 0.6}),
-    (['arena-zoom'], 1.0, 3, 'CADA UNO, SU LABERINTO', '', {'zoom': 0}),
+    (['arena-zoom'], 1.0, 3, 'CADA UNO, SU LABERINTO', 'Zigzag · Embudo · Peine · Ladrillos', {'zoom': 0}),
     (['arena-send'], 0.6, 2, 'ENVÍA MONSTRUOS', 'Suben tus ingresos', {}),
     (['arena-incoming'], 1.0, 2, 'A TUS RIVALES', '', F),
     (['arena-fly'], 0.4, 1, '', 'Zubat vuela', F),

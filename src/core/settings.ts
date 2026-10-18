@@ -9,7 +9,7 @@ import { G } from '../g';
  *   fps         true/false                        contador de FPS
  *   stick       0.8 | 1 | 1.25                    tamaño del joystick táctil
  *   stickMode   'follow' | 'fixed'                joystick táctil: aparece donde tocas, o fijo abajo a la izquierda
- *   res         'high' | 'normal'                 resolución del lienzo (×1,5 o ×1)
+ *   res         'auto' | 'high' | 'normal'        resolución del lienzo (auto según la pantalla, ×1,5 o ×1)
  *   chat        'all' | 'quick' | 'off'           chat de la sala: todo, sólo frases rápidas o nada
  *   chatFilter  true/false                        tachar palabrotas y enlaces del chat (sólo lo que ves tú)
  *   gachaSkip   true/false                        el gacha enseña el resultado sin la tragaperras
@@ -25,7 +25,9 @@ export interface SettingsData {
   fps: boolean;
   stick: number;
   stickMode: 'follow' | 'fixed';
-  res: 'high' | 'normal';
+  res: 'auto' | 'high' | 'normal';
+  /** Versión de `res`: sin ella, el 'high' guardado era el de antes por defecto y pasa a 'auto'. */
+  resV?: number;
   chat: 'all' | 'quick' | 'off';
   chatFilter: boolean;
   gachaSkip: boolean;
@@ -34,9 +36,12 @@ export interface SettingsData {
 
 export const Settings = (() => {
   const KEY = 'ps.settings';
-  const DEF: SettingsData = { quality: 'auto', dmgNumbers: true, calm: false, fps: false, stick: 1, stickMode: 'follow', res: 'high', chat: 'all', chatFilter: false, gachaSkip: false, aimCursor: false };
+  const DEF: SettingsData = { quality: 'auto', dmgNumbers: true, calm: false, fps: false, stick: 1, stickMode: 'follow', res: 'auto', chat: 'all', chatFilter: false, gachaSkip: false, aimCursor: false };
   let s: SettingsData = Object.assign({}, DEF);
   try { Object.assign(s, JSON.parse(localStorage.getItem(KEY) || '{}')); } catch (e) { /* nada */ }
+  // 'high' era lo de por defecto (y se guardaba al cambiar cualquier otro ajuste): pasa a 'auto', que en un
+  // portátil con pantalla Retina dibuja la mitad de píxeles (se calentaban). Quien quiera, vuelve a elegir Alta.
+  if (!s.resV) { if (s.res === 'high') s.res = 'auto'; s.resV = 1; }
   const fns = new Set<(k: string, v: unknown) => void>();
 
   // Calidad automática: empieza alta (media en móvil) y baja si va a tirones.
