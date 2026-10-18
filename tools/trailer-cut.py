@@ -2,9 +2,8 @@
 
     python tools/trailer-cut.py <carpeta> [canción.mp3]   → <carpeta>/poketd-trailer.mp4 (1920×1080, 30 fps, H.264 + AAC, para X)
 
-La canción suena seguida desde el principio, sin saltos: el vídeo se ajusta a ella (SONG: tempo, primer compás,
-parte intensa y pasaje tranquilo) y sólo se corta al final, con un fundido. La Defensa va con la parte intensa del
-principio; la Arena se presenta (el laberinto) en el pasaje tranquilo, y su rótulo cae en el golpe del regreso.
+La canción suena seguida desde el principio, sin saltos: el vídeo se ajusta a ella (SONG: tempo, primer compás y
+parte intensa) y acaba, con un fundido, donde la canción se calma. Primero la Defensa y después la Arena.
 Todos los cortes van al compás; cada plano entra con un zoom lento y su rótulo se desliza. Si a un plano le faltan
 imágenes para sus compases, va a cámara lenta.
 Sin canción, usa los temas del juego (grabados con `node tools/trailer.ts <carpeta> --music judgment,boss,rift --secs 80`).
@@ -33,71 +32,46 @@ HOOK = [
     (['map-tridente'], 0.5, 1, 'POR TODAS PARTES', '', F),
     (['gate-cruce'], 0.6, 1, 'CADA VEZ MÁS FUERTES', '', F),
     (['map-zigzag'], 0.8, 1, '¿AGUANTARÁS?', '', {'flash': 1, 'speed': 1.5}),
-    (None, 0, 4, 'PokéTD', 'Tower defense con tus Pokémon', {'flash': 1, 'big': 1}),
+    (None, 0, 2, 'PokéTD', 'Tower defense con tus Pokémon', {'flash': 1, 'big': 1}),
 ]
-ACT1 = [
+ACT1 = [                                              # la Defensa
     (['place'], 0.6, 2, 'PLANTA', 'Cualquier Pokémon de tu colección', {}),
-    (['shop'], 0.3, 3, 'TODA TU COLECCIÓN', 'Elige y colócalo donde quieras', {}),
-    (['build-a', 'build'], 0.0, 3, 'MONTA TU DEFENSA', '', {}),
-    (['evo-a', 'evo-b'], 0.3, 3, 'EVOLUCIONA', '', F),
+    (['shop'], 0.6, 2, 'TODA TU COLECCIÓN', 'Elige y colócalo donde quieras', {}),
+    (['evo-a', 'evo-b'], 0.6, 2, 'EVOLUCIONA', '', F),
     (['learn'], 0.6, 2, 'ENSEÑA ATAQUES', 'Dos más por torre', {}),
     (['aura'], 0.4, 2, 'REFUERZA', 'Los apoyos dan su aura', {}),
-    (['types'], 0.0, 4, 'CONGELA · QUEMA · PARALIZA', 'Cada tipo, su poder', {}),
+    (['types'], 0.6, 2, 'CONGELA · QUEMA · PARALIZA', 'Cada tipo, su poder', {}),
     (['map-espiral'], 0.0, 2, 'CINCO MAPAS', 'Valle · Zigzag · Espiral · Cruce · Tridente', {}),
-    (['map-cruce'], 0.0, 2, 'VARIAS ENTRADAS', 'Vigílalas todas', {}),
+    (['map-cruce'], 1.0, 1, '', '', F),
     (['gate-espiral'], 0.2, 2, 'JEFES CADA 5 OLEADAS', '', F),
-    (['gate-tridente'], 0.3, 2, '', 'Por cualquier entrada', F),
-    (['gate-zigzag'], 0.6, 1, '', '', F),
     (['articuno'], 0.3, 2, 'LEGENDARIOS CADA 10', '', F),
     (['zapdos'], 0.6, 1, '', '', F),
-    (['gyarados'], 0.6, 1, '', '', F),
-    (['wide'], 0.0, 3, '30 OLEADAS', 'Y luego, sin fin', {'speed': 1.25}),
-    (['mewtwo'], 0.0, 3, 'Y AL FINAL...', '', F),
-    (['victory'], 0.2, 2, '¡VICTORIA!', '', F),
-    (['lobby'], 0.0, 3, 'SOLO O CON AMIGOS', 'Salas con código y chat', {}),
-    (['coop'], 0.0, 5, 'JUNTOS', 'Cada uno sus torres · señales · chat', {}),
-    # Ráfaga, antes de que se calme la música.
-    (['zapdos'], 1.6, 1, '', '', FAST),
-    (['types'], 2.2, 1, '', '', FAST),
-    (['map-tridente'], 2.4, 1, '', '', FAST),
-    (['gyarados'], 1.4, 1, '', '', FAST),
-    (['articuno'], 1.8, 1, '', '', FAST),
-    (['map-cruce'], 2.2, 1, '', '', FAST),
-    (['mewtwo'], 2.4, 1, '', '', FAST),
-    (['wide'], 2.6, 1, '', '', FAST),
+    (['mewtwo'], 0.0, 2, 'Y AL FINAL...', '', F),
+    (['coop'], 0.6, 2, 'SOLO O CON AMIGOS', 'Salas con código · chat · señales', {}),
 ]
-CALM = [                                              # el pasaje tranquilo: la Arena, con calma
-    (None, 0, 2, 'Y AHORA...', '', {}),
-    (['arena-lobby'], 0.3, 3, 'UN MODO NUEVO', 'Hasta 8 jugadores en la sala', {'top': 1}),
-    (['maze-empty'], 0.2, 3, 'SIN CAMINO', 'Entran por arriba, salen por abajo', {}),
-    (['maze-build'], 0.2, 4, 'TÚ HACES EL LABERINTO', 'Cada torre es un obstáculo', {'mid': 1}),
-    (['maze-preview'], 0.0, 5, 'NUNCA LO CIERRES', 'Ves la ruta antes de construir', {'mid': 1}),
-    (['maze-pan'], 0.0, 4, 'CUANTO MÁS LARGO, MEJOR', 'Siempre van por el camino más corto', {'zoom': 0}),
-    (['arena-zoom'], 0.0, 5, 'CADA UNO, SU LABERINTO', '', {'zoom': 0}),
-    (['arena-wave'], 0.2, 3, 'LAS MISMAS OLEADAS', 'Para todos, cada 30 s', {}),
-    (None, 0, 3, '¿Y SI LES MANDAS ALGO?', '', {}),
-]
-ACT2 = [                                              # desde el golpe del regreso
-    (None, 0, 2, 'ARENA', 'Hasta 8 jugadores', {'flash': 1, 'big': 1}),
-    (['arena-send'], 0.0, 3, 'ENVÍA MONSTRUOS', 'Al carril que tú elijas', {}),
-    (['arena-incoming'], 0.6, 3, 'QUE LO SUFRAN ELLOS', '', F),
-    (['arena-snorlax'], 0.3, 3, '', 'Cada envío sube tus ingresos', {}),
-    (['arena-fly'], 0.2, 2, 'ALGUNOS VUELAN', 'Zubat ignora el laberinto', F),
-    (['arena-war'], 0.2, 3, 'TODOS CONTRA TODOS', '', F),
-    (['arena-hud'], 0.3, 2, 'VIGILA A TUS RIVALES', '', {}),
-    (['arena-fall'], 0.4, 3, 'CAEN UNO A UNO', '', F),
-    (['arena-spectate'], 0.6, 2, '', 'Fuera, miras a los demás', {}),
-    (['arena-duel-a', 'arena-duel-b'], 0.3, 4, 'HASTA QUE SÓLO QUEDA UNO', '', {'flash': 1, 'split': 1}),
-    (['arena-podium'], 0.4, 3, 'SÉ EL ÚLTIMO EN PIE', '', F),
-    (['arena-rank'], 0.3, 2, '', 'Ranking de victorias y podios', {}),
+CALM = []
+ACT2 = [                                              # la Arena
+    (None, 0, 2, 'ARENA', 'Todos contra todos · hasta 8', {'flash': 1, 'big': 1}),
+    (['arena-lobby'], 0.6, 1, '', 'Defensa → Arena', {'top': 1}),
+    (['maze-build'], 0.4, 3, 'SIN CAMINO', 'Tus torres son el laberinto', {'mid': 1}),
+    (['maze-preview'], 1.4, 2, 'NUNCA LO CIERRES', '', {'mid': 1}),
+    (['maze-pan'], 0.0, 4, 'ZIGZAG', 'Cuanto más largo, mejor', {'zoom': 0, 'speed': 0.6}),
+    (['arena-zoom'], 1.0, 3, 'CADA UNO, SU LABERINTO', '', {'zoom': 0}),
+    (['arena-send'], 0.6, 2, 'ENVÍA MONSTRUOS', 'Suben tus ingresos', {}),
+    (['arena-incoming'], 1.0, 2, 'A TUS RIVALES', '', F),
+    (['arena-fly'], 0.4, 1, '', 'Zubat vuela', F),
+    (['arena-war'], 0.4, 2, 'TODOS CONTRA TODOS', '', F),
+    (['arena-fall'], 0.4, 2, 'CAEN UNO A UNO', '', F),
+    (['arena-duel-a', 'arena-duel-b'], 0.6, 3, 'HASTA QUE SÓLO QUEDA UNO', '', {'flash': 1, 'split': 1}),
+    (['arena-podium'], 0.4, 2, 'SÉ EL ÚLTIMO EN PIE', '', F),
+    (['arena-rank'], 0.3, 1, '', 'Ranking de victorias y podios', {}),
 ]
 END_BARS = 4
 INTRO_SHOT = (['map-espiral'], 0.6, 0, '', '', {'fadein': 1.6, 'zoom': 0.03})
 if SONG_FILE:
-    # (Cada parte, justo lo que dura su trozo de la canción.)
-    for part, bars in ((HOOK + ACT1, SONG['loud']), (CALM, SONG['calm'])):
-        got = sum(it[2] for it in part)
-        if got != bars: sys.exit(f'una parte dura {got} compases y su trozo de la canción, {bars}')
+    # (Todo, con la parte intensa del principio: el final cae justo donde la canción se calma.)
+    got = sum(it[2] for it in HOOK + ACT1 + CALM + ACT2) + END_BARS
+    if got != SONG['loud']: sys.exit(f'el tráiler dura {got} compases y la parte intensa, {SONG["loud"]}')
 
 os.chdir(D)
 shutil.copy(os.path.join(ROOT, 'public/assets/fonts/PixelifyPS-700.ttf'), 'font.ttf')

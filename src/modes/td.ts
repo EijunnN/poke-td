@@ -2305,10 +2305,6 @@ export const TD = (() => {
         ctx.fillStyle = 'rgba(150, 118, 76, 0.9)'; ctx.fillRect(X(l.cx - MAZE_W / 2), Y(l.cy - MAZE_H / 2), MAZE_W * k, MAZE_H * k);
         ctx.fillStyle = '#ff5f6d'; ctx.fillRect(X(l.cx - MAZE_W / 2), Y(l.cy - MAZE_H / 2), MAZE_W * k, 3 * dpr);
         ctx.fillStyle = '#4fb4ff'; ctx.fillRect(X(l.cx - MAZE_W / 2), Y(l.cy + MAZE_H / 2) - 3 * dpr, MAZE_W * k, 3 * dpr);
-        ctx.strokeStyle = 'rgba(255, 240, 200, 0.9)'; ctx.lineWidth = Math.max(1.5, 8 * k);
-        ctx.beginPath();
-        l.route.forEach((ix, n) => { const c = cellCenter(ix); if (n) ctx.lineTo(X(l.cx + c.x), Y(l.cy + c.y)); else ctx.moveTo(X(l.cx + c.x), Y(l.cy + c.y)); });
-        ctx.stroke();
       }
       ctx.globalAlpha = 1;
     } else {
@@ -2684,7 +2680,6 @@ export const TD = (() => {
       for (let r = 1; r < rows; r++) { ctx.moveTo(x0, y0 + r * CELL); ctx.lineTo(x0 + MAZE_W, y0 + r * CELL); }
       ctx.stroke();
       ctx.strokeStyle = col; ctx.lineWidth = 4; ctx.strokeRect(x0, y0, MAZE_W, MAZE_H);
-      drawRoute(ctx, l, l.route, 'rgba(255, 240, 200, 0.55)', false);
       ctx.font = '800 ' + Math.round(fs) + 'px Pixelify,"Segoe UI",system-ui,sans-serif'; ctx.textAlign = 'center';
       ctx.fillStyle = col;
       ctx.fillText(memberName(l.uid) + (l.out ? ' · ' + G.I18n.t('fuera') : ' · ♥ ' + l.lives), l.cx, y0 - fs * 0.5);
@@ -2848,7 +2843,8 @@ export const TD = (() => {
       return m || null;
     },
     debugFast(on: boolean) { if (hosting()) { fast = !!on; sendState(); } },
-    debugHpMul(k: number) { hpMul = k > 0 ? k : 1; if (hpMul !== 1) tampered = true; },
+    /** La vida de los enemigos (×k). Marca la partida, salvo con `video` (el tráiler enseña el podio y el ranking). */
+    debugHpMul(k: number, video = false) { hpMul = k > 0 ? k : 1; if (hpMul !== 1 && !video) tampered = true; },
     canPlace(x: number, y: number) { return !whyNot(x, y); },
     /** La cámara a (x, y), como al pulsar en el minimapa (null: de vuelta al héroe). */
     debugCam(x: number | null, y = 0) { camFree = x == null ? null : { x, y }; },

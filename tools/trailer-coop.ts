@@ -214,18 +214,20 @@ function botTick([zone, total]: [number, number]) {
   if (low && info.money >= 80) td.debugUpgrade(low.i);
 }
 
-/** El laberinto en serpiente de un carril (td-maze.ts: 11×26 casillas de 48): filas de piezas con el hueco a un lado y al otro. */
+/** El laberinto de un experto (td-maze.ts: 11×26 casillas de 48): una fila de piezas cada dos, con el hueco a un lado
+ *  y al otro, para que bajen en zigzag de pared a pared; casi todo torres (los muros, entre ellas). */
+const MAZE_ROWS_PLAN = [3, 5, 7, 9, 11, 13, 15, 17, 19, 21];
 function mazePlan(l: { cx: number; cy: number }) {
   const out: { x: number; y: number; tower: boolean; k: number }[] = [];
-  [4, 8, 12, 16, 20].forEach((r, k) => {
+  MAZE_ROWS_PLAN.forEach((r, k) => {
     const gap = k % 2 ? 0 : 10;
-    for (let c = 0; c < 11; c++) if (c !== gap) out.push({ x: l.cx + (c + 0.5) * 48 - 264, y: l.cy + (r + 0.5) * 48 - 624, tower: c % 3 === 1, k: out.length });
+    for (let c = 0; c < 11; c++) if (c !== gap) out.push({ x: l.cx + (c + 0.5) * 48 - 264, y: l.cy + (r + 0.5) * 48 - 624, tower: c % 2 === 0, k: out.length });
   });
   return out;
 }
 
 /** En la página, en la Arena: levanta su laberinto (window.__plan) con muros y torres, luego mejora; con __war, envía monstruos. */
-function arenaBot(keep: boolean) {
+function arenaBot(doomed: string[]) {
   const w = window as any, td = G.TD;
   if (!td || !G.Game || G.Game.state !== 'playing' || !td.net || !td.net.arena) return;
   w.__bf = (w.__bf || 0) + 1;
@@ -233,13 +235,13 @@ function arenaBot(keep: boolean) {
   for (const e of G.EnemyMgr.all()) if ((e.chief || e.tdKind) && !e.__noFlash) { e.__noFlash = true; Object.defineProperty(e, 'flash', { get: () => 0, set() {} }); }
   if (w.__noPanel && td.info.selected != null) td.debugSelect(-1);
   const net = td.net;
-  // (Es un vídeo: nadie cae sin querer; el anfitrión les devuelve las vidas.)
-  if (keep) for (const l of net.lanes) if (!l.out && l.lives < 8) td.debugLaneLives(l.uid, 20);
+  // (Es un vídeo: nadie cae sin querer; el anfitrión les devuelve las vidas, salvo a los que el vídeo hace caer.)
+  for (const l of net.lanes) if (!l.out && l.lives < 8 && !doomed.includes(l.uid)) td.debugLaneLives(l.uid, 20);
   const me = net.lanes.find((l: any) => l.uid === net.me);
   if (!me || me.out) return;
-  if (w.__war && w.__bf % 30 === 0 && td.info.money >= 60) {
+  if (w.__war && w.__bf % 14 === 0 && td.info.money >= 120) {
     const rivals = net.lanes.filter((l: any) => !l.out && l.uid !== net.me);
-    if (rivals.length) td.debugSend(Math.floor(Math.random() * 3), rivals[Math.floor(Math.random() * rivals.length)].uid);
+    if (rivals.length) td.debugSend([0, 0, 1, 3][Math.floor(Math.random() * 4)], rivals[Math.floor(Math.random() * rivals.length)].uid);
   }
   if (w.__bf % 4 || w.__hold || !w.__plan) return;
   const info = td.info;
@@ -257,6 +259,9 @@ function arenaBot(keep: boolean) {
   const mine = net.towers.map((t: any, i: number) => ({ t, i })).filter((x: any) => x.t.owner === net.me && x.t.dex !== 185);
   const low = mine.sort((a: any, b: any) => a.t.level - b.t.level)[0];
   if (low && info.money >= 120) td.debugUpgrade(low.i);
+  // (Un experto no ahorra: dos mejoras por vuelta si le llega.)
+  const low2 = mine.sort((a: any, b: any) => a.t.level - b.t.level)[0];
+  if (low2 && info.money >= 400) td.debugUpgrade(low2.i);
 }
 
 async function main() {
@@ -445,9 +450,11 @@ async function main() {
     const plans = lanes.map(mazePlan);
     for (const [k, d] of all.entries()) await d.eval(p => { (window as any).__plan = p; }, plans[k]);
     await A.eval(() => { (window as any).__hold = true; });
-    for (const [k, l] of lanes.entries()) await A.eval(([u, n]) => G.TD.debugMoney(u, n), [l.uid, k ? 1800 : 4000] as [string, number]);
-    let noKeep = false;
-    rig.before = async d => d.eval(arenaBot, !noKeep);
+    for (const l of lanes) await A.eval(u => G.TD.debugMoney(u, 25000), l.uid);
+    // (Monstruos duros: con torres de experto, si no, no llegan a recorrer el zigzag.)
+    await A.eval(() => G.TD.debugHpMul(150, true));
+    const doomed: string[] = [];
+    rig.before = async d => d.eval(arenaBot, doomed);
     // (Los demás levantan su laberinto mientras tanto, fuera de plano.)
     await rig.run(40, 2);
     await A.eval(() => G.TD.debugCallWave());
@@ -467,13 +474,13 @@ async function main() {
       const shop = G.TD.shop.filter((c: any) => !c.trophy && c.dex !== 185);
       G.TD.debugBuy(dex || (p.tower ? shop[p.k % Math.min(5, shop.length)].dex : 185)); G.TD.debugPlace(p.x, p.y); if (G.TD.placing) G.TD.debugCancel();
     }, [p, dex || 0] as [typeof p, number]);
-    await rec('maze-build', 6.2, async i => { if (i >= 12 && i % 4 === 0 && k < 20) await put(plans[0][k++]); });
-    while (k < 20) await put(plans[0][k++]);
+    await rec('maze-build', 6.2, async i => { if (i >= 12 && i % 3 === 0 && k < 40) await put(plans[0][k++]); });
+    while (k < 40) await put(plans[0][k++]);
 
     // 3 · Nunca lo cierres: la vista previa de la ruta al colocar; tapar el último hueco, no se puede.
-    for (let c = 0; c < 8; c++) await put(plans[0][20 + c], 185);
+    for (let c = 0; c < 8; c++) await put(plans[0][40 + c]);
     await sendTo(B, 0, L.uid); await sendTo(C, 0, L.uid);
-    await cam(A, L.cx, rowY(L, 14), 1150);
+    await cam(A, L.cx, rowY(L, 12), 1150);
     await rig.run(20, 2);
     const at = (c: number, r: number) => cell(L, c, r);
     const ghost = (q: { x: number; y: number }) => A.eval(q => { if (!G.TD.placing) G.TD.debugBuy(185); G.TD.debugGhost(q.x, q.y); }, q);
@@ -484,20 +491,26 @@ async function main() {
       return true;
     };
     await rec('maze-preview', 7, async i => {
-      if (i === 0) await ghost(at(5, 17));
-      if (await glide(i, 12, 42, at(5, 17), at(8, 12))) return;
-      if (i === 52) { await A.eval(q => G.TD.debugPlace(q.x, q.y), at(8, 12)); await ghost(at(9, 12)); }
-      if (i === 72) { await A.eval(q => G.TD.debugPlace(q.x, q.y), at(9, 12)); await ghost(at(10, 12)); }
-      if (await glide(i, 132, 160, at(10, 12), at(4, 16))) return;
-      if (i === 172) await A.eval(q => G.TD.debugPlace(q.x, q.y), at(4, 16));
-      if (i > 180 && i % 4 === 0) { const p = plans[0].find((p, n) => n >= 30 && n < 40 && !(p.x === at(4, 16).x && p.y === at(4, 16).y) && !(p as any).used); if (p) { (p as any).used = true; await put(p, 185); } }
+      if (i === 0) await ghost(at(5, 14));
+      if (await glide(i, 12, 42, at(5, 14), at(8, 11))) return;
+      if (i === 52) { await A.eval(q => G.TD.debugPlace(q.x, q.y), at(8, 11)); await ghost(at(9, 11)); }
+      if (i === 72) { await A.eval(q => G.TD.debugPlace(q.x, q.y), at(9, 11)); await ghost(at(10, 11)); }
+      if (await glide(i, 132, 160, at(10, 11), at(4, 13))) return;
+      if (i === 172) await A.eval(q => G.TD.debugPlace(q.x, q.y), at(4, 13));
+      if (i > 180 && i % 3 === 0) { const p = plans[0].find((p, n) => n >= 50 && n < 60 && !(p.x === at(4, 13).x && p.y === at(4, 13).y) && !(p as any).used); if (p) { (p as any).used = true; await put(p); } }
     });
     await A.eval(() => { G.TD.debugCancel(); (window as any).__hold = false; });
 
     // (A termina su laberinto: los que faltan, con torres; y le llegan más monstruos.)
-    await rig.until('el laberinto de A', () => A.eval(u => G.TD.net.lanes.find((l: any) => l.uid === u).walls >= 48, L.uid), 900, 2);
-    for (const d of [B, C, D]) await sendTo(d, Math.floor(Math.random() * 2), L.uid);
-    await rig.run(60, 2);
+    await rig.until('el laberinto de A', () => A.eval(u => G.TD.net.lanes.find((l: any) => l.uid === u).walls >= 95, L.uid), 1500, 2);
+    // (Y lo mejora como un experto antes de enseñarlo.)
+    await A.eval(u => G.TD.debugMoney(u, 25000), L.uid);
+    await rig.run(200, 2);
+    // (Los expertos se mandan monstruos sin parar: siempre hay alguno recorriendo el zigzag.)
+    for (const l of lanes) await A.eval(u => G.TD.debugMoney(u, 25000), l.uid);
+    for (const d of all) await d.eval(() => { (window as any).__war = true; });
+    for (const d of [B, C, D]) { await sendTo(d, 0, L.uid); await sendTo(d, 1, L.uid); await sendTo(d, 3, L.uid); }
+    await rig.run(150, 2);
     // (Desde aquí A ya no gasta solo: lo que envía, lo envía el vídeo.)
     await A.eval(() => { (window as any).__hold = true; });
     // Sin paneles, para los planos de lejos.
@@ -584,7 +597,7 @@ async function main() {
     for (const d of all) await d.eval(() => { (window as any).__war = false; });
 
     // 11 · En tu carril, con el panel: las vidas de los rivales bajan (a Mia se le escapan).
-    noKeep = true;
+    doomed.push(lanes[3].uid);
     await cam(A, L.cx, rowY(L, 12), 1150);
     await rig.run(10, 2);
     await rec('arena-hud', 3.4, async i => {
@@ -604,6 +617,7 @@ async function main() {
     await rec('arena-spectate', 3.6, async i => { if (i === 40 || i === 75) await D.eval(() => G.TD.debugWatch(1)); }, D);
 
     // 14 · El duelo, en pantalla partida: Leo cae fuera de plano; Eijun contra Groudon y Lucía contra Kyogre, cada uno en su laberinto.
+    doomed.push(lanes[2].uid);
     await A.eval(u => G.TD.debugLaneLives(u, 0), lanes[2].uid);
     await rig.run(20, 2);
     await A.eval(() => { G.TD.debugBossAt(383, 0, true); G.TD.debugBossAt(382, 1, true); });
@@ -632,6 +646,7 @@ async function main() {
     rig.srv!.db.raw.run('DELETE FROM ranking_marked');
 
     // 15 · Lucía cae y Eijun gana: el podio. Y el ranking de la Arena.
+    doomed.push(lanes[1].uid);
     await A.eval(u => G.TD.debugLaneLives(u, 0), lanes[1].uid);
     await rig.until('se acaba la Arena', () => A.eval(() => G.Game.state === 'over'), 400);
     rig.before = null;
