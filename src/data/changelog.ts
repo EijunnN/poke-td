@@ -22,6 +22,9 @@ export const CHANGELOG: ChangelogEntry[] = [
   { d: '2026-10-18', title: ['Mapas de la Defensa y menos calor', 'Defense maps and less heat'], new: [
     ['Survivor: cuando pasas tu mejor tiempo (en solitario o en grupo) sale «¡Nuevo récord!» y empieza a sonar un tema nuevo, que sigue hasta el final aunque salga un jefe.',
      'Survivor: when you beat your best time (solo or in a group) you get “New record!” and a new theme starts playing, all the way to the end, even through bosses.'],
+  ], fix: [
+    ['En el móvil, a veces un trozo del suelo se quedaba negro el resto de la partida (sobre todo tras salir un momento a otra app). Ahora se vuelve a pintar.',
+     'On phones, a patch of the ground sometimes stayed black for the rest of the run (especially after briefly switching apps). It is now redrawn.'],
   ], chg: [
     ['Defensa: buscador por nombre o número al elegir tus favoritos y en la tienda de la partida (busca en toda la tienda, sin importar el filtro de tipo). Y un icono de chat nuevo.',
      'Defense: search by name or number when picking your favorites and in the in-game shop (it searches the whole shop, whatever the type filter). And a new chat icon.'],

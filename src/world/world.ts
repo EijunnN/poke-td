@@ -455,14 +455,21 @@ export const World = (() => {
   function chunkImage(cx: number, cy: number, bi = biome, cache = images) {
     const k = cx + ',' + cy;
     let img = cache.get(k);
-    if (img) return img;
+    // En el móvil, con poca memoria o tras irse a otra app, el navegador puede vaciar los lienzos
+    // guardados: el chunk se veía negro el resto de la partida. Si se ha perdido, se vuelve a pintar.
+    if (img && !img.getContext('2d')!.isContextLost?.()) return img;
     const at = (tx: number, ty: number) => KIND[terrainAt(tx, ty)];
     // Campo continuo de "tierra"; tiles.js lo muestrea en rejilla y lo
     // interpola por píxel para que las manchas tengan bordes orgánicos.
     const S = 6 * G.Tiles.T;
     const dirtField = (gx: number, gy: number) => fbm(gx / S, gy / S, seed + 303);
     img = G.Tiles.paintChunk(cx, cy, N, at, dirtField, bi, seed);
-    if (cache.size > MAX_IMAGES) cache.delete(cache.keys().next().value!);
+    cache.delete(k);
+    if (cache.size > MAX_IMAGES) {
+      // (Tamaño 0 al tirarlo: Safari libera la memoria del lienzo enseguida, no cuando le toque.)
+      const old = cache.keys().next().value!, cv = cache.get(old)!;
+      cache.delete(old); cv.width = cv.height = 0;
+    }
     cache.set(k, img);
     return img;
   }
@@ -613,6 +620,15 @@ export const World = (() => {
   }
 
   function biomeName() { return G.Tiles.BIOMES[biome].name; }
+
+  // Al volver a la pestaña o a la app se pinta el suelo de nuevo (por si el navegador vació los lienzos
+  // mientras tanto y no avisa, como Safari): sólo cuesta los chunks a la vista.
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) return;
+    images = new Map();
+    if (fade) fade.images = new Map();
+    G.Tiles.clearProps();
+  });
 
   /** Viñeta en coordenadas de pantalla (el degradado se guarda por tamaño). */
   let vigW = 0, vigH = 0, vigG: CanvasGradient | null = null;
