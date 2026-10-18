@@ -57,22 +57,142 @@ export const HUD = (() => {
     }
   }
 
+  // Cursor en cruz mientras se apunta con él. Si el HUD deja de dibujarse (menú, fin de partida),
+  // se quita solo en cuanto se mueve el ratón.
+  let crossAt = 0;
+  function crosshair() {
+    const cv = document.getElementById('game');
+    if (cv) cv.style.cursor = 'crosshair';
+    crossAt = performance.now();
+  }
+  addEventListener('mousemove', () => {
+    if (!crossAt || performance.now() - crossAt < 250) return;
+    crossAt = 0;
+    const cv = document.getElementById('game');
+    if (cv) cv.style.cursor = '';
+  });
+
+  // ---------------- ficha de un movimiento (ratón sobre la barra) ----------------
+
+  /** Parte `text` en líneas que quepan en `w` px con la fuente `font`. */
+  function wrap(ctx: CanvasRenderingContext2D, text: string, w: number, font: string) {
+    ctx.font = font;
+    const out: string[] = [];
+    let cur = '';
+    for (const word of text.split(' ')) {
+      const t = cur ? cur + ' ' + word : word;
+      if (cur && ctx.measureText(t).width > w) { out.push(cur); cur = word; } else cur = t;
+    }
+    if (cur) out.push(cur);
+    return out;
+  }
+
+  /** Movimientos que lanzan varias cosas por disparo: el daño de la ficha es el de cada una. */
+  const MULTI = ['projectile', 'boomerang', 'nova', 'cone', 'orbit', 'meteor', 'mine'];
+
+  /**
+   * Una ficha: nombre, tipo, nivel, descripción, daño y recarga (ya con tus mejoras), la próxima
+   * mejora y, si toca, la evolución. Con `draw` en false sólo mide. Devuelve el alto.
+   * (El texto se traduce aquí antes de partirlo en líneas; el lienzo no traduce a trozos.)
+   */
+  function tipCard(ctx: CanvasRenderingContext2D, m: MoveInstance, pl: Player, x: number, y: number, w: number, draw: boolean) {
+    const col = G.U.TYPE_COLOR[m.type];
+    const num = (v: number) => (Math.round(v * 10) / 10).toString().replace('.', G.I18n.lang === 'es' ? ',' : '.');
+    const text = (s: string, px: number, py: number, font: string, fill: string, align: CanvasTextAlign = 'left') => {
+      if (!draw) return;
+      ctx.font = font; ctx.fillStyle = fill; ctx.textAlign = align;
+      ctx.fillText(s, px, py);
+    };
+    const y0 = y;
+
+    if (draw) G.Icons.draw(ctx, 'move:' + m.id, x, y, 26);
+    // (los tipos oscuros apenas se leen como texto: el nombre va en blanco y el tipo, con un punto de su color)
+    text(m.name, x + 32, y + 12, F(800, 12), '#f4f8ff');
+    if (draw) { ctx.fillStyle = col; ctx.fillRect(x + 32, y + 18, 6, 6); }
+    text(G.T(G.U.TYPE_NAME[m.type]), x + 42, y + 24, F(600, 9), '#8fa3c4');
+    text(G.I18n.f('Nv. {x}', m.lvl + '/' + m.def.maxLvl!), x + w, y + 12, F(700, 10), '#ffcb3d', 'right');
+    y += 36;
+
+    const lines = (s: string, font: string, fill: string, lh: number) => {
+      for (const ln of wrap(ctx, s, w, font)) { text(ln, x, y, font, fill); y += lh; }
+    };
+    lines(G.T(m.desc), F(600, 10), '#c9d6ee', 13);
+    y += 3;
+
+    // daño y recarga con tus mejoras y objetos
+    const stats: [string, string][] = [];
+    if (m.dmg != null) stats.push([G.T('Daño'), Math.round(m.dmg * pl.atk) + (MULTI.includes(m.kind) && (m.count || 0) > 1 ? ' ×' + m.count : '')]);
+    if (m.kind !== 'orbit') stats.push([G.T('Recarga'), num(m.cd * pl.cdMul) + ' s']);
+    stats.forEach(([lab, val], i) => {
+      const sx = x + i * (w / 2);
+      text(lab, sx, y + 9, F(600, 9), '#8fa3c4');
+      ctx.font = F(600, 9);
+      const lw = ctx.measureText(lab).width;
+      text(val, sx + lw + 5, y + 9, F(800, 11), '#ffffff');
+    });
+    if (stats.length) y += 20;
+
+    const up = G.Moves.nextUpText(m);
+    if (up) lines(G.T('Siguiente') + ': ' + G.T(up), F(600, 9), '#9fe3a8', 12);
+    const ev = G.Moves.evoInfo(m, pl.statsTaken);
+    if (ev) {
+      lines(G.I18n.f('Evoluciona a {x}', ev.name), F(800, 10), '#ffd23f', 13);
+      lines(ev.ready ? G.T('Condición cumplida: saldrá al subir de nivel') : G.I18n.f('Necesita la mejora {x}', ev.needName),
+            F(600, 9), ev.ready ? '#9fe3a8' : '#8fa3c4', 12);
+    }
+    return y - y0;
+  }
+
+  /**
+   * La ficha de un hueco de la barra: una sola, o en cuadrícula de 2 columnas si es un vínculo.
+   * Va centrada sobre el hueco y no se sale de la pantalla.
+   */
+  function drawTip(ctx: CanvasRenderingContext2D, w: number, g: MoveInstance[], pl: Player, cx: number, top: number) {
+    const CW = 210, PAD = 10, GAPX = 14, GAPY = 12;
+    const cols = Math.min(2, g.length), rows = Math.ceil(g.length / 2);
+    const hs = g.map(m => tipCard(ctx, m, pl, 0, 0, CW, false));
+    const rowH = Array.from({ length: rows }, (_, r) => Math.max(...hs.slice(r * 2, r * 2 + 2)));
+    const bw = cols * CW + (cols - 1) * GAPX + PAD * 2;
+    const bh = rowH.reduce((a, b) => a + b, 0) + (rows - 1) * GAPY + PAD * 2;
+    const bx = G.U.clamp(cx - bw / 2, 8, Math.max(8, w - bw - 8)), by = Math.max(8, top - 10 - bh);
+    ctx.save();
+    roundRect(ctx, bx, by, bw, bh, 10);
+    ctx.fillStyle = 'rgba(8,14,26,.95)'; ctx.fill();
+    ctx.lineWidth = 1.5; ctx.strokeStyle = g.length > 1 ? '#ff8ad8' : G.U.TYPE_COLOR[g[0].type]; ctx.stroke();
+    let ry = by + PAD;
+    g.forEach((m, i) => {
+      const r = Math.floor(i / 2);
+      if (i % 2 === 0 && r > 0) ry += rowH[r - 1] + GAPY;
+      tipCard(ctx, m, pl, bx + PAD + (i % 2) * (CW + GAPX), ry, CW, true);
+    });
+    ctx.restore();
+  }
+
   function draw(ctx: CanvasRenderingContext2D, w: number, h: number, pl: Player, st: HudState) {
     ctx.save();
     ctx.textBaseline = 'alphabetic';
     G.Touch.clearButtons();
     const touch = G.Touch.active;
+    if (pl.aimPt && !pl.dead) crosshair();
 
     // ---------- barra de experiencia (borde superior) ----------
     // (La Defensa no tiene experiencia: ni barra ni nivel.)
     if (!st.noLevel) {
       const xpF = pl.xp / pl.xpNext;
       ctx.fillStyle = 'rgba(0,0,0,.5)';
-      ctx.fillRect(0, 0, w, 7);
+      ctx.fillRect(0, 0, w, 12);
       const g = ctx.createLinearGradient(0, 0, w, 0);
       g.addColorStop(0, '#4fd1ff'); g.addColorStop(1, '#a98bff');
       ctx.fillStyle = g;
-      ctx.fillRect(0, 0, w * G.U.clamp(xpF, 0, 1), 7);
+      ctx.fillRect(0, 0, w * G.U.clamp(xpF, 0, 1), 12);
+      // Números sobre la barra: "24 / 62 XP · 38%".
+      ctx.font = F(800, 9);
+      ctx.textAlign = 'center';
+      ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,.75)';
+      const xpTxt = Math.floor(pl.xp) + ' / ' + pl.xpNext + ' XP · ' + Math.floor(G.U.clamp(xpF, 0, 1) * 100) + '%';
+      ctx.strokeText(xpTxt, w / 2, 9);
+      ctx.fillStyle = '#fff';
+      ctx.fillText(xpTxt, w / 2, 9);
     }
 
     // ---------- vida + nivel ----------
@@ -294,6 +414,9 @@ export const HUD = (() => {
     const sy = h - S - 18 - (touch ? Math.min(28, G.Touch.safeArea().bottom) : 0);
     const BOND = '#ff8ad8';
     const cdOf = (m: MoveInstance) => m.kind === 'orbit' ? 0 : G.U.clamp(m.t / (m.cd * pl.cdMul), 0, 1);
+    // Ficha del movimiento bajo el ratón (sólo con ratón: en táctil no hay "encima").
+    const mo = G.Input.mouse();
+    let tip: { g: MoveInstance[]; cx: number; top: number } | null = null;
 
     for (let i = 0; i < n; i++) {
       const g: MoveInstance[] = pl.slots[i] || [];
@@ -305,6 +428,9 @@ export const HUD = (() => {
       // Tocar (o hacer clic en) un icono activa ese movimiento.
       if (m) G.Touch.addButton(x, y, S, S, () => { if (G.Game.state === 'playing' && pl.active !== i) { pl.setActive(i); G.Audio.sfx('click'); } }, GAP / 2 + 3);
       const col = m ? G.U.TYPE_COLOR[m.type] : '#4a5468';
+      if (m && !touch && mo.over && mo.x >= x - GAP / 2 && mo.x <= x + S + GAP / 2 && mo.y >= sy - 8 && mo.y <= sy + S + 8) {
+        tip = { g, cx: x + S / 2, top: Math.min(y, sy) - 14 };
+      }
 
       // fondo
       roundRect(ctx, x, y, S, S, 12);
@@ -410,6 +536,8 @@ export const HUD = (() => {
       ctx.fillRect(bx + 13, by + 11, 5, 18); ctx.fillRect(bx + 22, by + 11, 5, 18);
       G.Touch.addButton(bx, by, bs, bs, () => G.Game.togglePause(), 8);
     }
+
+    if (tip) drawTip(ctx, w, tip.g, pl, tip.cx, tip.top);
 
     // pista de controles
     if (st.time < 14) {

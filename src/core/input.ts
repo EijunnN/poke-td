@@ -4,6 +4,9 @@ export const Input = (() => {
   const down = new Set<string>();
   const pressed = new Set<string>();   // se limpia cada frame
   let mx = 0, my = 0, mdown = false;
+  let over = false;          // ¿el ratón está encima del lienzo del juego (y no de un menú)?
+  let mouseMode = false;     // el ratón se ha movido y el mando no lo ha tomado después
+  let cv: HTMLElement | null = null;
 
   const MOVE_KEYS = {
     up: ['keyw', 'arrowup'], down: ['keys', 'arrowdown'],
@@ -29,7 +32,11 @@ export const Input = (() => {
   });
   addEventListener('keyup', e => down.delete(code(e)));
   addEventListener('blur', () => { down.clear(); });
-  addEventListener('mousemove', e => { mx = e.clientX; my = e.clientY; });
+  addEventListener('mousemove', e => {
+    mx = e.clientX; my = e.clientY; mouseMode = true;
+    over = (e.target as HTMLElement | null)?.id === 'game';
+  });
+  document.documentElement.addEventListener('mouseleave', () => { over = false; });
   addEventListener('mousedown', () => mdown = true);
   addEventListener('mouseup', () => mdown = false);
 
@@ -39,7 +46,7 @@ export const Input = (() => {
       const t = G.Touch && G.Touch.vector();
       if (t && (t[0] || t[1])) return t;
       const p = G.Gamepad && G.Gamepad.vector();
-      if (p) return p;
+      if (p) { mouseMode = false; return p; }
       let x = 0, y = 0;
       if (MOVE_KEYS.left.some(k => down.has(k))) x -= 1;
       if (MOVE_KEYS.right.some(k => down.has(k))) x += 1;
@@ -50,7 +57,15 @@ export const Input = (() => {
     held(c: string) { return down.has(c); },
     /** true sólo en el frame en que se pulsó. */
     tap(c: string) { return pressed.has(c); },
-    mouse() { return { x: mx, y: my, down: mdown }; },
+    mouse() { return { x: mx, y: my, down: mdown, over }; },
+    /** Dónde apunta el ratón en el mundo; null si no se juega con ratón (táctil, mando o aún sin moverlo). */
+    mouseWorld() {
+      if (!mouseMode || G.Touch.active) return null;
+      cv = cv || document.getElementById('game');
+      if (!cv) return null;
+      const r = cv.getBoundingClientRect(), cam = G.Camera;
+      return { x: cam.left() + (mx - r.left) / cam.scale, y: cam.top() + (my - r.top) / cam.scale };
+    },
     endFrame() {
       pressed.clear();
       // El mando se lee aquí: lo que pulse llega como teclas en el fotograma siguiente.

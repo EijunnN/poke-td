@@ -13,6 +13,7 @@ import { G } from '../g';
  *   chat        'all' | 'quick' | 'off'           chat de la sala: todo, sólo frases rápidas o nada
  *   chatFilter  true/false                        tachar palabrotas y enlaces del chat (sólo lo que ves tú)
  *   gachaSkip   true/false                        el gacha enseña el resultado sin la tragaperras
+ *   aimCursor   true/false                        PC: apuntar hacia el cursor en vez de al enemigo más cercano
  *
  *   G.Settings.get('quality')  ·  G.Settings.set('fps', true)  ·  G.Settings.on(fn)
  *   G.Settings.fx   nivel efectivo 0 (bajo) .. 2 (alto), ya resuelto el 'auto'
@@ -28,11 +29,12 @@ export interface SettingsData {
   chat: 'all' | 'quick' | 'off';
   chatFilter: boolean;
   gachaSkip: boolean;
+  aimCursor: boolean;
 }
 
 export const Settings = (() => {
   const KEY = 'ps.settings';
-  const DEF: SettingsData = { quality: 'auto', dmgNumbers: true, calm: false, fps: false, stick: 1, stickMode: 'follow', res: 'high', chat: 'all', chatFilter: false, gachaSkip: false };
+  const DEF: SettingsData = { quality: 'auto', dmgNumbers: true, calm: false, fps: false, stick: 1, stickMode: 'follow', res: 'high', chat: 'all', chatFilter: false, gachaSkip: false, aimCursor: false };
   let s: SettingsData = Object.assign({}, DEF);
   try { Object.assign(s, JSON.parse(localStorage.getItem(KEY) || '{}')); } catch (e) { /* nada */ }
   const fns = new Set<(k: string, v: unknown) => void>();

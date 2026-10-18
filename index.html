@@ -395,7 +395,9 @@
     <div class="gen-tabs" id="dex-gens"></div>
     <div class="split" style="margin-top:8px">
       <div>
+        <div class="dex-tools" id="dex-tools"></div>
         <div class="filters" id="dex-filters"></div>
+        <div class="dex-adv hidden" id="dex-adv"></div>
         <div class="grid" id="dex-grid"></div>
       </div>
       <div class="panel" id="dex-detail"></div>
@@ -486,11 +488,19 @@
 </section>
 
 <section id="scr-pause" class="scr dim hidden">
-  <div class="box center" style="width:min(460px,100%)">
+  <div class="box center pause-box">
     <h2>Pausa</h2>
     <p class="sub kbd-hint"><kbd>WASD</kbd> moverse · <kbd>1</kbd>–<kbd>4</kbd> movimiento · <kbd>Q</kbd>/<kbd>E</kbd> ciclar · <kbd>Esc</kbd> pausa</p>
     <p class="sub touch-hint">Arrastra el dedo para moverte · toca un ataque para cambiarlo</p>
     <p id="pause-coop" class="note hidden">Partida en grupo: el juego sigue mientras estás aquí.</p>
+    <div id="pause-info" class="hidden">
+      <div id="pause-tabs" class="pz-tabs">
+        <button type="button" class="chip on" data-tab="run">Resumen</button>
+        <button type="button" class="chip" data-tab="stats">Estadísticas</button>
+        <button type="button" class="chip" data-tab="dmg">Daño</button>
+      </div>
+      <div id="pause-body" class="pz-body"></div>
+    </div>
     <div id="pause-sound" class="sound-inline"></div>
     <div class="row" style="justify-content:center">
       <button id="btn-resume" class="btn gold">Continuar</button>

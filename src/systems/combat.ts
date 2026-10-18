@@ -54,6 +54,10 @@ export const Combat = (() => {
     if (pl.dead) return;
     // Vínculos: todos los movimientos del hueco activo, cada uno con su recarga.
     for (const m of pl.activeGroup()) tickMove(dt, pl, asMove(m), now);
+    // Los demás huecos se recargan en segundo plano, pero sólo hasta el 35%: el resto,
+    // cuando vuelvas a ellos (así, cambiar y volver enseguida no acorta la recarga).
+    for (const g of pl.slots) if (g !== pl.activeGroup()) for (const m of g)
+      if (m.kind !== 'orbit' && m.t > m.cd * 0.35) m.t = Math.max(m.cd * 0.35, m.t - dt);
   }
 
   function tickMove(dt: number, pl: Player, m: Move, now: number) {
@@ -62,7 +66,8 @@ export const Combat = (() => {
     m.t -= dt;
     if (m.t > 0) return;
     // Los ataques que necesitan blanco esperan a tenerlo (no gastes animación al aire).
-    if (needsTarget(m) && !(pl.target && G.U.dist(pl.x, pl.y, pl.target.x, pl.target.y) <= reach(m))) {
+    // (Apuntando con el cursor salen sin blanco, hacia él; la cadena sí necesita un enemigo cerca.)
+    if (needsTarget(m) && !(pl.aimPt && m.kind !== 'chain') && !(pl.target && G.U.dist(pl.x, pl.y, pl.target.x, pl.target.y) <= reach(m))) {
       m.t = 0.05;
       return;
     }
@@ -109,7 +114,7 @@ export const Combat = (() => {
   }
 
   function payload(m: Move) {
-    return { burn: m.burn || 0, poison: m.poison || 0, slow: m.slow || 0, knock: m.knock || 0, mtype: m.type };
+    return { burn: m.burn || 0, poison: m.poison || 0, slow: m.slow || 0, knock: m.knock || 0, mtype: m.type, mid: m.id };
   }
 
   /** Tabla de tipos × clima para un ataque de tipo `type` contra `e`. */
@@ -298,12 +303,21 @@ export const Combat = (() => {
   function meteors(pl: Player, m: Move) {
     const col = G.U.TYPE_COLOR[m.type], vis = G.VFX.forMove(m);
     const n = Math.max(1, m.count | 0);
-    const near = G.EnemyMgr.queryCircle(pl.x, pl.y, reach(m)).filter(e => !e.dead);
-    G.U.shuffle ? G.U.shuffle(near) : near.sort(() => Math.random() - 0.5);
+    let near = G.EnemyMgr.queryCircle(pl.x, pl.y, reach(m)).filter(e => !e.dead);
+    // Con el cursor caen cerca de él (sin pasar del alcance), primero sobre los enemigos de allí.
+    const pt = pl.aimPt, rch = reach(m);
+    let cx = pl.x, cy = pl.y;
+    if (pt) {
+      const d = G.U.dist(pl.x, pl.y, pt.x, pt.y), k = d > rch ? rch / d : 1;
+      cx = pl.x + (pt.x - pl.x) * k; cy = pl.y + (pt.y - pl.y) * k;
+      near = near.filter(e => G.U.dist2(e.x, e.y, cx, cy) < 140 * 140)
+                 .sort((a, b) => G.U.dist2(a.x, a.y, cx, cy) - G.U.dist2(b.x, b.y, cx, cy));
+    } else G.U.shuffle ? G.U.shuffle(near) : near.sort(() => Math.random() - 0.5);
+    const sx = pt ? 60 : 140, sy = pt ? 48 : 110;
     for (let i = 0; i < n; i++) {
       const e = near[i];
-      const x = e ? e.x + G.U.rand(-8, 8) : pl.x + G.U.rand(-140, 140);
-      const y = e ? e.y + G.U.rand(-6, 6) : pl.y + G.U.rand(-110, 110);
+      const x = e ? e.x + G.U.rand(-8, 8) : cx + G.U.rand(-sx, sx);
+      const y = e ? e.y + G.U.rand(-6, 6) : cy + G.U.rand(-sy, sy);
       fields.push({ kind: 'meteor', owner: pl, ghost, m, col, vis, x, y, t: -i * 0.09, fall: 0.5, r: m.radius, dmg: m.dmg * pl.atk });
     }
   }
@@ -562,6 +576,7 @@ export const Combat = (() => {
     e.hurt(dmg, col, dx, dy, knock, crit ? 'crit' : G.Types.label(G.Types.mult(m.type, e.types)));
     if (!ghost) pl.onDealt(dmg);
     pl.dmgDealt += dmg;
+    G.Recount.add(m.id, dmg);
     if (m.burn) e.applyBurn(m.burn);
     if (m.poison) e.applyPoison(m.poison);
     if (m.slow) e.applySlow(m.slow);
@@ -670,6 +685,7 @@ export const Combat = (() => {
                crit ? 'crit' : p.mtype ? G.Types.label(G.Types.mult(p.mtype, e.types)) : null);
         if (Math.random() < 0.5) G.FX.sp('impact', p.vis ? p.vis.pal : 'normal', e.x, e.y - e.bodyH * 0.5, { life: 0.12, scale: 1 });
         pl.dmgDealt += p.dmg * k;
+        G.Recount.add(p.mid, p.dmg * k);
         pl.onDealt(p.dmg * k);
         if (p.burn) e.applyBurn(p.burn);
         if (p.poison) e.applyPoison(p.poison);
@@ -700,7 +716,7 @@ export const Combat = (() => {
     }
   }
 
-  return { tick, resolve, ghostCast, ghostOrbit, updateFields, drawGroundFields, drawAirFields, clearFields,
+  return { tick, reach: (m: MoveInstance) => reach(asMove(m)), resolve, ghostCast, ghostOrbit, updateFields, drawGroundFields, drawAirFields, clearFields,
            get fieldCount() { return fields.length; } };
 })();
 G.Combat = Combat;

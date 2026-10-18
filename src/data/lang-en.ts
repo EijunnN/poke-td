@@ -292,6 +292,11 @@ G.I18n.add({
   // colección
   'Volver': 'Back', 'Todos': 'All', 'Tengo': 'Owned', 'Me faltan': 'Missing', 'Legendaria': 'Legendary', 'Élite': 'Elite', 'Legendario': 'Legendary', 'Épica': 'Epic', 'Rara': 'Rare',
   'Poco común': 'Uncommon', 'Común': 'Common', 'Ninguno con este filtro.': 'None with this filter.', 'Ataque': 'Attack', 'Vida': 'HP', 'Velocidad': 'Speed',
+  // colección: buscador, filtros, orden y favoritos
+  'Todas': 'All', 'Buscar por nombre o número…': 'Search by name or number…', 'Buscar': 'Search', 'Ordenar por': 'Sort by',
+  'Número': 'Number', 'Recién conseguidos': 'Recently obtained', 'Rareza': 'Rarity', 'Tipo': 'Type', 'Filtros': 'Filters', 'Limpiar': 'Clear',
+  'Mostrando {x} de {x}': 'Showing {x} of {x}', 'Favorito': 'Favorite', 'Quitar de favoritos': 'Remove from favorites', 'Marcar como favorito': 'Mark as favorite',
+  'Aún no tienes favoritos: marca la estrella en la ficha de un Pokémon.': 'You have no favorites yet: tap the star on a Pokémon\'s card.',
   'Empieza con': 'Starts with', 'Es tu compañero': 'It\'s your partner', 'Elegir de compañero{x}': 'Choose as partner{x}', '(shiny)': '(shiny)',
   'Aún no lo tienes.': 'You don\'t have it yet.', 'Consíguelo en el banner de': 'Get it from the banner of', 'o derrotándolo cuando salga shiny.': 'or by defeating it when it shows up shiny.',
   '{x} es ahora tu compañero': '{x} is now your partner', '{x} shiny es ahora tu compañero': 'Shiny {x} is now your partner',
@@ -635,5 +640,12 @@ G.I18n.add({
   'La contraseña nueva debe tener al menos 4 caracteres.': 'The new password must be at least 4 characters long.',
   'La contraseña nueva es demasiado larga.': 'The new password is too long.',
   'Sesión caducada: vuelve a entrar.': 'Session expired: please log in again.',
-  'Contraseña incorrecta.': 'Wrong password.'
+  'Contraseña incorrecta.': 'Wrong password.',
+
+  // ---------------- ficha de movimiento (HUD) y apuntado con el cursor ----------------
+  'Nv. {x}': 'Lv. {x}', 'Daño': 'Damage', 'Recarga': 'Cooldown', 'Siguiente': 'Next',
+  'Evoluciona a {x}': 'Evolves into {x}', 'Necesita la mejora {x}': 'Needs the {x} upgrade',
+  'Condición cumplida: saldrá al subir de nivel': 'Condition met: it will show up when you level up',
+  'Apuntar hacia el cursor (solo PC)': 'Aim at the cursor (PC only)',
+  'Los ataques salen hacia donde apunta el ratón, en vez de al enemigo más cercano. Con mando o en móvil no cambia nada.': 'Attacks go where the mouse points instead of at the nearest enemy. With a gamepad or on mobile nothing changes.'
 });

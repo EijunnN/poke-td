@@ -1,5 +1,6 @@
 import { G } from '../g';
 import type { MissionBook } from '../data/missions';
+import { DexQuery } from '../data/dex-query';
 /* ============ db.ts — base de datos: servidor propio o local ============
  * TODO el acceso a datos persistentes pasa por aquí. El resto del juego sólo
  * usa G.DB.*.
@@ -67,6 +68,7 @@ export interface SaveData {
   pupgDone?: boolean;                    // migración v2 -> v3 hecha
   pbind?: Record<string, (string | null)[]>;   // atajos de movimientos por Pokémon
   pban?: Record<string, string[]>;       // movimientos vetados por Pokémon
+  dexFav?: Record<string, number>;       // favoritos de la colección: dex -> momento del cambio (negativo = quitado; ver data/dex-query.ts)
   [extra: string]: any;                  // campos que añaden otros módulos
 }
 
@@ -199,6 +201,8 @@ export const DB = (() => {
         s.pban[d] = [...new Set(l.filter(id => typeof id === 'string' && (!G.Moves || G.Moves.BY_ID[id])))].slice(0, 3);
       }
     } else s.pban = {};
+    // Favoritos de la colección: opcional (las partidas viejas no lo tienen); lo que haya, bien formado.
+    if (s.dexFav !== undefined) s.dexFav = DexQuery.cleanFavs(s.dexFav, d => !G.DEX_BY || !!G.DEX_BY[d]);
     if (G.Upgrades) for (const d of Object.keys(s.pupg || {})) {
       const u = s.pupg[d];
       if (!u || typeof u !== 'object') { delete s.pupg[d]; continue; }
@@ -214,6 +218,7 @@ export const DB = (() => {
    * conexión y la de la nube). Nunca se pierde nada conseguido:
    *   - colecciones (owned, shiny): unión
    *   - mejoras y estadísticas: el máximo de cada una
+ *   - favoritos de la colección: de cada Pokémon, el cambio más reciente
    *   - monedas, compañero, pity...: los de la versión más reciente
    * Es idempotente: fusionar dos veces da lo mismo.
    */
@@ -238,6 +243,8 @@ export const DB = (() => {
       for (const k in older.pupg[d]) mine[k] = Math.max(mine[k] || 0, older.pupg[d][k]);
     }
     r.pupgDone = r.pupgDone || older.pupgDone;
+    // Favoritos de la colección: de cada Pokémon, el cambio más reciente (no se tocan si ninguna copia los tiene).
+    if (r.dexFav || older.dexFav) r.dexFav = DexQuery.mergeFavs(r.dexFav, older.dexFav);
     // Lo conseguido nunca se pierde: unión de legendarios, arenas, objetos, logros...
     for (const coll of ['legends', 'arenas', 'itemsFound', 'evoMoves', 'ach']) {
       r[coll] = r[coll] || {};

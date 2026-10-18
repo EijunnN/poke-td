@@ -107,6 +107,7 @@ export const SettingsUI = (() => {
         + `<div class="set-row"><div class="grow"><b>Posición del joystick</b><small>Sigue al dedo: aparece donde tocas. Fijo: siempre abajo a la izquierda.</small></div></div>`
         + choice('stickMode', [['follow', 'Sigue al dedo'], ['fixed', 'Fijo']])
         + section('En PC')
+        + toggle('aimCursor', 'Apuntar hacia el cursor (solo PC)', 'Los ataques salen hacia donde apunta el ratón, en vez de al enemigo más cercano. Con mando o en móvil no cambia nada.')
         + `<div class="keys">
              <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> o flechas</div><span>moverse</span>
              <div><kbd>1</kbd>–<kbd>4</kbd> o clic en el icono</div><span>elegir ataque</span>

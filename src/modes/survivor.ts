@@ -64,6 +64,8 @@ export const Survivor = (() => {
     G.EnemyMgr.clear();
     G.Pickups.clear();
     G.Spawner.reset();
+    G.Recount.reset();
+    crewSnap = [];
     G.Rift.reset();
     G.Judgment.reset();
     G.Events.reset();
@@ -108,8 +110,11 @@ export const Survivor = (() => {
     Run.state = 'playing';
   }
 
+  /** El daño del grupo al irte (al salir de la partida ya no se puede preguntar, y el resumen lo enseña). */
+  let crewSnap: ReturnType<typeof G.Coop.damage> = [];
+
   function quitRun() {
-    if (G.Coop.active) G.Coop.leave();
+    if (G.Coop.active) { crewSnap = G.Coop.damage(); G.Coop.leave(); }
     endRun(false);
   }
 
@@ -259,6 +264,7 @@ export const Survivor = (() => {
     const coop = !!pl.uid;                    // sólo las partidas en grupo le ponen uid
     const wasHost = !!pl.coopHost;
     const team = coop ? G.Coop.members.slice() : [];
+    const crew = G.Coop.active ? G.Coop.damage() : crewSnap;
     if (G.Coop.active) G.Coop.end();
     if (coop) G.Social.setPlaying(false);
     Run.state = 'over';
@@ -303,7 +309,7 @@ export const Survivor = (() => {
     const back = () => { pl = null!; G.Flow.afterRun(); };
     G.RunUI.showOver({
       dead, time, level: pl.level, kills: pl.kills, bosses: pl.bosses, coins, record, t1: pl.t1, t10: pl.t10, judge,
-      moves: pl.moves, caught,
+      moves: pl.moves, caught, dmg: G.StatsUI.damageReport(pl, time, crew),
       breakdown: Object.entries(parts).filter(([, v]) => v).map(([k, v]) => `${k} ${v}`).join(' · ') +
                  (mul > 1 ? ` · ×${mul.toFixed(2)} Fortuna` : '')
     }, back, G.Flow.retry(coop, dead, back, () => { pl = null!; G.Flow.play(); }));

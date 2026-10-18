@@ -476,6 +476,13 @@ describe('cooperativo', () => {
     await B.eval(() => { const p = G.Game.player; p.x -= 500; });
     await waitPage(A, 'A ve moverse a B', () => { const m = G.Coop.mates[0]; return m && m.pl.net.x < -300; });
 
+    // Medidor de daño: cada uno manda su total en su estado y los demás lo ven en la tabla del grupo.
+    await A.eval(() => { G.Game.player.dmgDealt = 4321; });
+    await B.eval(() => { G.Game.player.dmgDealt = 1234; });
+    await waitPage(A, 'A ve el daño de B', () => G.Coop.damage().some((r: any) => !r.me && r.dmg === 1234));
+    await waitPage(B, 'B ve el daño de A', () => G.Coop.damage().some((r: any) => !r.me && r.dmg === 4321));
+    expect(await A.eval(() => G.Coop.damage()[0].me)).toBe(true);                  // (tú primero)
+
     // Los golpes del invitado llegan al anfitrión, que los aplica (un daño marcado, 7,77).
     const target = await B.eval(() => {
       const e = G.EnemyMgr.all().find((x: any) => x.remote && !x.dead && !x.boss);
@@ -519,6 +526,30 @@ describe('cooperativo', () => {
     await B.eval(() => G.Game.player.revive(1));
     await rig.run(5);
     expect(await B.eval(() => G.Game.player.dead)).toBe(false);
+    expect(await A.allErrors()).toEqual([]);
+    expect(await B.allErrors()).toEqual([]);
+  });
+
+  test('un jefe lejos del invitado: su copia sigue al jefe del anfitrión (la barra y la flecha no apuntan a donde ya no está)', async () => {
+    // B se va lejos (más de lo que el anfitrión le manda de enemigos) y A tiene un jefe cerca.
+    await B.eval(() => { const p = G.Game.player; p.x += 3000; });
+    await rig.run(10);
+    const id: number = await A.eval(() => {
+      const pl = G.Game.player;
+      const e = new G.Enemy(G.Enemies.BOSSES[0], pl.x + 300, pl.y, G.Enemies.bossScale(180), true);
+      G.EnemyMgr.add(e);
+      return e.id;
+    });
+    await waitPage(B, 'B tiene la copia del jefe', i => { const e = G.EnemyMgr.get(i); return !!e && e.remote && e.boss; }, id);
+    // El jefe se mueve en A, a más de 950 px de B: la copia de B tiene que seguirle.
+    await A.eval(i => { const e = G.EnemyMgr.get(i); e.x += 700; e.y += 200; }, id);
+    await rig.run(30);
+    const pos = await Promise.all([A, B].map(d => d.eval(i => { const e = G.EnemyMgr.get(i); return [e.x, e.y]; }, id)));
+    expect(Math.hypot(pos[0][0] - pos[1][0], pos[0][1] - pos[1][1])).toBeLessThan(120);
+    // Fuera: el jefe se retira sin soltar nada y B vuelve.
+    await A.eval(i => { G.EnemyMgr.get(i).dead = true; }, id);
+    await B.eval(() => { const p = G.Game.player; p.x -= 3000; });
+    await waitPage(B, 'B ya no tiene el jefe', () => !G.EnemyMgr.all().some((e: any) => e.boss && !e.dead));
     expect(await A.allErrors()).toEqual([]);
     expect(await B.allErrors()).toEqual([]);
   });

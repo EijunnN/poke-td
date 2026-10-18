@@ -131,7 +131,7 @@ export type GuestEv = CoreGuestEv | TdGuestEv;
 export type Ev = HostEv | GuestEv;
 /** Estado de un jugador por la red (ver myState / readState). */
 type StateArr = [x: number, y: number, ang: number, walk: number, hp: number, maxHp: number, dead: number, mv: string, ml: number,
-               mag: number, aim: number, xpMul: number, rev: number, lookX?: number, lookY?: number];
+               mag: number, aim: number, xpMul: number, rev: number, lookX?: number | null, lookY?: number | null, dmg?: number];
 /** Un enemigo en el fotograma del anfitrión: id, x, y, vida, animación, dirección, estados. */
 type EnemyRow = [id: number, x: number, y: number, hp: number, anim: number, dir: number, st: number];
 /** Fotograma del anfitrión a un invitado. */
@@ -145,6 +145,8 @@ interface ShotLike { x: number; y: number; vx: number; vy: number; dmg: number; 
 export interface Mate {
   uid: string; name: string; color: string; pl: Player; connected: boolean; watcher?: boolean;
   q: HostEv[]; owed: HostEv[]; flushT: number; xpMul: number; state?: StateArr;
+  /** Daño que lleva hecho en la partida (lo manda en su estado; es el medidor de daño). */
+  dmg?: number;
 }
 
 export const Coop = (() => {
@@ -300,7 +302,9 @@ export const Coop = (() => {
             local!.dead ? 1 : 0, m ? m.id : '', m ? m.lvl : 1, r1(local!.magnet), r2(local!.aim), r2(local!.xpMul),
             r2(local!.reviveT || 0)];
     // Caído, la cámara va libre (modes/survivor.ts): el anfitrión te manda lo que hay donde miras.
-    if (local!.dead) s.push(r1(G.Camera.x), r1(G.Camera.y));
+    // En pie esos dos huecos van a null, para que el daño (medidor, ver Recount) quede siempre al final (versiones mezcladas).
+    if (local!.dead) s.push(r1(G.Camera.x), r1(G.Camera.y)); else s.push(null, null);
+    s.push(r1(local!.dmgDealt));
     return s;
   }
 
@@ -309,6 +313,9 @@ export const Coop = (() => {
     const s = m.state;
     return s && s[6] && Number.isFinite(s[13]) && Number.isFinite(s[14]) ? { x: s[13]!, y: s[14]! } : m.pl;
   }
+
+  /** Daño acumulado que va al final de un estado (si no viene, como de una versión vieja, cuenta 0). */
+  const dmgOf = (a: StateArr) => Number.isFinite(a[15]) ? Math.max(0, a[15]!) : 0;
 
   function readState(a: StateArr) {
     return { x: a[0], y: a[1], ang: a[2], walk: a[3], hp: a[4], maxHp: a[5], dead: a[6], mv: a[7], ml: a[8],
@@ -338,7 +345,8 @@ export const Coop = (() => {
     const out: EnemyRow[] = [];
     const r2n = NEAR * NEAR;
     for (const e of G.EnemyMgr.all()) {
-      if (e.dead || G.U.dist2(e.x, e.y, near.x, near.y) > r2n) continue;
+      // Los jefes van siempre: la barra y la flecha de la pantalla lo señalan aunque esté lejos (si no, su copia se queda donde salió).
+      if (e.dead || (!e.boss && G.U.dist2(e.x, e.y, near.x, near.y) > r2n)) continue;
       if (out.length >= MAX_E) break;
       const a = ANIMS.indexOf(e.anim.cur);
       out.push([e.id, r1(e.x), r1(e.y), Math.ceil(e.hp), a < 0 ? 0 : a, e.anim.dir,
@@ -485,7 +493,7 @@ export const Coop = (() => {
       if ((msg.ev || []).some(e => e && e[0] === 'ws')) resync(from);
       return;
     }
-    if (msg.p) { m.state = msg.p; m.pl.net = readState(msg.p); m.xpMul = m.pl.net.xpMul || 1; }
+    if (msg.p) { m.state = msg.p; m.pl.net = readState(msg.p); m.xpMul = m.pl.net.xpMul || 1; m.dmg = dmgOf(msg.p); }
     for (const ev of msg.ev || []) {
       switch (ev[0]) {
         case 'h': {
@@ -545,7 +553,7 @@ export const Coop = (() => {
                    t1: (msg.tk || [])[0], t10: (msg.tk || [])[1] });
     for (const u in msg.p || {}) {
       const m = mates.get(u);
-      if (m) m.pl.net = readState(msg.p![u]);
+      if (m) { m.pl.net = readState(msg.p![u]); m.dmg = dmgOf(msg.p![u]); }
     }
     const now = performance.now();
     for (const a of msg.e || []) {
@@ -814,6 +822,14 @@ export const Coop = (() => {
     get mates() { return [...mates.values()].filter(m => !m.watcher); },
     /** Los que miran la partida (anfitrión). */
     get watchers() { return [...mates.values()].filter(m => m.watcher).map(m => ({ uid: m.uid, name: m.name })); },
+    /** Daño hecho por cada jugador (tú primero, con `me`): el medidor de daño del grupo. */
+    damage() {
+      if (!active || !local) return [];
+      const mine = members.find(m => m.uid === me);
+      const rows = [{ name: mine ? mine.name : '', color: local.tagColor || COLORS[0], dmg: local.dmgDealt, me: true }];
+      for (const m of mates.values()) if (!m.watcher) rows.push({ name: m.name, color: m.color, dmg: m.dmg || 0, me: false });
+      return rows;
+    },
     get watching() { return active && watching; },
     get members() { return members; },
     get active() { return active; },

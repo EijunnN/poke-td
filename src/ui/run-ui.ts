@@ -2,12 +2,16 @@ import { G } from '../g';
 import type { Card } from '../systems/levelup';
 import type { MoveInstance } from '../data/moves';
 import type { AgainState } from '../net/coop';
+import type { DmgReport } from './stats-ui';
+import { Run } from '../run';
 /* ============ run-ui.js — cartas de nivel, pausa y fin de run ============ */
 /** Lo que se enseña al acabar la run (la Defensa cambia las cuatro cifras de arriba con `cells`). */
 interface RunResult {
   dead: boolean; time: number; level: number; kills: number; bosses: number; coins: number; record: boolean;
   t1: number; t10: number; judge: { time: number; bosses: number } | null;
   moves: MoveInstance[]; caught: { dex: number; isNew?: boolean }[]; breakdown: string;
+  /** Daño de la run (medidor de daño); la Defensa no lo lleva. */
+  dmg?: DmgReport;
   cells?: [string, string | number][];
 }
 /** Lo que se puede hacer con un vínculo (Player.bondOptions): `group` sólo en 'add'. */
@@ -66,6 +70,7 @@ export const RunUI = (() => {
     $('lvl-reroll').classList.toggle('hidden', left <= 0);
     const box = $('cards');
     box.innerHTML = '';
+    const p = G.Game.player;
     list.forEach((c, i) => {
       const el = document.createElement('div');
       el.className = 'card';
@@ -77,7 +82,7 @@ export const RunUI = (() => {
       if (c.type === 'evo') el.classList.add('evo');
       el.innerHTML =
         `<div class="ico" style="background:${c.color}33">${G.Icons.html(c.icon, 32)}</div>
-         <div class="txt"><div class="nm">${c.title} ${tag}</div><div class="ds">${c.desc}</div></div>
+         <div class="txt"><div class="nm">${c.title} ${tag}</div><div class="ds">${c.desc}${p ? G.StatsUI.cardHtml(c, p) : ''}</div></div>
          <div class="key">${i + 1}</div>`;
       el.dataset.sfx = 'none';             // el juego pone su propio sonido al elegir
       el.onclick = () => pick(i);
@@ -148,6 +153,7 @@ export const RunUI = (() => {
         <div style="font-size:12px;color:var(--muted)">${r.breakdown}</div></div>
       ${r.t1 || r.t10 ? `<div style="grid-column:1/-1"><span>Tickets del gacha</span><b>
         ${r.t1 ? G.Icons.html('ticket', 22) + ' +' + r.t1 + ' ' : ''}${r.t10 ? G.Icons.html('ticket10', 22) + ' +' + r.t10 + ' ×10' : ''}</b></div>` : ''}
+      ${r.dmg && r.dmg.total > 0 ? `<div style="grid-column:1/-1" class="over-dmg"><span>Daño</span>${G.StatsUI.dmgHtml(r.dmg, 6)}</div>` : ''}
       <div style="grid-column:1/-1"><span>Movimientos</span><b style="font-size:15px">
         ${r.moves.map(m => `${G.Icons.html('move:' + m.id, 16)} ${m.name} Nv.${m.lvl}`).join(' · ') || '—'}</b></div>
       ${r.caught && r.caught.length ? `<div style="grid-column:1/-1" class="caught"><span>${G.Icons.html('shiny', 12)} Shinies conseguidos</span>
@@ -308,16 +314,47 @@ export const RunUI = (() => {
     renderBond();
   }
 
+  // ---------------- pausa: resumen, estadísticas y daño ----------------
+
+  /** Pestaña de la pausa que se ve (se recuerda de una pausa a otra). */
+  let pauseTab = 'run';
+  let pauseTimer: ReturnType<typeof setInterval> | null = null;
+
+  function renderPause() {
+    const p = G.Game.player;
+    if (!p) return;
+    const time = G.Game.st.time;
+    const body = $('pause-body'), y = body.scrollTop;
+    const dmg = G.StatsUI.damageReport(p, time, G.Coop.damage());
+    body.innerHTML = pauseTab === 'stats' ? G.StatsUI.statsHtml(p) : pauseTab === 'dmg' ? G.StatsUI.dmgHtml(dmg) : G.StatsUI.summaryHtml(p, time, dmg);
+    body.scrollTop = y;                                // (en grupo se rehace cada segundo)
+    document.querySelectorAll<HTMLElement>('#pause-tabs .chip').forEach(b => b.classList.toggle('on', b.dataset.tab === pauseTab));
+  }
+
   function showPause(coop = false) {
     G.UI.soundControls($('pause-sound'));
     $('pause-coop').classList.toggle('hidden', !coop);
     $('btn-quit').textContent = coop ? 'Salir de la partida' : 'Abandonar run';
+    // Sólo el modo de hordas tiene resumen y estadísticas (la Defensa no).
+    const info = !!G.Game.player && Run.mode?.id === 'survivor';
+    $('pause-info').classList.toggle('hidden', !info);
+    if (info) {
+      renderPause();
+      // En solitario la partida está parada; en grupo sigue, y las cifras se renuevan cada segundo mientras esté abierta.
+      if (coop && !pauseTimer) pauseTimer = setInterval(() => {
+        if (G.UI.isOpen('scr-pause')) { renderPause(); return; }
+        clearInterval(pauseTimer!); pauseTimer = null;
+      }, 1000);
+    }
     G.UI.show('scr-pause');
   }
 
   function wirePause(onResume: () => void, onQuit: () => void) {
     $('btn-resume').onclick = onResume;
     $('btn-quit').onclick = onQuit;
+    document.querySelectorAll<HTMLElement>('#pause-tabs .chip').forEach(b => {
+      b.onclick = () => { pauseTab = b.dataset.tab!; renderPause(); };
+    });
   }
 
   return { showLevelUp, reroll, showItemChoice, showBond, pickBond, bondBack, pick, setWaiting, closeLevelUp, showOver, againReady, setAgain, keysOver, wirePause, showPause };

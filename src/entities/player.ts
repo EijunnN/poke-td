@@ -113,6 +113,8 @@ export class Player {
   declare revLabel: string;
   declare net: NetState | undefined;     // estado que manda el dueño del compañero (ver netUpdate)
   declare target: AimTarget | null | undefined;
+  /** Dónde apunta el cursor en el mundo; sólo con el ajuste "apuntar hacia el cursor" y jugando con ratón. */
+  declare aimPt: { x: number; y: number } | null | undefined;
   declare svx: number;
   declare svy: number;
   declare reviveT: number;
@@ -274,7 +276,6 @@ export class Player {
     this.active = i;
     G.Projectiles.clearOrbs(this);
     G.Audio.sfx('select');
-    for (const m of this.slots[i]) m.t = Math.min(m.t, m.cd * 0.35);
     const m = this.slots[i][0];
     G.FX.ring(this.x, this.y - G.LIFT * 0.5, 6, this.visR * 3.4, G.U.TYPE_COLOR[m.type], 0.3, 3);
   }
@@ -541,7 +542,8 @@ export class Player {
     // --- apuntado: enemigo más cercano; si no hay, hacia donde caminas ---
     // Prioridad de blanco según el ataque activo:
     //   a distancia (proyectil, rayo): el jefe si está a tiro > lo que te toca > el más cercano
-    //   cuerpo a cuerpo y el resto:   lo que te toca > el jefe > el más cercano
+    //   cuerpo a cuerpo y el resto:   lo que te toca > el jefe si está a tu alcance > el más cercano
+    //   (si no, con el jefe a media distancia te quedabas quieto sin pegar a los que tienes al lado)
     // Con una horda encima casi siempre te toca algo; si eso ganara siempre,
     // los ataques a distancia no le darían nunca al jefe.
     // Cofre pequeño cerca: si te acercas a él se le apunta aunque haya enemigos
@@ -557,13 +559,25 @@ export class Player {
     const CHEST_NEAR = 60, CHEST_FAR = 100;
     const chest = G.World.nearestBreakable(this.x, this.y, CHEST_FAR, 'chest');
     const chestNear = chest && G.U.dist(this.x, this.y, chest.x, chest.y) <= CHEST_NEAR ? chest : null;
-    const foe = ranged ? boss || threat : threat || boss;
+    const reach = m ? G.Combat.reach(m) : 0;
+    const foe = ranged ? boss || threat
+              : threat || (boss && G.U.dist(this.x, this.y, boss.x, boss.y) <= reach ? boss : null);
     const tg = chestNear || (threat ? foe : chest || foe)
             || G.Projectiles.nearest(all, this.x, this.y, 520)
             || G.World.nearestBreakable(this.x, this.y, 200);
     this.target = tg;
     if (tg) this.aim = Math.atan2(tg.y - this.y, tg.x - this.x);
     else if (this.walking) this.aim = this.moveAngle;
+
+    // Apuntar hacia el cursor (ajuste, sólo PC con ratón): la dirección es la del cursor y el
+    // blanco, el enemigo más cercano a él. Los ataques con dirección salen aunque no haya
+    // blanco; la cadena sí lo necesita (combat.ts mira aimPt). Mando y táctil: aimPt = null.
+    const cur = G.Settings.get('aimCursor') ? G.Input.mouseWorld() : null;
+    this.aimPt = cur;
+    if (cur) {
+      this.target = G.Projectiles.nearest(all, cur.x, cur.y, 70);
+      if (G.U.dist2(this.x, this.y, cur.x, cur.y) > 36) this.aim = Math.atan2(cur.y - this.y, cur.x - this.x);
+    }
 
     // --- animación: mira al objetivo al atacar, si no a donde camina ---
     const face = this.attackFace > 0 || !this.walking ? this.aim : this.moveAngle;
