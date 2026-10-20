@@ -209,6 +209,7 @@ G.I18n.add({
   'Arrastra el dedo para moverte · toca un ataque para cambiarlo': 'Drag your finger to move · tap a move to switch',
   'WASD moverse · 1-4 / Q / E o clic en un ataque para cambiarlo · Esc pausa': 'WASD move · 1-4 / Q / E or click a move to switch · Esc pause',
   '¡Nuevo récord! Has pasado tu mejor tiempo': 'New record! You beat your best time',
+  'Estás jugando una partida en grupo en otra pestaña. Cuando acabe, recarga ésta para usarla.': 'You are playing a group game in another tab. When it ends, reload this one to use it.',
   'El anfitrión ha terminado la partida': 'The host has ended the game', 'Se ha perdido la conexión con el anfitrión.': 'Lost connection to the host.',
 
   // ---------------- pausa y fin ----------------

@@ -14,7 +14,9 @@
  * Lo demás persistente (amigos, perfiles) se sirve por REST (server/social.ts).
  *
  * Una cuenta = una conexión: si abre otra pestaña, la nueva sustituye a la vieja
- * (que se cierra con el código 4001 y ya no reconecta) y hereda su sala.
+ * (que se cierra con el código 4001 y ya no reconecta) y hereda su sala. Salvo si la vieja
+ * está jugando una partida en grupo: entonces la que se rechaza es la nueva (4003), porque
+ * en el menú no puede seguir esa partida y, al heredar la sala, la dejaría y se la cerraría a todos.
  *
  * Cliente -> servidor (JSON; `i` opcional: el servidor contesta { k:'ack', i, ok, ... }):
  *   { k:'ping' }                                  -> { k:'pong' }
@@ -387,10 +389,11 @@ export function createRealtime(db: Db, opts: RealtimeOptions = {}) {
 
   function open(ws: ServerWebSocket<WsData>) {
     const u = ws.data.user;
+    const old = conns.get(u.id);
+    if (old && old.play && roomOf.get(u.id)?.started) { ws.close(4003, 'Ya estás jugando en otra pestaña'); return; }
     const c: Conn = { ws, id: u.id, name: u.name, play: false, gone: false, since: now(), msgs: msgBurst, bytes: byteBurst, t: now(), bad: 0, badT: 0,
                       chatAt: [], lastChat: '', lastChatAt: 0, pingAt: [], codeMiss: [] };
     ws.data.c = c;
-    const old = conns.get(u.id);
     if (old) {
       // La sesión nueva manda: la vieja se cierra sin reconectar y la sala pasa a la nueva.
       old.gone = true;

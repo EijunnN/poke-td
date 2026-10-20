@@ -19,6 +19,15 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { d: '2026-10-19', title: ['Otra pestaña sin romper la partida', 'Another tab without breaking the game'], fix: [
+    ['Partida en grupo: abrir el juego en otra pestaña con la misma cuenta ya no saca a tus compañeros de la partida ni te deja esperando para siempre. La pestaña nueva avisa de que estás jugando en otra y no toca la partida.',
+     'Group games: opening the game in another tab with the same account no longer kicks your teammates out of the game or leaves you waiting forever. The new tab tells you that you are playing in another one and leaves the game alone.'],
+    ['Survivor: la Coraza ya no sale en las cartas de nivel cuando has llegado al tope de reducción de daño (70%), donde no hacía nada. Pasaba antes de tiempo si llevabas el Chaleco Asalto o la Coraza de la tienda mejorada.',
+     'Survivor: Armor no longer shows up in level-up cards once you reach the damage reduction cap (70%), where it did nothing. It happened early if you held the Assault Vest or had upgraded Armor in the shop.'],
+  ], chg: [
+    ['Survivor: el Juicio de Arceus tiene música nueva, que suena desde que empieza la animación de entrada.',
+     'Survivor: Arceus’s Judgment has new music, playing from the start of its intro animation.'],
+  ] },
   { d: '2026-10-18', title: ['Mapas de la Defensa y menos calor', 'Defense maps and less heat'], new: [
     ['Survivor: cuando pasas tu mejor tiempo (en solitario o en grupo) sale «¡Nuevo récord!» y empieza a sonar un tema nuevo, que sigue hasta el final aunque salga un jefe.',
      'Survivor: when you beat your best time (solo or in a group) you get “New record!” and a new theme starts playing, all the way to the end, even through bosses.'],

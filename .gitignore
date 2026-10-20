@@ -27,3 +27,6 @@ dist/
 
 # Base de datos del servidor (SQLite)
 /data/
+
+# Música con derechos: sólo en el servidor (se copia a mano a /srv/poke-td), nunca al repositorio público
+public/assets/music/

@@ -1,6 +1,6 @@
 import { G } from '../g';
 /* ============ audio.js — sintetizador, secuenciador y efectos de sonido ============
- * Todo el sonido se genera en el momento con Web Audio: no hay ficheros.
+ * Sintetizador Web Audio y un MP3 para el Juicio de Arceus.
  *
  *   G.Audio.music('village')   cambia de tema con fundido (ver data/music.js)
  *   G.Audio.sfx('coin')        efecto de sonido (con límite de repetición)
@@ -24,7 +24,7 @@ interface Partitura {
 interface Acorde { root: number; minor: boolean; bass: number }
 interface Compilada { steps: number; ev: Evento[][]; bpm: number; swing: number }
 /** Tema que está sonando. */
-interface Reproduccion { name: string; song: Compilada; bus: GainNode; step: number; next: number }
+interface Reproduccion { name: string; song: Compilada | null; bus: GainNode; step: number; next: number; source?: AudioBufferSourceNode }
 /** Opciones de un efecto (shot: kind y type · burst, reveal: rarity). */
 interface SfxOpts { kind?: string; type?: string; rarity?: number; pan?: number }
 
@@ -85,6 +85,8 @@ export const Audio = (() => {
     for (let i = 0; i < nd.length; i++) nd[i] = rand() * 2 - 1;
 
     applyVolumes();
+    // Preparada desde el primer gesto para que arranque al comenzar el Juicio.
+    loadJudgmentTrack();
     return true;
   }
 
@@ -340,15 +342,42 @@ export const Audio = (() => {
 
   let wanted: string | null = null, current: Reproduccion | null = null;
   const compiled: Record<string, Compilada> = {};
+  let judgmentTrack: Promise<AudioBuffer | null> | null = null;
+
+  function loadJudgmentTrack() {
+    return judgmentTrack ??= fetch(`${import.meta.env.BASE_URL}assets/music/celeste-true-love.mp3`)
+      .then(res => {
+        if (!res.ok) throw new Error(`Judgment music: HTTP ${res.status}`);
+        return res.arrayBuffer();
+      })
+      .then(data => ctx.decodeAudioData(data))
+      .catch(() => null); // Si falla la carga, queda el tema sintetizado del Juicio.
+  }
 
   function startSong(name: string) {
     if (!ctx || !G.MUSIC[name]) return;
-    const song = compiled[name] || (compiled[name] = compile(G.MUSIC[name]));
+    const song = name === 'judgment' ? null : compiled[name] || (compiled[name] = compile(G.MUSIC[name]));
     const bus = ctx.createGain();
     bus.gain.setValueAtTime(0.0001, ctx.currentTime);
     bus.gain.linearRampToValueAtTime(1, ctx.currentTime + 0.8);
     bus.connect(musicBus);
-    current = { name, song, bus, step: 0, next: ctx.currentTime + 0.1 };
+    const playing: Reproduccion = { name, song, bus, step: 0, next: ctx.currentTime + 0.1 };
+    current = playing;
+    if (name === 'judgment') void loadJudgmentTrack().then(buffer => {
+      // Puede haber terminado la partida mientras se descargaba o decodificaba.
+      if (current !== playing) return;
+      if (!buffer) {
+        playing.song = compiled[name] || (compiled[name] = compile(G.MUSIC[name]));
+        playing.next = ctx.currentTime + 0.1;
+        return;
+      }
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+      source.loop = true;
+      source.connect(bus);
+      playing.source = source;
+      source.start();
+    });
   }
 
   function stopCurrent() {
@@ -357,6 +386,7 @@ export const Audio = (() => {
     b.gain.cancelScheduledValues(ctx.currentTime);
     b.gain.setValueAtTime(b.gain.value, ctx.currentTime);
     b.gain.linearRampToValueAtTime(0.0001, ctx.currentTime + 0.7);
+    current.source?.stop(ctx.currentTime + 0.7);
     setTimeout(() => b.disconnect(), 900);
     current = null;
   }
@@ -372,13 +402,13 @@ export const Audio = (() => {
 
   // Planificador: programa con 150 ms de antelación.
   setInterval(() => {
-    if (!ctx || !current || ctx.state !== 'running') return;
-    const c = current, sd = 60 / c.song.bpm / 4;
+    if (!ctx || !current || !current.song || ctx.state !== 'running') return;
+    const c = current, song = current.song, sd = 60 / song.bpm / 4;
     while (c.next < ctx.currentTime + 0.15) {
-      const i = c.step % c.song.steps;
+      const i = c.step % song.steps;
       // Swing: retrasa las corcheas a contratiempo.
-      const t = c.next + (i % 4 === 2 ? c.song.swing * sd : 0);
-      for (const e of c.song.ev[i]) {
+      const t = c.next + (i % 4 === 2 ? song.swing * sd : 0);
+      for (const e of song.ev[i]) {
         // Los nombres vienen de data/music.ts: los de percusión van con otra firma.
         if (e.drum) (INST[e.inst as Instrumento] as Percusion)(t, e.v, c.bus);
         else (INST[e.inst as Instrumento] as Melodico)(t, e.f!, e.len! * sd, e.v, c.bus);

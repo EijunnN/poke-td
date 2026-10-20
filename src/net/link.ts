@@ -8,6 +8,8 @@
  * Una segunda pestaña con la misma cuenta toma la sesión y el servidor cierra la
  * primera con 4001: esa NO reconecta (se pelearían en bucle). Se avisa con `onTaken`
  * (y `taken`) para que la interfaz lo diga, y `resume()` la recupera a petición.
+ * Si la otra pestaña está en plena partida en grupo, el servidor rechaza a la nueva con 4003
+ * (tampoco reconecta: se avisa con `onStatus`).
  */
 
 export type LinkStatus = 'closed' | 'connecting' | 'open';
@@ -17,8 +19,9 @@ export interface ServerMsg { k: string; [key: string]: any }
 /** Respuesta a una orden: { ok, error?, ...datos }. */
 export interface Reply { ok: boolean; error?: string; [key: string]: any }
 
-/** Códigos con los que el servidor cierra y que NO se reintentan: otra pestaña tomó la sesión, o se borró la cuenta. */
-const NO_RETRY = new Set([4001, 4002]);
+/** Códigos con los que el servidor cierra y que NO se reintentan: otra pestaña tomó la sesión, se borró la cuenta,
+ *  u otra pestaña está jugando en grupo. */
+const NO_RETRY = new Set([4001, 4002, 4003]);
 const PING_EVERY = 20_000, DEAD_AFTER = 55_000, REQUEST_TIMEOUT = 8_000;
 
 export const Link = (() => {

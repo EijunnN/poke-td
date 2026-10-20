@@ -138,6 +138,9 @@ export const Social = (() => {
 
   // Otra pestaña con la misma cuenta se ha quedado la conexión: ésta ya no recibe invitaciones.
   Link.onTaken(t => { if (t && G.UI) G.UI.toast('Has abierto el juego en otra pestaña: aquí ya no te llegan invitaciones. Recarga para usar ésta.', 7000); });
+  Link.onStatus((_s, code) => {
+    if (code === 4003 && G.UI) G.UI.toast('Estás jugando una partida en grupo en otra pestaña. Cuando acabe, recarga ésta para usarla.', 8000);
+  });
 
   Link.onStatus((s: LinkStatus) => {
     if (!started) return;

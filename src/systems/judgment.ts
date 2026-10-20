@@ -133,7 +133,7 @@ export const Judgment = (() => {
     G.Sprites.preload([ARCEUS, ...new Set(c.q.slice(0, 12))], 12000);
     cineAnim = new G.Sprites.Animator(ARCEUS, 1);
     G.Touch.reset();
-    G.Audio.music(null);
+    G.Audio.music('judgment');
   }
 
   /** Salta la animación (tecla o toque; en grupo, el anfitrión). */
@@ -756,8 +756,8 @@ export const Judgment = (() => {
     },
     get active() { return !!phase; },
     get cinematic() { return phase === 'cine'; },
-    /** Lo que suena: nada en la animación hasta que aterriza. */
-    get music() { return phase === 'cine' && ct < T_LAND ? null : 'judgment'; },
+    /** Celeste - True Love desde el inicio de la Sentencia y durante la pelea. */
+    get music() { return 'judgment'; },
     /** Para el resumen de la partida: { time, bosses } o null. */
     summary() { return phase === 'fight' ? { time: arenaT, bosses: downs } : null; },
     /** Para pruebas: vida del primer legendario y daño medido. */

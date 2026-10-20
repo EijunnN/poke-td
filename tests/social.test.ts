@@ -934,6 +934,21 @@ describe('reconexión a la sala', () => {
     expect(back.hello.room.id).toBe(room.id);
   });
 
+  test('con una partida en grupo en marcha, la pestaña nueva se rechaza (4003) y la partida sigue', async () => {
+    const h = account(), g = account();
+    const { hc, gcs, room } = await roomWith(h, [g]);
+    hc.send({ k: 'play', v: true });
+    gcs[0].send({ k: 'play', v: true });
+    hc.send({ k: 'g', d: { k: 'start', seed: 7, host: h.uid, members: [{ uid: g.uid }] } });
+    const extra = new Client(E, h);
+    expect(extra.closed?.code).toBe(4003);
+    expect(hc.closed).toBeNull();
+    advance(GRACE);
+    expect(memberIds(room.id)).toEqual([h.uid, g.uid]);
+    hc.send({ k: 'g', to: g.uid, d: { k: 'f', p: [9] } });
+    expect(gcs[0].take(m => m.k === 'g' && m.d.k === 'f').d.p).toEqual([9]);
+  });
+
   test('la misma cuenta en otra pestaña hereda la sala sin que nadie se entere de una salida', async () => {
     const h = account(), g = account();
     const { hc, gcs, room } = await roomWith(h, [g]);
