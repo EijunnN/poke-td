@@ -112,7 +112,9 @@ export const Audio = (() => {
     const t = ctx.currentTime;
     musicBus.gain.setTargetAtTime(settings.muted ? 0 : settings.music * 0.7, t, 0.05);
     // Los efectos se generan bajitos: ×2,4 los pone a la par de la música (medido).
-    sfxBus.gain.setTargetAtTime(settings.muted ? 0 : settings.sfx * 2.4, t, 0.05);
+    // En el Juicio se bajan: los ataques, que no paran, tapaban la canción.
+    const duck = current && current.name === 'judgment' ? JUDGMENT_SFX : 1;
+    sfxBus.gain.setTargetAtTime(settings.muted ? 0 : settings.sfx * 2.4 * duck, t, 0.3);
   }
 
   function setVolume(which: 'music' | 'sfx', v: number) { settings[which] = G.U.clamp(v, 0, 1); save(); applyVolumes(); }
@@ -343,6 +345,8 @@ export const Audio = (() => {
   let wanted: string | null = null, current: Reproduccion | null = null;
   const compiled: Record<string, Compilada> = {};
   let judgmentTrack: Promise<AudioBuffer | null> | null = null;
+  /** La canción del Juicio (MP3) sube sobre el resto de la música, y los efectos bajan a esta parte mientras suena. */
+  const JUDGMENT_GAIN = 1.8, JUDGMENT_SFX = 0.35;
 
   function loadJudgmentTrack() {
     return judgmentTrack ??= fetch(`${import.meta.env.BASE_URL}assets/music/celeste-true-love.mp3`)
@@ -363,6 +367,7 @@ export const Audio = (() => {
     bus.connect(musicBus);
     const playing: Reproduccion = { name, song, bus, step: 0, next: ctx.currentTime + 0.1 };
     current = playing;
+    applyVolumes();
     if (name === 'judgment') void loadJudgmentTrack().then(buffer => {
       // Puede haber terminado la partida mientras se descargaba o decodificaba.
       if (current !== playing) return;
@@ -374,7 +379,9 @@ export const Audio = (() => {
       const source = ctx.createBufferSource();
       source.buffer = buffer;
       source.loop = true;
-      source.connect(bus);
+      const boost = ctx.createGain();
+      boost.gain.value = JUDGMENT_GAIN;
+      source.connect(boost).connect(bus);
       playing.source = source;
       source.start();
     });
@@ -389,6 +396,7 @@ export const Audio = (() => {
     current.source?.stop(ctx.currentTime + 0.7);
     setTimeout(() => b.disconnect(), 900);
     current = null;
+    applyVolumes();
   }
 
   /** Cambia de tema (con fundido). null = silencio. */

@@ -19,6 +19,10 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { d: '2026-10-20', title: ['La música del Juicio, bien alta', 'Judgment music, loud and clear'], fix: [
+    ['Survivor: la música del Juicio de Arceus se oía muy bajita bajo el ruido de los ataques. Ahora suena más fuerte y, mientras dura, los efectos se bajan.',
+     'Survivor: the music of Arceus’s Judgment was barely audible under the noise of attacks. It is now louder, and sound effects are turned down while it plays.'],
+  ] },
   { d: '2026-10-19', title: ['Otra pestaña sin romper la partida', 'Another tab without breaking the game'], fix: [
     ['Partida en grupo: abrir el juego en otra pestaña con la misma cuenta ya no saca a tus compañeros de la partida ni te deja esperando para siempre. La pestaña nueva avisa de que estás jugando en otra y no toca la partida.',
      'Group games: opening the game in another tab with the same account no longer kicks your teammates out of the game or leaves you waiting forever. The new tab tells you that you are playing in another one and leaves the game alone.'],
