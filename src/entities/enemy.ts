@@ -75,6 +75,8 @@ type BossMove = [number, number, string];
 let nextId = 1;
 /** Segundos mínimos entre dos curaciones / dos escudos sobre el mismo enemigo (menos que la recarga del apoyo, para que uno solo no falle). */
 const HEAL_CD = 3.2, SHIELD_CD = 5.5;
+/** Quemadura y veneno contra los de la Sentencia de Arceus: un daño fijo y pequeño por golpe, sin mirar apilados, vida ni nivel. */
+const JUDGE_BURN = 6, JUDGE_POISON = 5;
 /** Los jefes se agrandan hasta ~110 de alto, según lo grande que ya sea su sprite. */
 function bossScale(dex: number) {
   const m = G.Sprites.animMeta(dex, 'Idle');
@@ -108,6 +110,10 @@ export class Enemy {
   declare flash: number;
   declare slow: number;
   declare slowT: number;
+  /** Segundos que le quedan aturdido (quieto y sin atacar; ver applyDaze). */
+  declare dazeT: number;
+  /** Va por su camino y no se le puede arrastrar (los de la Defensa; ver Combat, remolinos). */
+  pinned?: boolean;
   declare burn: number;
   declare burnT: number;
   declare burnTick: number;
@@ -154,6 +160,7 @@ export class Enemy {
   declare lastNetAnim?: number;
   declare ai?: BossAI;                // IA de jefe (bossInit)
   declare judge?: boolean;            // Sentencia de Arceus (judgment.ts)
+  declare arceus?: boolean;           // el propio Arceus: un blanco más para los ataques, sin vida que baje (judgment.ts)
   declare legend?: boolean;           // legendario de la grieta (rift.ts)
   declare life?: number;              // duende del tesoro: segundos antes de escapar (events.ts)
   declare zig?: number;
@@ -186,7 +193,7 @@ export class Enemy {
     this.flying = boss || G.Sprites.hovers(def.dex);
 
     this.flash = 0;
-    this.slow = 0; this.slowT = 0;
+    this.slow = 0; this.slowT = 0; this.dazeT = 0;
     this.burn = 0; this.burnT = 0; this.burnTick = 0;
     this.poison = 0; this.poisonT = 0; this.poisonTick = 0;
     this.lavaTick = 0;
@@ -238,6 +245,8 @@ export class Enemy {
   hurt(amount: number, color = '#fff', dirX = 0, dirY = 0, knock = 0, eff: string | null = null) {
     if (this.dead) return;
     const d = Math.max(1, Math.round(amount));
+    // Arceus no pierde vida: el golpe se apunta en el daño que le haces (judgment.ts).
+    if (this.arceus) { G.Judgment.hitArceus(this, d, color, dirX, dirY, eff); return; }
     // Copia de un enemigo del anfitrión: el golpe se le manda a él, que es
     // quien decide si cae. Aquí sólo se ve (número, destello y animación).
     if (this.remote) {
@@ -276,6 +285,15 @@ export class Enemy {
     G.Audio.sfx('hit');
   }
 
+  /**
+   * Aturdido: se queda quieto y no ataca `dur` s (Onda Trueno, Tumba Rocas...). Es de aquí y no `stunT` porque
+   * los de la Defensa ya tienen el suyo (modes/td.ts). En una copia se manda al anfitrión, que es quien lo
+   * mueve, y aquí sólo se apunta para dibujar las estrellitas.
+   */
+  applyDaze(dur: number) {
+    this.dazeT = Math.max(this.dazeT, dur);
+    if (this.remote) G.Coop.status(this, 'd', dur);
+  }
   applySlow(factor: number, dur = 1.2) {
     if (this.remote) { G.Coop.status(this, 's', factor); return; }
     this.slow = Math.max(this.slow, factor);
@@ -347,6 +365,7 @@ export class Enemy {
     if (this.flash > 0) this.flash -= dt;
     if (this.dead) { this.fade -= dt; return; }
     if (this.touchCd > 0) this.touchCd -= dt;
+    if (this.dazeT > 0) this.dazeT -= dt;
     this.bob += dt * 6;
     if (this.shiny) {
       this.sparkT -= dt;
@@ -395,15 +414,15 @@ export class Enemy {
     if (this.slowT > 0) { this.slowT -= dt; if (this.slowT <= 0) this.slow = 0; }
     if (this.burn > 0) {
       this.burnT -= dt; this.burnTick -= dt;
-      if (this.burnTick <= 0) { this.burnTick = 0.5; this.hurt(1.6 * this.burn * (1 + pl.level! * 0.06), '#ff9a4d'); }
+      if (this.burnTick <= 0) { this.burnTick = 0.5; this.hurt(this.judge ? JUDGE_BURN : 1.6 * this.burn * (1 + pl.level! * 0.06), '#ff9a4d'); }
       if (this.burnT <= 0) this.burn = 0;
     }
     if (this.poison > 0) {
       this.poisonT -= dt; this.poisonTick -= dt;
-      if (this.poisonTick <= 0) { this.poisonTick = 0.6; this.hurt(this.maxHp * 0.012 * this.poison + 1, '#d47cf0'); }
+      if (this.poisonTick <= 0) { this.poisonTick = 0.6; this.hurt(this.judge ? JUDGE_POISON : this.maxHp * 0.012 * this.poison + 1, '#d47cf0'); }
       if (this.poisonT <= 0) this.poison = 0;
     }
-    if (this.dead) return;
+    if (this.dead || this.arceus) return;
 
     // --- terreno ---
     let terrainMul = 1;
@@ -415,6 +434,14 @@ export class Enemy {
         if (this.lavaTick <= 0) { this.lavaTick = le.every!; this.hurt(6 + this.maxHp * 0.04, le.color); }
         if (this.dead) return;
       } else if (le.slow) terrainMul = le.slow < 0.5 ? 0.45 : 0.55;
+    }
+
+    // Aturdido: ni se mueve ni ataca (la sacudida del golpe que lo aturdió se va apagando).
+    if (this.dazeT > 0) {
+      this.dazeT -= dt;
+      this.kx *= Math.pow(0.0015, dt); this.ky *= Math.pow(0.0015, dt);
+      this.anim.loop('Idle');
+      return;
     }
 
     const spd = this.spd * (1 - this.slow) * terrainMul * G.Weather.speedFor(this.types);
@@ -822,6 +849,7 @@ export class Enemy {
   }
 
   draw(ctx: CanvasRenderingContext2D) {
+    if (this.arceus) return;            // lo dibuja judgment.ts (con su rueda y su altura)
     const alpha = this.dead ? G.U.clamp(this.fade / 0.5, 0, 1) : 1;
     if (alpha <= 0) return;
 
@@ -844,6 +872,15 @@ export class Enemy {
     ctx.restore();
 
     if (this.dead) return;
+
+    // Aturdido: estrellitas girando sobre la cabeza.
+    if (this.dazeT > 0) {
+      const now = performance.now() / 1000;
+      for (let i = 0; i < 3; i++) {
+        const a = now * 5 + i * 2.094;
+        G.VFX.draw(ctx, 'star', 'electric', this.x + Math.cos(a) * 9, this.y - lift - this.bodyH - 6 + Math.sin(a) * 3, { scale: 0.6 });
+      }
+    }
 
     // Escudo: burbuja azul.
     if (this.shield > 0 || (this.net && this.net.st & 4)) {
@@ -906,6 +943,12 @@ export const EnemyMgr = (() => {
     return e;
   }
   function get(id: number) { return byId.get(id); }
+  /** Un enemigo que sólo existe en este ordenador (cada uno el suyo): no se anuncia a los invitados. */
+  function addLocal(e: Enemy) {
+    list.push(e);
+    byId.set(e.id, e);
+    return e;
+  }
 
   /** Copia local de un enemigo del anfitrión (cooperativo). */
   function addRemote(o: RemoteEnemyInfo) {
@@ -995,7 +1038,7 @@ export const EnemyMgr = (() => {
 
   function separate(dt: number) {
     for (const e of list) {
-      if (e.dead) continue;
+      if (e.dead || e.arceus) continue;
       const cx = Math.floor(e.x / CELL), cy = Math.floor(e.y / CELL);
       let px = 0, py = 0, n = 0;
       for (let j = -1; j <= 1; j++) {
@@ -1003,7 +1046,7 @@ export const EnemyMgr = (() => {
           const b = grid.get(key(cx + i, cy + j));
           if (!b) continue;
           for (const o of b) {
-            if (o === e || o.dead) continue;
+            if (o === e || o.dead || o.arceus) continue;
             const min = (e.r + o.r) * 0.82;
             const dx = e.x - o.x, dy = e.y - o.y;
             const d2 = dx * dx + dy * dy;
@@ -1023,11 +1066,11 @@ export const EnemyMgr = (() => {
     }
   }
 
-  /** El jugador vivo más cercano (los caídos no atraen a nadie). */
+  /** El jugador vivo más cercano (los caídos no atraen a nadie, ni un compañero con la conexión colgada). */
   function nearestPlayer<T extends EnemyTarget>(players: T[], x: number, y: number) {
     let best: T | null = null, bd = Infinity;
     for (const p of players) {
-      if (p.dead) continue;
+      if (p.dead || (G.Coop.active && G.Coop.quiet(p as unknown as Player))) continue;
       const d = G.U.dist2(x, y, p.x, p.y);
       if (d < bd) { bd = d; best = p; }
     }
@@ -1066,6 +1109,7 @@ export const EnemyMgr = (() => {
       if (e.remote) continue;
       if (e.dead) {
         pl.kills++;
+        if (pl.abil && pl.abil.kill) pl.abil.kill(pl, e);     // Autoestima y parecidas
         if (e.boss && !e.judge) pl.bosses++;
         G.Progress.kill(e);
         corpses.push(e);
@@ -1074,6 +1118,7 @@ export const EnemyMgr = (() => {
         if (G.Coop.isHost) G.Coop.enemyGone(e, true);
         continue;
       }
+      if (e.arceus) continue;
       const near = nearestPlayer(players, e.x, e.y) || pl;
       // El duende del tesoro se escapa si no lo atrapas a tiempo.
       if (e.behavior === 'thief' && (e.life! -= dt) <= 0) {
@@ -1105,7 +1150,10 @@ export const EnemyMgr = (() => {
       const behind = sp > 40 && ((e.x - near.x) * near._vx! + (e.y - near.y) * near._vy!) < -0.2 * Math.sqrt(d2) * sp;
       if (unseen && behind) e.lagT += dt;
       else if (!unseen) e.lagT = 0;
-      if ((unseen && e.lagT > LAG_T) || d2 > 1400 * 1400) {
+      // Lejísimos: también vuelven. Con ventanas muy anchas o muy altas el anillo donde nacen queda
+      // más allá de 1400 y se recolocaban en cada fotograma sin llegar nunca: el tope crece con la vista.
+      const far = Math.max(1400, R + 150);
+      if ((unseen && e.lagT > LAG_T) || d2 > far * far) {
         e.lagT = 0;
         if (!G.Spawner.ahead(e, near)) { list.splice(i, 1); byId.delete(e.id); if (G.Coop.isHost) G.Coop.enemyGone(e, false); }
       }
@@ -1128,7 +1176,7 @@ export const EnemyMgr = (() => {
   function bossAlive() { return list.some(e => e.boss && !e.dead); }
   function shinies() { return list.filter(e => e.shiny && !e.dead); }
 
-  return { clear, all, add, get, addRemote, removeRemote, stash, restore, clearRemote, update, drawables, queryCircle, rebuildGrid, bossAlive, shinies, nearestPlayer,
+  return { clear, all, add, addLocal, get, addRemote, removeRemote, stash, restore, clearRemote, update, drawables, queryCircle, rebuildGrid, bossAlive, shinies, nearestPlayer,
            get count() { return list.length; } };
 })();
 G.EnemyMgr = EnemyMgr;

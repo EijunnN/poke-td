@@ -36,7 +36,14 @@ type Field = FieldBase & (
   | { kind: 'meteor'; fall: number; r: number }
   | { kind: 'turret'; life: number; shotT: number; kick?: number }
   | { kind: 'patch'; life: number; r: number; tick: number }
+  | { kind: 'charge'; at: number }
+  | { kind: 'spin'; n: number; next: number; a: number }
+  | { kind: 'quake'; ca: number; sa: number; i: number; n: number; next: number }
+  | { kind: 'vortex'; life: number; r: number; pull: number; tick: number }
+  | { kind: 'stunzone'; delay: number; r: number }
 );
+/** Lo que necesita blast de un campo: quién pega, con qué, dónde y cuánto. */
+type Blast = Pick<FieldBase, 'ghost' | 'owner' | 'm' | 'col' | 'dmg' | 'x' | 'y'>;
 type PatchField = Extract<Field, { kind: 'patch' }>;
 /** Blanco de `chain`: un enemigo vivo (el blanco apuntado puede ser una roca o un cofre). */
 const isLiveEnemy = (t: Player['target']): t is Enemy => !!t && !t.dead && !!t.hurt;
@@ -97,10 +104,19 @@ export const Combat = (() => {
       case 'dash':       dash(pl, m); break;
       case 'trail':      trailPatch(pl, m); break;
       case 'cone':       cone(pl, m); break;
+      case 'homing':     fireProjectiles(pl, m); break;      // persiguen: m.homing
+      case 'bounce':     fireProjectiles(pl, m); break;      // rebotan: m.bounce (ver rebound)
+      case 'charge':     chargeUp(pl, m); break;
+      case 'spin':       spin(pl, m); break;
+      case 'quake':      quake(pl, m); break;
+      case 'vortex':     vortex(pl, m); break;
+      case 'shove':      shove(pl, m); break;
+      case 'stun':       stunZone(pl, m); break;
     }
   }
 
-  const TARGETED = ['melee', 'beam', 'projectile', 'boomerang', 'chain', 'meteor', 'dash', 'cone'];
+  const TARGETED = ['melee', 'beam', 'projectile', 'boomerang', 'chain', 'meteor', 'dash', 'cone',
+                    'homing', 'bounce', 'charge', 'spin', 'quake', 'vortex', 'shove', 'stun'];
   function needsTarget(m: Move) { return TARGETED.includes(m.kind); }
   function reach(m: Move) {
     if (m.kind === 'melee') return m.radius + 30;
@@ -110,11 +126,15 @@ export const Combat = (() => {
     if (m.kind === 'meteor') return 340;
     if (m.kind === 'dash') return m.radius + 60;
     if (m.kind === 'cone') return m.speed * m.life + 30;
+    if (m.kind === 'spin' || m.kind === 'shove' || m.kind === 'charge') return m.radius + 20;
+    if (m.kind === 'quake') return (m.count | 0) * QSTEP + m.radius;
+    if (m.kind === 'vortex' || m.kind === 'stun') return 300;
     return 520;
   }
 
   function payload(m: Move) {
-    return { burn: m.burn || 0, poison: m.poison || 0, slow: m.slow || 0, knock: m.knock || 0, mtype: m.type, mid: m.id };
+    return { burn: m.burn || 0, poison: m.poison || 0, slow: m.slow || 0, knock: m.knock || 0, mtype: m.type, mid: m.id,
+             bounce: m.bounce || 0, drain: m.drain || 0 };
   }
 
   /** Tabla de tipos × clima para un ataque de tipo `type` contra `e`. */
@@ -131,7 +151,7 @@ export const Combat = (() => {
       G.Projectiles.spawn(Object.assign({
         x: pl.x + Math.cos(a) * 3, y: pl.y + Math.sin(a) * 3,
         vx: Math.cos(a) * m.speed, vy: Math.sin(a) * m.speed,
-        dmg: m.dmg * pl.atk, r: m.size, life: m.life,
+        dmg: m.dmg * pl.atkFor(m), r: m.size, life: m.life,
         pierce: m.pierce | 0, color: col, homing: m.homing || 0,
         hits: new Set<number>(), vis, ghost, owner: pl
       }, payload(m)));
@@ -149,7 +169,7 @@ export const Combat = (() => {
       G.Projectiles.spawn(Object.assign({
         x: pl.x + Math.cos(a) * 3, y: pl.y + Math.sin(a) * 3,
         vx: Math.cos(a) * m.speed, vy: Math.sin(a) * m.speed,
-        dmg: m.dmg * pl.atk, r: m.size, life: m.life,
+        dmg: m.dmg * pl.atkFor(m), r: m.size, life: m.life,
         pierce: m.pierce | 0, color: col, homing: m.homing || 0,
         hits: new Set<number>(), vis, ghost, owner: pl
       }, payload(m)));
@@ -170,10 +190,10 @@ export const Combat = (() => {
 
     for (const e of G.EnemyMgr.queryCircle(pl.x, pl.y, m.radius)) {
       if (!inArc(pl.x, pl.y, e.x, e.y, pl.aim, half)) continue;
-      hit(pl, e, m.dmg * pl.atk, col, e.x - pl.x, e.y - pl.y, m.knock || 0, m);
+      hit(pl, e, m.dmg * pl.atkFor(m), col, e.x - pl.x, e.y - pl.y, m.knock || 0, m);
     }
     for (const p of G.World.propsInCircle(pl.x, pl.y, m.radius)) {
-      if (inArc(pl.x, pl.y, p.x, p.y, pl.aim, half)) G.World.damageProp(p, m.dmg * pl.atk, col);
+      if (inArc(pl.x, pl.y, p.x, p.y, pl.aim, half)) G.World.damageProp(p, m.dmg * pl.atkFor(m), col);
     }
   }
 
@@ -199,10 +219,10 @@ export const Combat = (() => {
       return Math.abs(-px * sa + py * ca) <= w / 2 + r;
     };
     for (const e of G.EnemyMgr.queryCircle(mx, my, len / 2 + w)) {
-      if (onBeam(e.x, e.y, e.r)) hit(pl, e, m.dmg * pl.atk, col, ca, sa, 0, m);
+      if (onBeam(e.x, e.y, e.r)) hit(pl, e, m.dmg * pl.atkFor(m), col, ca, sa, 0, m);
     }
     for (const p of G.World.propsInCircle(mx, my, len / 2 + w)) {
-      if (onBeam(p.x, p.y, p.r)) G.World.damageProp(p, m.dmg * pl.atk, col);
+      if (onBeam(p.x, p.y, p.r)) G.World.damageProp(p, m.dmg * pl.atkFor(m), col);
     }
   }
 
@@ -223,8 +243,8 @@ export const Combat = (() => {
       }
     }
     if (ghost) return;
-    for (const e of G.EnemyMgr.queryCircle(pl.x, pl.y, m.radius)) hit(pl, e, m.dmg * pl.atk, col, e.x - pl.x, e.y - pl.y, 0, m);
-    for (const p of G.World.propsInCircle(pl.x, pl.y, m.radius)) G.World.damageProp(p, m.dmg * pl.atk, col);
+    for (const e of G.EnemyMgr.queryCircle(pl.x, pl.y, m.radius)) hit(pl, e, m.dmg * pl.atkFor(m), col, e.x - pl.x, e.y - pl.y, 0, m);
+    for (const p of G.World.propsInCircle(pl.x, pl.y, m.radius)) G.World.damageProp(p, m.dmg * pl.atkFor(m), col);
   }
 
   function buff(pl: Player, m: Move) {
@@ -249,7 +269,7 @@ export const Combat = (() => {
       const a = pl.aim + (n === 1 ? 0 : (i / (n - 1) - 0.5) * spread * Math.min(n, 3));
       G.Projectiles.spawn(Object.assign({
         x: pl.x, y: pl.y, vx: Math.cos(a) * m.speed, vy: Math.sin(a) * m.speed,
-        dmg: m.dmg * pl.atk, r: m.size, life: out * 4 + 1.5, pierce: 999, color: col,
+        dmg: m.dmg * pl.atkFor(m), r: m.size, life: out * 4 + 1.5, pierce: 999, color: col,
         hits: new Set<number>(), vis, ghost, owner: pl, boom: out, bsp: m.speed * 1.1
       }, payload(m)));
     }
@@ -270,7 +290,7 @@ export const Combat = (() => {
       if (!ghost) {
         // Infortunio: más daño a quien ya sufre un estado.
         const hex = m.hex && (cur.burn > 0 || cur.poison > 0 || cur.slow > 0) ? m.hex : 1;
-        hit(pl, cur, m.dmg * pl.atk * k * hex, col, tx - fx, ty - fy, 0, m);
+        hit(pl, cur, m.dmg * pl.atkFor(m) * k * hex, col, tx - fx, ty - fy, 0, m);
       }
       k *= 0.85;
       fx = tx; fy = ty;
@@ -292,7 +312,7 @@ export const Combat = (() => {
     for (let i = 0; i < n; i++) {
       const a = Math.random() * 6.2832, d = n === 1 ? 0 : G.U.rand(18, 46);
       fields.push({ kind: 'mine', owner: pl, ghost, m, col, vis, x: pl.x + Math.cos(a) * d, y: pl.y + Math.sin(a) * d * 0.8,
-                    t: 0, arm: 0.35, life: m.dur || 7, r: m.radius, dmg: m.dmg * pl.atk });
+                    t: 0, arm: 0.35, life: m.dur || 7, r: m.radius, dmg: m.dmg * pl.atkFor(m) });
     }
     // Como mucho unas pocas por jugador: las más viejas se van.
     const mine = fields.filter(f => f.kind === 'mine' && f.owner === pl);
@@ -318,7 +338,7 @@ export const Combat = (() => {
       const e = near[i];
       const x = e ? e.x + G.U.rand(-8, 8) : cx + G.U.rand(-sx, sx);
       const y = e ? e.y + G.U.rand(-6, 6) : cy + G.U.rand(-sy, sy);
-      fields.push({ kind: 'meteor', owner: pl, ghost, m, col, vis, x, y, t: -i * 0.09, fall: 0.5, r: m.radius, dmg: m.dmg * pl.atk });
+      fields.push({ kind: 'meteor', owner: pl, ghost, m, col, vis, x, y, t: -i * 0.09, fall: 0.5, r: m.radius, dmg: m.dmg * pl.atkFor(m) });
     }
   }
 
@@ -327,7 +347,7 @@ export const Combat = (() => {
     const col = G.U.TYPE_COLOR[m.type], vis = G.VFX.forMove(m);
     const a = pl.aim + Math.PI + G.U.rand(-0.6, 0.6);
     fields.push({ kind: 'turret', owner: pl, ghost, m, col, vis, x: pl.x + Math.cos(a) * 26, y: pl.y + Math.sin(a) * 20,
-                  t: 0, life: m.dur || 6, shotT: 0.3, dmg: m.dmg * pl.atk });
+                  t: 0, life: m.dur || 6, shotT: 0.3, dmg: m.dmg * pl.atkFor(m) });
     const mine = fields.filter(f => f.kind === 'turret' && f.owner === pl && !f.gone);
     for (const f of mine.slice(0, Math.max(0, mine.length - Math.max(1, m.count | 0)))) f.gone = true;
     G.FX.ring(pl.x, pl.y, 4, 30, col, 0.3, 2);
@@ -353,10 +373,10 @@ export const Combat = (() => {
     const w = m.width || 34;
     const mx = sx + ca * len / 2, my = sy + sa * len / 2;
     for (const e of G.EnemyMgr.queryCircle(mx, my, len / 2 + w)) {
-      if (segDist2(sx, sy, pl.x, pl.y, e.x, e.y) <= (w / 2 + e.r) ** 2) hit(pl, e, m.dmg * pl.atk, col, ca, sa, m.knock || 0, m);
+      if (segDist2(sx, sy, pl.x, pl.y, e.x, e.y) <= (w / 2 + e.r) ** 2) hit(pl, e, m.dmg * pl.atkFor(m), col, ca, sa, m.knock || 0, m);
     }
     for (const p of G.World.propsInCircle(mx, my, len / 2 + w)) {
-      if (segDist2(sx, sy, pl.x, pl.y, p.x, p.y) <= (w / 2 + p.r) ** 2) G.World.damageProp(p, m.dmg * pl.atk, col);
+      if (segDist2(sx, sy, pl.x, pl.y, p.x, p.y) <= (w / 2 + p.r) ** 2) G.World.damageProp(p, m.dmg * pl.atkFor(m), col);
     }
     G.Camera.kick(0.12);
   }
@@ -370,7 +390,7 @@ export const Combat = (() => {
     const last = lastBy[m.id];
     if (last && G.U.dist2(last.x, last.y, pl.x, pl.y) < (m.radius * 0.9) ** 2 && last.t < 1) return;
     const f: PatchField = { kind: 'patch', owner: pl, ghost, m, col, vis, x: pl.x, y: pl.y, t: 0, life: m.dur || 3, r: m.radius,
-                tick: 0, dmg: m.dmg * pl.atk };
+                tick: 0, dmg: m.dmg * pl.atkFor(m) };
     fields.push(f);
     lastBy[m.id] = f;
     const mine = fields.filter(o => o.kind === 'patch' && o.owner === pl && o.m.id === m.id && !o.gone);
@@ -386,15 +406,213 @@ export const Combat = (() => {
       const sp = m.speed * G.U.rand(0.85, 1.1);
       G.Projectiles.spawn(Object.assign({
         x: pl.x + Math.cos(a) * 4, y: pl.y + Math.sin(a) * 4, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
-        dmg: m.dmg * pl.atk, r: m.size, life: m.life * G.U.rand(0.85, 1.05), pierce: m.pierce | 0, color: col,
+        dmg: m.dmg * pl.atkFor(m), r: m.size, life: m.life * G.U.rand(0.85, 1.05), pierce: m.pierce | 0, color: col,
         hits: new Set<number>(), vis, ghost, owner: pl
       }, payload(m)));
     }
     G.FX.spark(pl.x + Math.cos(pl.aim) * (pl.visR || pl.r), pl.y - G.LIFT + Math.sin(pl.aim) * (pl.visR || pl.r), col, Math.cos(pl.aim), Math.sin(pl.aim), 5);
   }
 
+  // ---------------- familias nuevas (2026-10-27) ----------------
+
+  const QSTEP = 34;             // distancia entre las ondas de un terremoto
+  const REBOUND_RANGE = 220;    // hasta dónde busca el siguiente enemigo un proyectil que rebota
+
+  /**
+   * Dónde va lo que cae en un sitio (remolino, zona que aturde): con el cursor, hacia él (sin pasar del alcance y
+   * pegándose a un enemigo si hay uno cerca); si no, sobre el blanco o, si no llega, el enemigo más cercano.
+   * Sin nada, `ahead` pone el sitio delante de ti (el remolino sale igual; la zona no).
+   */
+  function spotFor(pl: Player, m: Move, ahead: boolean): { x: number; y: number } | null {
+    const rch = reach(m), pt = pl.aimPt;
+    if (pt) {
+      const d = G.U.dist(pl.x, pl.y, pt.x, pt.y), k = d > rch ? rch / d : 1;
+      const x = pl.x + (pt.x - pl.x) * k, y = pl.y + (pt.y - pl.y) * k;
+      return G.Projectiles.nearest(G.EnemyMgr.all(), x, y, 90) || { x, y };
+    }
+    const t = pl.target;
+    if (isLiveEnemy(t) && G.U.dist(pl.x, pl.y, t.x, t.y) <= rch) return t;
+    return G.Projectiles.nearest(G.EnemyMgr.all(), pl.x, pl.y, rch)
+      || (ahead ? { x: pl.x + Math.cos(pl.aim) * 110, y: pl.y + Math.sin(pl.aim) * 90 } : null);
+  }
+
+  /** Carga: brilla un momento y suelta un rayo enorme (el de `beam`, con su grosor). Mientras carga no empieza otra. */
+  function chargeUp(pl: Player, m: Move) {
+    if (fields.some(f => f.kind === 'charge' && f.owner === pl && f.m.id === m.id && !f.gone)) return;
+    const col = G.U.TYPE_COLOR[m.type], vis = G.VFX.forMove(m), at = m.charge || 0.75;
+    fields.push({ kind: 'charge', owner: pl, ghost, m, col, vis, x: pl.x, y: pl.y, t: 0, dmg: 0, at });
+    G.FX.ring(pl.x, pl.y - G.LIFT * 0.5, pl.r * 3.2, pl.r * 0.8, col, at, 2);
+  }
+
+  /** Giro: golpea todo alrededor `count` veces seguidas (lo hace updateFields). */
+  function spin(pl: Player, m: Move) {
+    if (fields.some(f => f.kind === 'spin' && f.owner === pl && f.m.id === m.id && !f.gone)) return;
+    const col = G.U.TYPE_COLOR[m.type], vis = G.VFX.forMove(m);
+    fields.push({ kind: 'spin', owner: pl, ghost, m, col, vis, x: pl.x, y: pl.y, t: 0, dmg: m.dmg * pl.atkFor(m),
+                  n: Math.max(1, m.count | 0), next: 0, a: pl.aim });
+  }
+
+  /** Terremoto: una onda avanza en línea recta delante de ti, explosión tras explosión. */
+  function quake(pl: Player, m: Move) {
+    const col = G.U.TYPE_COLOR[m.type], vis = G.VFX.forMove(m);
+    fields.push({ kind: 'quake', owner: pl, ghost, m, col, vis, x: pl.x, y: pl.y, t: 0, dmg: m.dmg * pl.atkFor(m),
+                  ca: Math.cos(pl.aim), sa: Math.sin(pl.aim), i: 0, n: Math.max(1, m.count | 0), next: 0 });
+    if (!ghost) G.Camera.kick(0.1);
+  }
+
+  /** Remolino: sale donde está el enemigo, atrae a los de alrededor hacia el centro y les va dañando. */
+  function vortex(pl: Player, m: Move) {
+    const col = G.U.TYPE_COLOR[m.type], vis = G.VFX.forMove(m), at = spotFor(pl, m, true)!;
+    fields.push({ kind: 'vortex', owner: pl, ghost, m, col, vis, x: at.x, y: at.y, t: 0, dmg: m.dmg * pl.atkFor(m),
+                  life: m.dur || 2.6, r: m.radius, pull: m.pull || 140, tick: 0.15 });
+    G.FX.ring(at.x, at.y, m.radius, 6, col, 0.4, 3);
+    // Como mucho dos a la vez por jugador: el más viejo se va.
+    const mine = fields.filter(f => f.kind === 'vortex' && f.owner === pl && !f.gone);
+    for (const f of mine.slice(0, Math.max(0, mine.length - 2))) f.gone = true;
+  }
+
+  /** Empujón: una onda alrededor que daña y aparta a los enemigos (a los jefes no los mueve). */
+  function shove(pl: Player, m: Move) {
+    const col = G.U.TYPE_COLOR[m.type], vis = G.VFX.forMove(m);
+    G.FX.ring(pl.x, pl.y, pl.r, m.radius, col, 0.35, 4);
+    for (let i = 0; i < 8; i++) {
+      const a = i / 8 * 6.2832;
+      G.FX.sp(vis.proj, vis.pal, pl.x + Math.cos(a) * pl.r, pl.y + Math.sin(a) * pl.r * 0.8 - G.LIFT * 0.5,
+              { vx: Math.cos(a) * m.radius * 3, vy: Math.sin(a) * m.radius * 2.4, life: 0.3, angle: a });
+    }
+    if (ghost) return;
+    G.Camera.kick(0.1);
+    const d = m.dmg * pl.atkFor(m);
+    for (const e of G.EnemyMgr.queryCircle(pl.x, pl.y, m.radius)) hit(pl, e, d, col, e.x - pl.x, e.y - pl.y, m.knock || 300, m);
+    for (const p of G.World.propsInCircle(pl.x, pl.y, m.radius)) G.World.damageProp(p, d, col);
+  }
+
+  /** Zona que aturde: avisa un momento en el suelo y luego daña y deja quietos a los que pilla. */
+  function stunZone(pl: Player, m: Move) {
+    const col = G.U.TYPE_COLOR[m.type], vis = G.VFX.forMove(m), at = spotFor(pl, m, false);
+    if (!at) return;
+    fields.push({ kind: 'stunzone', owner: pl, ghost, m, col, vis, x: at.x, y: at.y, t: 0, dmg: m.dmg * pl.atkFor(m), delay: 0.45, r: m.radius });
+  }
+
+  /**
+   * Rebote: el proyectil sale hacia el enemigo más cercano que aún no ha tocado (y le queda un poco más de vida
+   * para llegar). → true si rebota; si ya no hay a quién, el proyectil sigue su camino normal (se gasta).
+   */
+  function rebound(p: Projectile, from: Enemy): boolean {
+    if (!(p.bounce! > 0)) return false;
+    let best: Enemy | null = null, bd = REBOUND_RANGE * REBOUND_RANGE;
+    for (const e of G.EnemyMgr.queryCircle(from.x, from.y, REBOUND_RANGE)) {
+      if (e.dead || p.hits!.has(e.id)) continue;
+      const d = G.U.dist2(from.x, from.y, e.x, e.y);
+      if (d < bd) { bd = d; best = e; }
+    }
+    if (!best) return false;
+    p.bounce!--;
+    const sp = Math.hypot(p.vx, p.vy) || 300, [nx, ny] = G.U.norm(best.x - p.x, best.y - p.y);
+    p.vx = nx * sp; p.vy = ny * sp;
+    p.px = p.x; p.py = p.y;                       // el barrido de colisión no mira hacia atrás
+    p.t = Math.max(0, p.t - 0.5);
+    if (Math.random() < 0.6) G.FX.spark(p.x, p.y - G.LIFT, p.color, nx, ny, 3);
+    return true;
+  }
+
+  type NewField = Extract<Field, { kind: 'charge' | 'spin' | 'quake' | 'vortex' | 'stunzone' }>;
+  const NEW_FIELDS = new Set<Field['kind']>(['charge', 'spin', 'quake', 'vortex', 'stunzone']);
+
+  /** Cada fotograma de los campos nuevos (lo llama updateFields). → true si hay que quitarlo. */
+  function tickNewField(f: NewField, dt: number): boolean {
+    const pl = f.owner, m = f.m;
+    switch (f.kind) {
+      case 'charge': {
+        f.x = pl.x; f.y = pl.y;
+        // La energía se junta en ti mientras carga.
+        if (Math.random() < dt * 30 && G.Camera.sees(f.x, f.y, 40)) {
+          const a = Math.random() * 6.2832, r = G.U.rand(30, 60);
+          G.FX.sp(f.vis.proj, f.vis.pal, f.x + Math.cos(a) * r, f.y + Math.sin(a) * r * 0.8 - G.LIFT,
+                  { vx: -Math.cos(a) * r * 3, vy: -Math.sin(a) * r * 2.4, life: 0.3 });
+        }
+        if (f.t < f.at) return false;
+        if (pl.dead) return true;
+        const g = ghost; ghost = f.ghost;
+        try { beam(pl, m); } finally { ghost = g; }
+        if (!f.ghost) G.Camera.kick(0.25);
+        return true;
+      }
+      case 'spin': {
+        if (pl.dead) return true;
+        f.next -= dt;
+        if (f.next > 0) return false;
+        f.next = 0.13;
+        f.x = pl.x; f.y = pl.y;
+        G.FX.slash(pl.x, pl.y - G.LIFT * 0.5, f.a, m.radius, 3.6, f.col, f.vis);
+        f.a += 2.2;
+        blast(f, m.radius);
+        return --f.n <= 0;
+      }
+      case 'quake': {
+        f.next -= dt;
+        while (f.next <= 0 && f.i < f.n) {
+          f.next += 0.07; f.i++;
+          const x = f.x + f.ca * f.i * QSTEP, y = f.y + f.sa * f.i * QSTEP, r = m.radius;
+          if (G.World.isWall(x, y)) { f.i = f.n; break; }
+          if (G.Camera.sees(x, y, 40)) {
+            G.FX.ring(x, y, 4, r, f.col, 0.3, 3);
+            G.FX.burst(x, y - 4, f.col, 6, 120);
+            for (let k = 0; k < 2; k++) G.FX.sp(f.vis.proj, f.vis.pal, x + G.U.rand(-r, r) * 0.5, y - 4, { vy: -G.U.rand(50, 90), vx: G.U.rand(-30, 30), life: 0.35 });
+          }
+          blast({ ghost: f.ghost, owner: pl, m, col: f.col, dmg: f.dmg, x, y }, r);
+        }
+        return f.i >= f.n;
+      }
+      case 'vortex': {
+        // Atrae a los que mueve este ordenador (en una copia del anfitrión, cada pulso de daño los empuja hacia el centro).
+        if (!f.ghost) {
+          for (const e of G.EnemyMgr.queryCircle(f.x, f.y, f.r * 1.4)) {
+            if (e.dead || e.remote || e.pinned) continue;
+            const dx = f.x - e.x, dy = f.y - e.y, d = Math.hypot(dx, dy);
+            if (d < 4) continue;
+            const k = Math.min(d, f.pull * dt * (e.boss || e.judge ? 0.25 : 1));
+            e.x += dx / d * k; e.y += dy / d * k;
+          }
+        }
+        f.tick -= dt;
+        if (f.tick <= 0) {
+          f.tick = 0.35;
+          if (!f.ghost) {
+            for (const e of G.EnemyMgr.queryCircle(f.x, f.y, f.r)) {
+              const pull = e.remote ? Math.min(Math.hypot(f.x - e.x, f.y - e.y) * 6.5, f.pull * 2.3) : 0;
+              hit(pl, e, f.dmg, f.col, f.x - e.x, f.y - e.y, pull, m);
+            }
+            for (const p of G.World.propsInCircle(f.x, f.y, f.r)) G.World.damageProp(p, f.dmg, f.col);
+          }
+        }
+        if (Math.random() < dt * 16 && G.Camera.sees(f.x, f.y, 40)) {
+          const a = Math.random() * 6.2832, rr = f.r * G.U.rand(0.5, 1);
+          G.FX.sp(f.vis.proj, f.vis.pal, f.x + Math.cos(a) * rr, f.y + Math.sin(a) * rr * 0.6 - 4,
+                  { vx: -Math.sin(a) * 110 - Math.cos(a) * 60, vy: Math.cos(a) * 66 - Math.sin(a) * 36, life: 0.45,
+                    spin: G.VFX.spins(f.vis.proj) ? 8 : 0 });
+        }
+        return false;
+      }
+      case 'stunzone': {
+        if (f.t < f.delay) return false;
+        G.FX.ring(f.x, f.y, 4, f.r, f.col, 0.35, 4);
+        G.FX.burst(f.x, f.y - 6, f.col, 12, 160);
+        if (G.Camera.sees(f.x, f.y, 40)) G.Audio.sfx('break');
+        if (!f.ghost) {
+          for (const e of G.EnemyMgr.queryCircle(f.x, f.y, f.r)) {
+            hit(pl, e, f.dmg, f.col, e.x - f.x, e.y - f.y, 0, m);
+            if (!e.dead) e.applyDaze((m.stun || 1) * (e.boss || e.judge ? 0.35 : 1));
+          }
+          for (const p of G.World.propsInCircle(f.x, f.y, f.r)) G.World.damageProp(p, f.dmg, f.col);
+        }
+        return true;
+      }
+    }
+  }
+
   /** Daño de un campo (mina, meteoro, charco) a todo lo que hay en su círculo. */
-  function blast(f: Field, r: number, k = 1) {
+  function blast(f: Blast, r: number, k = 1) {
     if (f.ghost) return;
     const pl = f.owner, m = f.m;
     for (const e of G.EnemyMgr.queryCircle(f.x, f.y, r)) hit(pl, e, f.dmg * k, f.col, e.x - f.x, e.y - f.y, m.knock || 0, m);
@@ -404,8 +622,10 @@ export const Combat = (() => {
   function updateFields(dt: number) {
     for (let i = fields.length - 1; i >= 0; i--) {
       const f = fields[i];
+      G.FX.ghost(!!f.ghost);
       f.t += dt;
       if (f.gone || !f.owner || (f.life && f.t >= f.life && f.kind !== 'mine')) { fields.splice(i, 1); continue; }
+      if (NEW_FIELDS.has(f.kind)) { if (tickNewField(f as NewField, dt)) fields.splice(i, 1); continue; }
       if (f.kind === 'mine') {
         const armed = f.t >= f.arm;
         const trig = armed && G.EnemyMgr.queryCircle(f.x, f.y, 14).length > 0;
@@ -449,6 +669,7 @@ export const Combat = (() => {
         }
       }
     }
+    G.FX.ghost(false);
   }
 
   /** Lo de los campos que va en el suelo (debajo de los Pokémon). */
@@ -456,32 +677,53 @@ export const Combat = (() => {
     const now = performance.now() / 1000;
     for (const f of fields) {
       if (!G.Camera.sees(f.x, f.y, 60)) continue;
+      const gk = f.ghost ? G.FX.allyAlpha() : 1;       // (los de un compañero, con su opacidad de Ajustes)
+      if (gk <= 0) continue;
       ctx.save();
-      if (f.kind === 'patch') {
+      if (f.kind === 'vortex') {
         const a = Math.min(1, (f.life - f.t) * 2, f.t * 6);
-        ctx.globalAlpha = 0.32 * a;
+        ctx.globalAlpha = 0.22 * a * gk;
+        ctx.fillStyle = f.col;
+        ctx.beginPath(); ctx.ellipse(f.x, f.y, f.r, f.r * 0.6, 0, 0, 6.2832); ctx.fill();
+        ctx.globalAlpha = 0.6 * a * gk;
+        ctx.strokeStyle = f.col; ctx.lineWidth = 2;
+        for (let k = 0; k < 3; k++) {
+          const rr = f.r * (0.35 + k * 0.28), a0 = now * (3 - k * 0.6) + k * 2;
+          ctx.beginPath(); ctx.ellipse(f.x, f.y, rr, rr * 0.6, 0, a0, a0 + 3.4); ctx.stroke();
+        }
+      } else if (f.kind === 'stunzone') {
+        const k = G.U.clamp(f.t / f.delay, 0, 1);
+        ctx.globalAlpha = (0.15 + 0.25 * k) * gk;
+        ctx.fillStyle = f.col;
+        ctx.beginPath(); ctx.ellipse(f.x, f.y, f.r * k, f.r * k * 0.6, 0, 0, 6.2832); ctx.fill();
+        ctx.globalAlpha = 0.8 * gk;
+        ctx.strokeStyle = f.col; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.ellipse(f.x, f.y, f.r, f.r * 0.6, 0, 0, 6.2832); ctx.stroke();
+      } else if (f.kind === 'patch') {
+        const a = Math.min(1, (f.life - f.t) * 2, f.t * 6);
+        ctx.globalAlpha = 0.32 * a * gk;
         ctx.fillStyle = f.col;
         ctx.beginPath(); ctx.ellipse(f.x, f.y, f.r, f.r * 0.62, 0, 0, 6.2832); ctx.fill();
-        ctx.globalAlpha = 0.5 * a;
+        ctx.globalAlpha = 0.5 * a * gk;
         ctx.strokeStyle = f.col; ctx.lineWidth = 1.5;
         ctx.beginPath(); ctx.ellipse(f.x, f.y, f.r * 0.8, f.r * 0.5, 0, 0, 6.2832); ctx.stroke();
       } else if (f.kind === 'mine') {
         const armed = f.t >= f.arm, blink = armed && Math.sin(now * 8 + f.x) > 0.3;
-        ctx.globalAlpha = 0.18;
+        ctx.globalAlpha = 0.18 * gk;
         ctx.fillStyle = f.col;
         ctx.beginPath(); ctx.ellipse(f.x, f.y, f.r * 0.45, f.r * 0.28, 0, 0, 6.2832); ctx.fill();
-        ctx.globalAlpha = 1;
-        G.VFX.draw(ctx, f.vis.proj, f.vis.pal, f.x, f.y - 4, { scale: 1, alpha: blink ? 1 : 0.75, frame: 0 });
+        ctx.globalAlpha = gk;
+        G.VFX.draw(ctx, f.vis.proj, f.vis.pal, f.x, f.y - 4, { scale: 1, alpha: (blink ? 1 : 0.75) * gk, frame: 0 });
       } else if (f.kind === 'meteor') {
         const k = G.U.clamp(f.t / f.fall, 0, 1);
-        ctx.globalAlpha = 0.2 + k * 0.3;
+        ctx.globalAlpha = (0.2 + k * 0.3) * gk;
         ctx.fillStyle = '#000';
         ctx.beginPath(); ctx.ellipse(f.x, f.y, f.r * (0.3 + k * 0.7), f.r * 0.6 * (0.3 + k * 0.7), 0, 0, 6.2832); ctx.fill();
-        ctx.globalAlpha = 0.6;
+        ctx.globalAlpha = 0.6 * gk;
         ctx.strokeStyle = f.col; ctx.lineWidth = 1.5; ctx.setLineDash([4, 4]);
         ctx.beginPath(); ctx.ellipse(f.x, f.y, f.r, f.r * 0.6, 0, 0, 6.2832); ctx.stroke();
       } else if (f.kind === 'turret') {
-        ctx.globalAlpha = 0.3;
+        ctx.globalAlpha = 0.3 * gk;
         ctx.fillStyle = '#000';
         ctx.beginPath(); ctx.ellipse(f.x, f.y, 11, 4.5, 0, 0, 6.2832); ctx.fill();
       }
@@ -494,14 +736,16 @@ export const Combat = (() => {
     const now = performance.now() / 1000;
     for (const f of fields) {
       if (!G.Camera.sees(f.x, f.y, 200)) continue;
+      const gk = f.ghost ? G.FX.allyAlpha() : 1;
+      if (gk <= 0) continue;
       if (f.kind === 'meteor' && f.t > 0) {
         const k = G.U.clamp(f.t / f.fall, 0, 1);
         G.VFX.draw(ctx, f.vis.proj, f.vis.pal, f.x + (1 - k) * 40, f.y - (1 - k) * 170 - 6,
-                   { scale: 1.5, angle: Math.atan2(170, -40), frame: Math.floor(now * 12) });
+                   { scale: 1.5, angle: Math.atan2(170, -40), alpha: gk, frame: Math.floor(now * 12) });
       } else if (f.kind === 'turret') {
         const fade = Math.min(1, (f.life - f.t) * 2, f.t * 5);
         const bob = Math.sin(now * 4 + f.x) * 2 - (f.kick! > 0 ? 2 : 0);
-        G.VFX.draw(ctx, f.vis.proj, f.vis.pal, f.x, f.y - 16 + bob, { scale: 1.5, alpha: fade, frame: Math.floor(now * 8) });
+        G.VFX.draw(ctx, f.vis.proj, f.vis.pal, f.x, f.y - 16 + bob, { scale: 1.5, alpha: fade * gk, frame: Math.floor(now * 8) });
       }
     }
   }
@@ -524,7 +768,7 @@ export const Combat = (() => {
       G.Projectiles.spawnOrb({
         owner: pl, ghost: isGhost, mid: m.id,
         x: pl.x, y: pl.y, r: m.size, color: col, vis: G.VFX.forMove(m),
-        dmg: m.dmg * pl.atk,
+        dmg: m.dmg * pl.atkFor(m),
         oa: (i / want) * 6.2832, orad: m.radius, ospeed: m.speed,
         rehit: Math.max(0.12, m.cd),
         knock: m.knock || 0, burn: m.burn || 0, poison: m.poison || 0, slow: m.slow || 0, mtype: m.type
@@ -532,7 +776,7 @@ export const Combat = (() => {
     }
     const live = G.Projectiles.all().filter(mine);
     live.forEach((p, i) => {
-      p.dmg = m.dmg * pl.atk;
+      p.dmg = m.dmg * pl.atkFor(m);
       p.orad = m.radius;
       p.ospeed = m.speed;
       p.r = m.size;
@@ -552,10 +796,11 @@ export const Combat = (() => {
     if (evolved) G.Moves.evolve(m);
     pl.aim = aim;
     ghost = true;
+    G.FX.ghost(true);               // (lo que nazca de aquí se dibuja con la opacidad de los compañeros)
     try {
       pl.cast(m);
       run(pl, m);
-    } finally { ghost = false; }
+    } finally { ghost = false; G.FX.ghost(false); }
   }
 
   /** Orbes de un compañero que tiene activo un movimiento de órbita (sólo visual). */
@@ -569,17 +814,29 @@ export const Combat = (() => {
   const CRIT_MUL = 1.5;
   const isCrit = (pl: Player) => !ghost && pl.critChance > 0 && Math.random() < pl.critChance;
 
+  // Habilidad de quien pega (data/ability-fx.ts): daño según el enemigo, crítico, estados y lo que hace al golpear.
+  // (Lo que no depende del enemigo ya va en pl.atkFor. Los compañeros no llevan habilidad aquí: pegan en su ordenador.)
+  const abilVs = (pl: Player, m: Pick<Move, 'type' | 'id'> | undefined, e: Enemy) =>
+    (pl.abil && pl.abil.vs && m ? pl.abil.vs(pl, m, e) : 1);
+  const critMul = (pl: Player) => (pl.abil && pl.abil.critMul) || CRIT_MUL;
+  /** × a quemaduras, venenos, frenazos y empujones: Potencia Bruta los quita y Dicha los dobla. */
+  const statusK = (pl: Player) => (!pl.abil ? 1 : pl.abil.sheer ? 0 : pl.abil.serene ? 2 : 1);
+  function afterHit(pl: Player, e: Enemy, m: Move | undefined) {
+    if (pl.abil && pl.abil.hit && !e.dead) pl.abil.hit(pl, e, m);
+  }
+
   function hit(pl: Player, e: Enemy, dmg: number, col: string, dx: number, dy: number, knock: number, m: Move) {
-    const k = typeK(m.type, e);
-    const crit = isCrit(pl);
-    dmg *= k * (crit ? CRIT_MUL : 1);
-    e.hurt(dmg, col, dx, dy, knock, crit ? 'crit' : G.Types.label(G.Types.mult(m.type, e.types)));
+    const k = typeK(m.type, e) * abilVs(pl, m, e);
+    const crit = isCrit(pl), sk = statusK(pl);
+    dmg *= k * (crit ? critMul(pl) : 1);
+    e.hurt(dmg, col, dx, dy, sk ? knock : 0, crit ? 'crit' : G.Types.label(G.Types.mult(m.type, e.types)));
     if (!ghost) pl.onDealt(dmg);
     pl.dmgDealt += dmg;
     G.Recount.add(m.id, dmg);
-    if (m.burn) e.applyBurn(m.burn);
-    if (m.poison) e.applyPoison(m.poison);
-    if (m.slow) e.applySlow(m.slow);
+    if (m.burn && sk) e.applyBurn(m.burn * sk);
+    if (m.poison && sk) e.applyPoison(m.poison * sk);
+    if (m.slow && sk) e.applySlow(Math.min(0.8, m.slow * sk));
+    afterHit(pl, e, m);
   }
 
   // ---------------- colisiones ----------------
@@ -607,7 +864,8 @@ export const Combat = (() => {
           continue;
         }
         if (G.U.dist2(p.x, p.y, pl.x, pl.y) < (p.r + pl.r) * (p.r + pl.r)) {
-          pl.hurt(p.dmg, p.mtype);
+          // Los disparos enemigos son especiales (los frena Def. Esp.); el contacto, físico (Defensa).
+          pl.hurt(p.dmg, p.mtype, false, 'spec');
           G.FX.burst(p.x, p.y - G.LIFT, p.color, 7, 110);
           projectiles.splice(i, 1);
         }
@@ -672,26 +930,33 @@ export const Combat = (() => {
 
         // Disparo fantasma de un compañero: choca y se ve, pero no daña.
         if (p.ghost) {
-          G.FX.sp('impact', p.vis ? p.vis.pal : 'normal', e.x, e.y - e.bodyH * 0.5, { life: 0.12, scale: 1 });
-          if (p.pierce > 0) { p.pierce--; continue; }
-          G.FX.burst(p.x, p.y - G.LIFT, p.color, 5, 80);
-          projectiles.splice(i, 1);
-          break;
+          G.FX.ghost(true);
+          try {
+            G.FX.sp('impact', p.vis ? p.vis.pal : 'normal', e.x, e.y - e.bodyH * 0.5, { life: 0.12, scale: 1 });
+            if (rebound(p, e)) break;
+            if (p.pierce > 0) { p.pierce--; continue; }
+            G.FX.burst(p.x, p.y - G.LIFT, p.color, 5, 80);
+            projectiles.splice(i, 1);
+            break;
+          } finally { G.FX.ghost(false); }
         }
 
-        const crit = isCrit(pl);
-        const k = (p.mtype ? typeK(p.mtype, e) : 1) * (crit ? CRIT_MUL : 1);
-        e.hurt(p.dmg * k, p.color, p.vx || (e.x - pl.x), p.vy || (e.y - pl.y), p.knock,
+        const crit = isCrit(pl), sk = statusK(pl), src = p.mid ? G.Moves.BY_ID[p.mid] : undefined;
+        const k = (p.mtype ? typeK(p.mtype, e) : 1) * (crit ? critMul(pl) : 1) * abilVs(pl, src || (p.mtype ? { type: p.mtype } as Move : undefined), e);
+        e.hurt(p.dmg * k, p.color, p.vx || (e.x - pl.x), p.vy || (e.y - pl.y), sk ? p.knock : 0,
                crit ? 'crit' : p.mtype ? G.Types.label(G.Types.mult(p.mtype, e.types)) : null);
         if (Math.random() < 0.5) G.FX.sp('impact', p.vis ? p.vis.pal : 'normal', e.x, e.y - e.bodyH * 0.5, { life: 0.12, scale: 1 });
         pl.dmgDealt += p.dmg * k;
         G.Recount.add(p.mid, p.dmg * k);
         pl.onDealt(p.dmg * k);
-        if (p.burn) e.applyBurn(p.burn);
-        if (p.poison) e.applyPoison(p.poison);
-        if (p.slow) e.applySlow(p.slow);
+        if (p.burn && sk) e.applyBurn(p.burn * sk);
+        if (p.poison && sk) e.applyPoison(p.poison * sk);
+        if (p.slow && sk) e.applySlow(Math.min(0.8, p.slow * sk));
+        if (p.drain) pl.heal(p.dmg * k * p.drain);
+        afterHit(pl, e, src as Move | undefined);
 
         if (!p.orb) {
+          if (rebound(p, e)) break;
           if (p.pierce > 0) { p.pierce--; }
           else {
             G.FX.burst(p.x, p.y - G.LIFT, p.color, 5, 80);
@@ -706,11 +971,12 @@ export const Combat = (() => {
     if (pl.dead) return;
     for (const e of G.EnemyMgr.queryCircle(pl.x, pl.y, pl.r + 40)) {
       if (G.U.dist2(e.x, e.y, pl.x, pl.y) > (e.r + pl.r) * (e.r + pl.r)) continue;
-      if (e.touchCd > 0 || e.behavior === 'thief') continue;
+      if (e.touchCd > 0 || e.behavior === 'thief' || e.dazeT > 0) continue;
       e.touchCd = 0.55;
       e.strike(pl);
-      pl.hurt(e.dmg, e.atkType);
+      pl.hurt(e.dmg, e.atkType, false, 'phys');
       if (pl.hasItem('rockyhelmet')) e.hurt(15 + pl.level * 4, '#9aa6b5', e.x - pl.x, e.y - pl.y, 80);
+      if (pl.abil && pl.abil.contact && !pl.dead && !e.dead) pl.abil.contact(pl, e);     // Electricidad Estática, Cuerpo Llama...
       const [nx, ny] = G.U.norm(e.x - pl.x, e.y - pl.y);
       e.kx += nx * 150; e.ky += ny * 150;
     }

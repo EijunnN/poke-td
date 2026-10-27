@@ -88,7 +88,7 @@ export const HUD = (() => {
   }
 
   /** Movimientos que lanzan varias cosas por disparo: el daño de la ficha es el de cada una. */
-  const MULTI = ['projectile', 'boomerang', 'nova', 'cone', 'orbit', 'meteor', 'mine'];
+  const MULTI = ['projectile', 'boomerang', 'nova', 'cone', 'orbit', 'meteor', 'mine', 'homing', 'bounce', 'spin', 'quake'];
 
   /**
    * Una ficha: nombre, tipo, nivel, descripción, daño y recarga (ya con tus mejoras), la próxima
@@ -109,7 +109,7 @@ export const HUD = (() => {
     // (los tipos oscuros apenas se leen como texto: el nombre va en blanco y el tipo, con un punto de su color)
     text(m.name, x + 32, y + 12, F(800, 12), '#f4f8ff');
     if (draw) { ctx.fillStyle = col; ctx.fillRect(x + 32, y + 18, 6, 6); }
-    text(G.T(G.U.TYPE_NAME[m.type]), x + 42, y + 24, F(600, 9), '#8fa3c4');
+    text(G.T(G.U.TYPE_NAME[m.type]) + (m.cat ? ' · ' + G.T(G.Moves.CAT_NAME[m.cat]) : ''), x + 42, y + 24, F(600, 9), '#8fa3c4');
     text(G.I18n.f('Nv. {x}', m.lvl + '/' + m.def.maxLvl!), x + w, y + 12, F(700, 10), '#ffcb3d', 'right');
     y += 36;
 
@@ -121,7 +121,7 @@ export const HUD = (() => {
 
     // daño y recarga con tus mejoras y objetos
     const stats: [string, string][] = [];
-    if (m.dmg != null) stats.push([G.T('Daño'), Math.round(m.dmg * pl.atk) + (MULTI.includes(m.kind) && (m.count || 0) > 1 ? ' ×' + m.count : '')]);
+    if (m.dmg != null) stats.push([G.T('Daño'), Math.round(m.dmg * pl.atkFor(m)) + (MULTI.includes(m.kind) && (m.count || 0) > 1 ? ' ×' + m.count : '')]);
     if (m.kind !== 'orbit') stats.push([G.T('Recarga'), num(m.cd * pl.cdMul) + ' s']);
     stats.forEach(([lab, val], i) => {
       const sx = x + i * (w / 2);
@@ -213,8 +213,8 @@ export const HUD = (() => {
     ctx.fillText(Math.ceil(pl.hp) + ' / ' + Math.round(pl.maxHp), px + 48 + 84, py + 26);
 
     // buffs activos: icono del movimiento y aro con el tiempo que les queda
-    const COL: Record<string, string> = { atk: '#ff6b4d', spd: '#7fe0ff', def: '#b0b8c8', regen: '#5fe08a' };
-    const LBL: Record<string, string> = { atk: 'ATK', spd: 'VEL', def: 'DEF', regen: 'REG' };
+    const COL: Record<string, string> = { atk: '#ff6b4d', spa: '#b46bff', spd: '#7fe0ff', def: '#b0b8c8', regen: '#5fe08a' };
+    const LBL: Record<string, string> = { atk: 'ATK', spa: 'ESP', spd: 'VEL', def: 'DEF', regen: 'REG' };
     const ER = 15, ey = py + 36 + ER;
     let bx = px;
     for (const k in pl.buffs) {
@@ -632,12 +632,25 @@ export const HUD = (() => {
       const f = (pl.reviveT || 0) / G.Player.REVIVE_TIME;
       if (f > 0) bar(ctx, w / 2 - 110, h * 0.62 + 12, 220, 10, f, '#5fe08a');
       // La cámara va libre mientras estás caído (modes/survivor.ts).
-      const hint = G.Touch.active ? 'Mueve la cámara con el joystick' : 'Mueve la cámara · Tab: seguir a un compañero';
+      const hint = G.Touch.active ? 'Mueve la cámara con el joystick' : 'Mueve la cámara con las teclas de andar';
       ctx.font = F(800, 12);
       ctx.lineWidth = 3;
       ctx.strokeText(hint, w / 2, h * 0.62 + 40);
       ctx.fillStyle = '#e8ecff';
       ctx.fillText(hint, w / 2, h * 0.62 + 40);
+      // Mirar a un compañero vivo (botón, Tab / E / Q o LB / RB): el anfitrión te manda los enemigos de donde mires.
+      if (G.Survivor.canWatch()) {
+        const who = G.Survivor.watching;
+        const label = (who ? G.I18n.f('Viendo a {x}', who.tag) + ' · ' + G.T('cambiar') : G.T('Ver a un compañero')) + (G.Touch.active ? '' : '  (E)');
+        ctx.font = F(800, 13);
+        const bw = Math.max(150, ctx.measureText(label).width + 28), bh = 30, bx = w / 2 - bw / 2, by = h * 0.62 + 52;
+        roundRect(ctx, bx, by, bw, bh, 8);
+        ctx.fillStyle = 'rgba(10,16,28,.8)'; ctx.fill();
+        ctx.lineWidth = 2; ctx.strokeStyle = who ? who.tagColor : 'rgba(244,248,255,.8)'; ctx.stroke();
+        ctx.fillStyle = '#f4f8ff';
+        ctx.fillText(label, w / 2, by + 20);
+        G.Touch.addButton(bx, by, bw, bh, () => G.Survivor.cycleLook(1), 8);
+      }
       ctx.restore();
     }
   }

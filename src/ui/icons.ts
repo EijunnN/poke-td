@@ -179,6 +179,20 @@ export const Icons = (() => {
     friends: { pal: { b: '#4fb4ff', d: '#2a6fb0', g: '#5fe08a', h: '#2f9a52' }, rows: [
       '............', '..kkk..kkk..', '.kbbbkkgggk.', '.kbbbkkgggk.', '..kkk..kkk..', '............',
       '.kkkkkkkkkk.', 'kbbbbkkggggk', 'kbbbbkkggggk', 'kddddkkhhhhk', 'kkkkkkkkkkkk', '............'] },
+    // Tienda Kecleon (20-10-2026 de upstream, dibujos propios): bolsa, Menta, Cápsulas y MT.
+    shop: { pal: { y: '#ffd23f', d: '#c08a10', t: '#d9b27a', e: '#8a6a3a' }, rows: [
+      '....kkkk....', '...k....k...', '...k....k...', '.kkkkkkkkkk.', 'kttttttttttk', 'kttkyyyykttk',
+      'kttkyddykttk', 'kttkyyyykttk', 'kttttttttttk', 'keeeeeeeeeek', 'kkkkkkkkkkkk', '............'] },
+    mint: { pal: { g: '#5fe08a', d: '#2f9a52', w: '#c8ffd8' }, rows: [
+      '............', '....kkkk....', '..kkgggwkk..', '.kgggggwggk.', '.kgwggggggk.', 'kgggggggggdk',
+      'kggggggggddk', 'kgggggggdddk', '.kgggggdddk.', '..kkdddddk..', '....kkkk....', '............'] },
+    capsule: { pal: { r: '#ff5f6d', s: '#c23a4b', w: '#f4f4ff', c: '#c9cfdc' }, rows: [
+      '............', '............', '...kkkkkk...', '..krrkwwwk..', '.krrrkwwwwk.', 'krwrrkwwwwck', 'krrrrkwwwcck', '.ksrrkwwcck.', '..ksrkwcck..', '...kkkkkk...', '............', '............'] },
+    capsuleh: { pal: { r: '#c47bff', s: '#7a3fb0', w: '#ffe9a0', c: '#c08a10' }, rows: [
+      '............', '............', '...kkkkkk...', '..krrkwwwk..', '.krrrkwwwwk.', 'krwrrkwwwwck', 'krrrrkwwwcck', '.ksrrkwwcck.', '..ksrkwcck..', '...kkkkkk...', '............', '............'] },
+    tm: { pal: { b: '#4fb4ff', d: '#2a6fb0', w: '#e6f4ff', y: '#ffd23f' }, rows: [
+      '....kkkk....', '..kkbbbbkk..', '.kbbwwbbbbk.', '.kbwbbbbbbk.', 'kbbbbkkbbbdk', 'kbbbkyykbbdk',
+      'kbbbkyykbbdk', 'kbbbbkkbbddk', '.kbbbbbbbdk.', '.kddbbbbddk.', '..kkddddkk..', '....kkkk....'] },
     ball: { pal: { r: '#ff4d4d', w: '#f4f4f4', s: '#c23a3a' }, rows: [
       '....kkkk....', '..kkrrrrkk..', '.krwrrrrrrk.', '.krwrrrrrsk.', 'krrrrkkrrssk', 'kkkkkwwkkkkk',
       'kwwwkwwkwwwk', 'kwwwwkkwwwwk', '.kwwwwwwwwk.', '.kwwwwwwwwk.', '..kkwwwwkk..', '....kkkk....'] }
@@ -224,7 +238,15 @@ export const Icons = (() => {
     turret:     ['.###.', '.#.#.', '.###.', '..#..', '#####'],
     dash:       ['#.#..', '.#.#.', '..#.#', '.#.#.', '#.#..'],
     trail:      ['#....', '.....', '..#..', '.....', '....#'],
-    cone:       ['....#', '..###', '#####', '..###', '....#']
+    cone:       ['....#', '..###', '#####', '..###', '....#'],
+    homing:     ['.#...', '..#..', '#..#.', '.#..#', '..###'],
+    bounce:     ['#...#', '.#.#.', '..#..', '.....', '#####'],
+    charge:     ['.###.', '#####', '##.##', '#####', '.###.'],
+    spin:       ['.###.', '#....', '#.#.#', '....#', '.###.'],
+    quake:      ['.....', '#...#', '##.##', '#####', '#.#.#'],
+    vortex:     ['####.', '#....', '#.##.', '#..#.', '####.'],
+    shove:      ['#...#', '.#.#.', '.....', '.#.#.', '#...#'],
+    stun:       ['#.#.#', '.....', '..#..', '.....', '#.#.#']
   };
 
   // ---------------- render ----------------

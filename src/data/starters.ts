@@ -59,12 +59,42 @@ export const STARTER_BY: Record<number, Starter> = {};
 G.STARTER_BY = STARTER_BY;
 for (const s of STARTERS) STARTER_BY[s.dex] = s;
 
-/** Movimiento inicial de cualquier Pokémon (starter o del gacha). */
-export const startMoveOf = (dex: number): string => {
+/** Movimiento inicial de serie de cualquier Pokémon (starter o del gacha). */
+export const baseStartOf = (dex: number, cats = true): string => {
   const s = STARTER_BY[dex];
-  return s ? s.start : G.Moves.startFor(G.DEX_BY[dex]);
+  return s ? s.start : G.Moves.startFor(G.DEX_BY[dex], cats);
+};
+G.baseStartOf = baseStartOf;
+
+/** Ataques que se pueden elegir para empezar (Mejoras → Movimiento inicial): los suyos, sin potenciadores. */
+export const startChoices = (dex: number): string[] =>
+  G.Moves.poolFor(G.DEX_BY[dex], true).filter(id => G.Moves.BY_ID[id].kind !== 'buff');
+G.startChoices = startChoices;
+
+/**
+ * Movimiento con el que empieza: el elegido con la mejora Movimiento inicial (si la tiene comprada para ese
+ * Pokémon y sigue siendo de los suyos) o el de serie. Sólo con ataques físicos y especiales (`cats`, el
+ * Survivor): la Defensa reparte los ataques de sus torres sin mirar la partida guardada.
+ */
+export const startMoveOf = (dex: number, cats = true): string => {
+  const sv = G.DB && G.DB.save, pick = cats && sv && sv.pstart && sv.pstart[dex];
+  if (pick && sv!.pupg[dex] && sv!.pupg[dex].start && startChoices(dex).includes(pick)) return pick;
+  return baseStartOf(dex, cats);
 };
 G.startMoveOf = startMoveOf;
+
+/**
+ * Segundo movimiento con el que empieza (Mejoras → Segundo movimiento inicial): el elegido, si tiene comprada esa
+ * mejora y Repertorio para ese Pokémon, sigue siendo de los suyos y no es el primero. Si no, null: sale al azar
+ * como siempre. Sólo en el Survivor (la Defensa no usa Repertorio).
+ */
+export const startMove2Of = (dex: number): string | null => {
+  const sv = G.DB && G.DB.save, pick = sv && sv.pstart2 && sv.pstart2[dex], up = sv && sv.pupg && sv.pupg[dex];
+  if (!pick || !up || !up.start2 || !up.moves) return null;
+  if (pick === startMoveOf(dex) || !startChoices(dex).includes(pick)) return null;
+  return pick;
+};
+G.startMove2Of = startMove2Of;
 
 /** Descripción corta de cada rasgo, para la pantalla de resultado. */
 export const TRAIT_TEXT: Record<TraitName, string> = {
@@ -150,6 +180,9 @@ declare module '../g' {
     STARTERS: typeof STARTERS;
     STARTER_BY: typeof STARTER_BY;
     startMoveOf: typeof startMoveOf;
+    startMove2Of: typeof startMove2Of;
+    baseStartOf: typeof baseStartOf;
+    startChoices: typeof startChoices;
     TRAIT_TEXT: typeof TRAIT_TEXT;
     PERSONALITY_TEST: typeof PERSONALITY_TEST;
     personalityResult: typeof personalityResult;

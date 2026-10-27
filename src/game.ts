@@ -65,6 +65,9 @@ export const Game = (() => {
     G.Touch.init(cv);
     // En móvil: al cambiar de app o girarlo en vertical, la partida se pausa.
     document.addEventListener('visibilitychange', () => { if (document.hidden) autoPause(); else settle(); });
+    // Y al perder el foco (bajar la cortinilla de avisos del móvil, Alt+Tab a otra ventana visible).
+    addEventListener('blur', autoPause);
+    trapBack();
     // Recargar o cerrar la pestaña sin querer en mitad de una partida la pierde: aviso estándar del
     // navegador (en móvil casi nunca sale). Sólo en partida: ni en menús ni en el resumen ('over'); el
     // actualizador (updater.ts) y el cambio de idioma sólo recargan en menús, así que no lo disparan.
@@ -138,6 +141,38 @@ export const Game = (() => {
     if (Run.state === 'playing' && !G.Coop.active) { Run.state = 'paused'; G.RunUI.showPause(); }
   }
 
+  /**
+   * Botón «atrás» del móvil (y del navegador): en partida pausa, en una subpantalla vuelve
+   * al menú y sólo desde el menú principal sale de la web. Se deja una entrada de más en
+   * el historial; al consumirla se vuelve a poner. Los navegadores ignoran las entradas
+   * puestas sin que el jugador haya tocado nada, por eso se pone en el primer toque o tecla.
+   */
+  function trapBack() {
+    let armed = false;
+    const arm = () => { if (!armed) { armed = true; history.pushState({ back: 1 }, ''); } };
+    addEventListener('pointerdown', arm, true);
+    addEventListener('keydown', arm, true);
+    addEventListener('popstate', () => {
+      armed = false;
+      if (onBack()) arm(); else history.back();
+    });
+  }
+
+  /** Lo que hace «atrás»; false si toca salir de la web. */
+  function onBack() {
+    if (G.SettingsUI.isOpen) { G.SettingsUI.close(); return true; }
+    if (G.UI.isOpen('scr-profile')) { G.UI.hide('scr-profile'); return true; }
+    if (Run.state === 'playing') {
+      if (G.Coop.active) { if (!G.UI.isOpen('scr-pause')) G.RunUI.showPause(true); }
+      else { G.Touch.reset(); Run.state = 'paused'; G.RunUI.showPause(); }
+      return true;
+    }
+    if (Run.state !== 'ui') return true;     // pausa, resumen: se queda donde está
+    if (['scr-dex', 'scr-upgrades', 'scr-shop', 'scr-gacha', 'scr-friends', 'scr-rooms', 'scr-rank', 'scr-goals'].some(G.UI.isOpen)
+        && document.getElementById('pull-fx')!.classList.contains('hidden')) { G.MenuUI.open(); return true; }
+    return false;
+  }
+
   /** Pausa/continúa (tecla Esc o P, o el botón de pausa del móvil). */
   function togglePause() {
     // En grupo la pausa no para el juego (los demás siguen jugando).
@@ -159,7 +194,7 @@ export const Game = (() => {
     if (Run.mode && Run.mode.keysModal()) return;
     if (Run.state === 'ui') {
       // Esc en una subpantalla del menú vuelve al menú.
-      if (G.Input.tap('escape') && !G.UI.isOpen('scr-profile') && ['scr-dex', 'scr-upgrades', 'scr-gacha', 'scr-friends', 'scr-rooms', 'scr-rank', 'scr-goals'].some(G.UI.isOpen)
+      if (G.Input.tap('escape') && !G.UI.isOpen('scr-profile') && ['scr-dex', 'scr-upgrades', 'scr-shop', 'scr-gacha', 'scr-friends', 'scr-rooms', 'scr-rank', 'scr-goals'].some(G.UI.isOpen)
           && document.getElementById('pull-fx')!.classList.contains('hidden')) G.MenuUI.open();
       return;
     }

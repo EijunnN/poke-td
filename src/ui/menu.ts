@@ -10,7 +10,7 @@ export const MenuUI = (() => {
   let dexQ!: DexSearch, dexSel: number | null = null;
 
   function init() {
-    const ICON: Record<string, string> = { play: 'ball', dex: 'book', upgrades: 'up', gacha: 'ball4', goals: 'medal3', friends: 'friends', rank: 'trophy', settings: 'gear', td: 'shield', rooms: 'user' };
+    const ICON: Record<string, string> = { play: 'ball', dex: 'book', upgrades: 'up', shop: 'shop', gacha: 'ball4', goals: 'medal3', friends: 'friends', rank: 'trophy', settings: 'gear', td: 'shield', rooms: 'user' };
     document.querySelectorAll<HTMLElement>('#scr-menu [data-go]').forEach(b => {
       b.insertAdjacentHTML('afterbegin', `<span class="mi-ico">${G.Icons.html(ICON[b.dataset.go!], 26)}</span>`);
       b.dataset.sfx = b.dataset.go === 'play' || b.dataset.go === 'td' ? 'confirm' : 'click';
@@ -20,6 +20,7 @@ export const MenuUI = (() => {
         else if (go === 'td') G.TD.openTeam();
         else if (go === 'dex') openDex();
         else if (go === 'upgrades') openUpgrades();
+        else if (go === 'shop') G.ShopUI.open();
         else if (go === 'gacha') G.GachaUI.open();
         else if (go === 'goals') G.GoalsUI.open();
         else if (go === 'friends') G.FriendsUI.open();
@@ -69,6 +70,10 @@ export const MenuUI = (() => {
     const owned = Object.keys(s.owned).filter(d => G.DEX_BY[+d]).length;
     const shinies = Object.keys(s.shiny || {}).length;
     $('menu-dex-count').textContent = `${owned} / ${G.DEX.length}` + (shinies ? ` · ${shinies} shiny` : '');
+    // Tienda Kecleon: lo que llevas en la Mochila.
+    const sum = (o?: Record<string, number>) => Object.values(o || {}).reduce((a, b) => a + (+b || 0), 0);
+    const bag = sum(s.bag), tms = sum(s.tms);
+    $('menu-shop-sub').textContent = bag || tms ? G.I18n.f('Mochila: {x} objetos · {x} MT', bag, tms) : 'Mentas, Cápsulas y MT';
 
     const st = s.stats;
     $('menu-stats').innerHTML =
@@ -286,11 +291,20 @@ export const MenuUI = (() => {
     const isPartner = dex === s.partner;
     if (!hasSh) viewShiny = false;
     else if (isPartner && dex !== lastDetail) viewShiny = !!s.partnerShiny;
+    if (dex !== lastDetail) extraOpen = '';
+    // Al redibujar el mismo Pokémon (abrir el selector de una Menta, enseñar una MT...) no se vuelve arriba.
+    const scrolls = dex === lastDetail ? [$('dex-detail'), $('dex-detail').closest<HTMLElement>('.box')].filter((el): el is HTMLElement => !!el).map(el => [el, el.scrollTop] as const) : [];
     lastDetail = dex;
 
-    const max = { hp: 183, atk: 1.55, spd: 137 };
-    const bar = (label: string, v: number, m: number, txt: string | number) =>
-      `<div class="stat"><span>${label}</span><div class="bar"><i style="width:${Math.min(100, v / m * 100)}%"></i></div><span>${txt}</span></div>`;
+    const max = { hp: 183, stat: 160, spd: 137 };
+    const [sAtk, sSpa, sDef, sSpd] = G.statsOf(dex);
+    // Con su naturaleza: lo que sube, en verde y con ▲; lo que baja, en rojo y con ▼.
+    const nat = own ? G.Mons.natureOf(dex) : null;
+    const bar = (label: string, v: number, m: number, txt: string | number, k?: string) => {
+      const cls = !nat || !k ? '' : nat.up === k ? ' nat-up' : nat.down === k ? ' nat-down' : '';
+      const mark = cls ? (cls === ' nat-up' ? ' ▲' : ' ▼') : '';
+      return `<div class="stat${cls}"><span>${label}${mark}</span><div class="bar"><i style="width:${Math.min(100, v / m * 100)}%"></i></div><span>${txt}</span></div>`;
+    };
     const usingThis = isPartner && (!hasSh || !!s.partnerShiny === viewShiny);
     const fav = G.DexQuery.isFav(s, dex);
 
@@ -309,17 +323,24 @@ export const MenuUI = (() => {
       </div>
       ${own ? `
         ${bar('Vida', p.hp, max.hp, p.hp)}
-        ${bar('Ataque', p.atk, max.atk, '×' + p.atk.toFixed(2))}
-        ${bar('Velocidad', p.spd, max.spd, p.spd)}
+        ${bar('Ataque', sAtk, max.stat, sAtk, 'pa')}
+        ${bar('At. Esp.', sSpa, max.stat, sSpa, 'sa')}
+        ${bar('Defensa', sDef, max.stat, sDef, 'df')}
+        ${bar('Def. Esp.', sSpd, max.stat, sSpd, 'sd')}
+        ${bar('Velocidad', p.spd, max.spd, p.spd, 'spd')}
+        ${monExtras(dex)}
+        ${p.types.length === 1 ? `<p class="sub center" style="margin:8px 0 0">Monotipo: +20 % de daño con sus ataques de tipo ${G.U.TYPE_NAME[p.types[0]]}</p>` : ''}
         <p style="font-size:14px;margin:10px 0 4px">Empieza con <b class="gold">${G.Moves.BY_ID[G.startMoveOf(dex)].name}</b></p>
         <p class="move-icons" title="Movimientos que puede aprender">
-          ${G.Moves.poolFor(p).map(id => `<span title="${G.Moves.BY_ID[id].name}">${G.Icons.html('move:' + id, 16)}</span>`).join('')}</p>
+          ${G.Moves.poolFor(p, true).map(id => { const d = G.Moves.BY_ID[id];
+            return `<span title="${G.T(d.name) + (d.cat ? ' · ' + G.T(G.Moves.CAT_NAME[d.cat]) : '')}">${G.Icons.html('move:' + id, 16)}</span>`; }).join('')}</p>
         ${usingThis
           ? '<button class="btn grow" disabled style="width:100%">Es tu compañero</button>'
           : `<button id="dex-pick" class="btn gold" data-sfx="confirm" style="width:100%">Elegir de compañero${viewShiny ? ' (shiny)' : ''}</button>`}
       ` : `<p class="center" style="color:var(--muted)">Aún no lo tienes.<br>Consíguelo en el banner de <b class="gold">${GEN_NAMES[p.gen - 1]}</b>
             o derrotándolo cuando salga shiny.</p>`}
     `;
+    for (const [el, top] of scrolls) el.scrollTop = top;
     $('dex-big').style.setProperty('--stage-c', !own ? '#5b83d6' : viewShiny ? '#9ae6ff' : G.U.TYPE_COLOR[p.types[0]]);
     $('dex-big').classList.toggle('shiny', own && viewShiny);
     G.UI.sprite($('dex-big'), dex, { lively: own, spin: own, silhouette: !own, scale: 3, hero: true, shiny: own && viewShiny });
@@ -342,6 +363,74 @@ export const MenuUI = (() => {
       G.UI.toast(p.name + (s.partnerShiny ? ' shiny' : '') + ' es ahora tu compañero');
       renderGrid(true); showDetail(dex);
     };
+    if (own) wireExtras(dex, box);
+  }
+
+  // ---------------- naturaleza, habilidad y MT (Tienda Kecleon) ----------------
+  // Se ven en la ficha de cada Pokémon y aquí se gastan la Menta, las Cápsulas y las MT de la Mochila.
+  const STAT_NAME: Record<string, string> = { pa: 'Ataque', sa: 'At. Esp.', df: 'Defensa', sd: 'Def. Esp.', spd: 'Velocidad' };
+  let extraOpen = '';          // 'nat' | 'cap' | 'caph' | 'tm' | '' (qué selector está abierto)
+  const natLine = (n: { up: string; down: string }) => (n.up ? `+${G.T(STAT_NAME[n.up])} −${G.T(STAT_NAME[n.down])}` : G.T('neutra'));
+  /** Un nombre ya en el idioma del juego: que la traducción automática no lo toque. */
+  const raw = (t: string) => `<span translate="no">${t}</span>`;
+
+  function monExtras(dex: number): string {
+    const p = G.DEX_BY[dex], n = G.Mons.natureOf(dex), ab = G.Mons.abilityOf(dex);
+    const fx = G.AbilityFX.of(ab.id, p), taught = G.Mons.taught(dex);
+    const tmsHere = G.Mons.learnable(dex).filter(id => G.Shop.tmCount(id) > 0);
+    const btn = (key: string, icon: string, label: string, count: number) => count > 0
+      ? `<button class="btn small" data-extra="${key}">${G.Icons.html(icon, 14)} <span>${label}</span> <small>×${count}</small></button>` : '';
+    const capN = G.Mons.abilityChoices(dex, false).length ? G.Shop.count('cap') : 0;
+    const caphN = G.Mons.abilityChoices(dex, true).length ? G.Shop.count('caph') : 0;
+    const none = !G.Shop.count('mint') && !capN && !caphN && !tmsHere.length;
+    return `<div class="mon-extra">
+      <div class="mx-row"><span>Naturaleza</span><b>${raw(G.Mons.name(n.n))}</b><small>${natLine(n)}</small>
+        ${btn('nat', 'mint', 'Menta', G.Shop.count('mint'))}</div>
+      <div class="mx-row"><span>Habilidad</span><b>${raw(G.Mons.abilityName(ab.id))}</b>${ab.slot === 2 ? `<small class="gold">${G.T('Habilidad oculta')}</small>` : ''}
+        ${btn('cap', 'capsule', 'Cápsula', capN)}${btn('caph', 'capsuleh', 'Cápsula Oculta', caphN)}</div>
+      <p class="sub mx-desc">${raw(G.AbilityFX.describe(fx))}</p>
+      <div class="mx-row"><span>MT</span>${taught.length
+        ? `<span class="move-icons">${taught.map(id => `<span title="${G.Moves.BY_ID[id].name}">${G.Icons.html('move:' + id, 16)}</span>`).join('')}</span>`
+        : `<small>${G.T('Aún no ha aprendido ninguna')}</small>`}
+        ${btn('tm', 'tm', 'Enseñar MT', tmsHere.length)}</div>
+      ${none ? `<p class="sub mx-desc">Mentas, Cápsulas y MT se compran en la Tienda Kecleon.</p>` : ''}
+      <div id="mx-picker"></div>
+    </div>`;
+  }
+
+  function wireExtras(dex: number, box: HTMLElement) {
+    box.querySelectorAll<HTMLElement>('[data-extra]').forEach(b => {
+      b.onclick = () => { extraOpen = extraOpen === b.dataset.extra ? '' : b.dataset.extra!; G.Audio.sfx('select'); showDetail(dex); };
+    });
+    const host = box.querySelector<HTMLElement>('#mx-picker');
+    if (!host || !extraOpen) return;
+    const mon = G.DEX_BY[dex];
+    const chips = (list: { v: string; html: string }[], onPick: (v: string) => void) => {
+      host.innerHTML = `<div class="panel ban-picker"><div class="ban-moves">${list.map(x => `<button class="chip" data-v="${x.v}">${x.html}</button>`).join('')}</div></div>`;
+      host.querySelectorAll<HTMLElement>('[data-v]').forEach(c => { c.onclick = () => onPick(c.dataset.v!); });
+    };
+    const done = (msg: string) => { extraOpen = ''; G.DB.commit(true); G.Audio.sfx('buy'); G.UI.toast(msg, 2600); showDetail(dex); };
+    if (extraOpen === 'nat' && G.Shop.count('mint')) {
+      const cur = G.Mons.natureOf(dex).id;
+      chips(G.NATURES.filter(n => n.id !== cur).map(n => ({ v: n.id, html: `<b>${raw(G.Mons.name(n.n))}</b> <small>${natLine(n)}</small>` })), id => {
+        if (!G.Shop.take('mint')) return;
+        G.Mons.setNature(dex, id);
+        done(G.I18n.f('{x} ahora tiene naturaleza {x}', mon.name, G.Mons.name(G.NATURE_BY[id].n)));
+      });
+    } else if ((extraOpen === 'cap' || extraOpen === 'caph') && G.Shop.count(extraOpen)) {
+      const l = G.Mons.slots(dex), kind = extraOpen;
+      chips(G.Mons.abilityChoices(dex, kind === 'caph').map(i => ({ v: String(i), html: `<b>${raw(G.Mons.abilityName(l[i]))}</b>${i === 2 ? ` <small class="gold">${G.T('Habilidad oculta')}</small>` : ''}` })), v => {
+        if (!G.Shop.take(kind)) return;
+        G.Mons.setAbility(dex, +v);
+        done(G.I18n.f('{x} ahora tiene la habilidad {x}', mon.name, G.Mons.abilityName(l[+v])));
+      });
+    } else if (extraOpen === 'tm') {
+      const list = G.Mons.learnable(dex).filter(id => G.Shop.tmCount(id) > 0);
+      chips(list.map(id => ({ v: id, html: `${G.Icons.html('move:' + id, 16)} ${G.Moves.BY_ID[id].name}` })), id => {
+        if (!G.Mons.teach(dex, id)) return;
+        done(G.I18n.f('¡{x} ha aprendido {x}!', mon.name, G.T(G.Moves.BY_ID[id].name)));
+      });
+    }
   }
 
   // ---------------- mejoras ----------------
@@ -376,6 +465,9 @@ export const MenuUI = (() => {
       const lvl = levels[u.id] || 0;
       const maxed = lvl >= u.max;
       const cost = maxed ? 0 : G.Upgrades.cost(u.id, lvl);
+      // Mejoras que necesitan otra (Segundo movimiento inicial → Repertorio).
+      const locked = !maxed && !!u.needs && !levels[u.needs];
+      const pick2 = u.id === 'start2' && lvl > 0 ? G.startMove2Of(upgDex) : null;
       const el = document.createElement('div');
       el.className = 'panel upg-item';
       el.innerHTML = `
@@ -386,13 +478,18 @@ export const MenuUI = (() => {
         </div>
         <div class="upg-btns">
           ${u.id === 'ban' && lvl > 0 ? `<button class="btn small" data-ban>Elegir (${banList().length}/${lvl})</button>` : ''}
-          <button class="btn small ${maxed ? '' : 'gold'}" data-buy data-sfx="none" ${maxed || s.coins < cost ? 'disabled' : ''}>
-          ${maxed ? 'Máx.' : `<span class="coin"></span> ${cost}`}</button></div>`;
+          ${u.id === 'start' && lvl > 0 ? `<button class="btn small" data-start>Elegir: ${G.Moves.BY_ID[G.startMoveOf(upgDex)].name}</button>` : ''}
+          ${u.id === 'start2' && lvl > 0 ? `<button class="btn small" data-start2>Elegir: ${pick2 ? G.Moves.BY_ID[pick2].name : G.T('Al azar')}</button>` : ''}
+          <button class="btn small ${maxed ? '' : 'gold'}" data-buy data-sfx="none" ${maxed || locked || s.coins < cost ? 'disabled' : ''}
+            ${locked ? `title="${G.T('Primero compra Repertorio')}"` : ''}>
+          ${maxed ? 'Máx.' : locked ? G.T('Necesita Repertorio') : `<span class="coin"></span> ${cost}`}</button></div>`;
       if (u.id === 'ban' && lvl > 0) el.querySelector<HTMLElement>('[data-ban]')!.onclick = () => { banOpen = !banOpen; renderUpgrades(); };
+      if (u.id === 'start' && lvl > 0) el.querySelector<HTMLElement>('[data-start]')!.onclick = () => { startOpen = !startOpen; renderUpgrades(); };
+      if (u.id === 'start2' && lvl > 0) el.querySelector<HTMLElement>('[data-start2]')!.onclick = () => { start2Open = !start2Open; renderUpgrades(); };
       el.querySelector<HTMLElement>('[data-buy]')!.onclick = () => {
         // Se vuelve a leer todo al pulsar (la partida puede haber cambiado desde que se dibujó).
         const sv = G.DB.save, lv = G.DB.upgradesOf(upgDex), now = lv[u.id] || 0;
-        if (now >= u.max) { renderUpgrades(); return; }
+        if (now >= u.max || (u.needs && !lv[u.needs])) { renderUpgrades(); return; }
         const price = G.Upgrades.cost(u.id, now);
         if (sv.coins < price) { renderUpgrades(); return; }
         sv.coins -= price;
@@ -405,6 +502,8 @@ export const MenuUI = (() => {
       };
       box.appendChild(el);
       if (u.id === 'ban' && lvl > 0 && banOpen) box.appendChild(banPicker(lvl));
+      if (u.id === 'start' && lvl > 0 && startOpen) box.appendChild(startPicker());
+      if (u.id === 'start2' && lvl > 0 && start2Open) box.appendChild(start2Picker());
     }
     box.appendChild(bindPanel());
   }
@@ -416,7 +515,7 @@ export const MenuUI = (() => {
     s.pbind = s.pbind || {};
     const list = s.pbind[upgDex] || [null, null, null, null];
     const mon = G.DEX_BY[upgDex];
-    const ids = G.Moves.poolFor(mon).concat([G.startMoveOf(upgDex)]).filter((v, i, a) => a.indexOf(v) === i)
+    const ids = G.Moves.poolFor(mon, true).concat([G.startMoveOf(upgDex)]).filter((v, i, a) => a.indexOf(v) === i)
       .sort((a, b) => G.Moves.BY_ID[a].name.localeCompare(G.Moves.BY_ID[b].name, 'es'));
     const el = document.createElement('div');
     el.className = 'panel bind-panel';
@@ -442,6 +541,65 @@ export const MenuUI = (() => {
     return el;
   }
 
+  // ---------------- movimiento inicial (Mejoras → Movimiento inicial) ----------------
+  // Lo elegido va en save.pstart[dex]; si es el de serie, se quita.
+  let startOpen = false;
+  function startPicker() {
+    const s = G.DB.save, cur = G.startMoveOf(upgDex), base = G.baseStartOf(upgDex);
+    const ids = G.startChoices(upgDex).sort((a, b) => G.Moves.BY_ID[a].name.localeCompare(G.Moves.BY_ID[b].name, 'es'));
+    const el = document.createElement('div');
+    el.className = 'panel ban-picker';
+    el.innerHTML = `<p class="sub" style="margin:0 0 8px">Elige con qué ataque empieza. Lo puedes cambiar cuando quieras, gratis.</p>
+      <div class="ban-moves">${ids.map(id => { const d = G.Moves.BY_ID[id];
+        return `<button class="chip ${id === cur ? 'on' : ''}" data-id="${id}">${G.Icons.html('move:' + id, 16)} ${d.name}${id === base ? ' <small>(de serie)</small>' : ''}</button>`; }).join('')}</div>`;
+    el.querySelectorAll<HTMLElement>('[data-id]').forEach(b => {
+      b.onclick = () => {
+        const id = b.dataset.id!;
+        s.pstart = s.pstart || {};
+        if (id === base) delete s.pstart[upgDex]; else s.pstart[upgDex] = id;
+        // Si era el segundo inicial, el segundo vuelve a salir al azar.
+        if (s.pstart2 && s.pstart2[upgDex] === id) delete s.pstart2[upgDex];
+        // El de inicio no puede estar vetado.
+        const l = banList(), i = l.indexOf(id);
+        if (i >= 0) l.splice(i, 1);
+        G.DB.commit();
+        G.Audio.sfx('select');
+        G.UI.toast(G.DEX_BY[upgDex].name + ' empezará con ' + G.Moves.BY_ID[id].name);
+        renderUpgrades();
+      };
+    });
+    return el;
+  }
+
+  // ---------------- segundo movimiento inicial (Mejoras → Segundo movimiento inicial, con Repertorio) ----------------
+  // Lo elegido va en save.pstart2[dex]; sin elegir (o «Al azar»), el segundo sale al azar como siempre.
+  let start2Open = false;
+  function start2Picker() {
+    const s = G.DB.save, cur = G.startMove2Of(upgDex), first = G.startMoveOf(upgDex);
+    const ids = G.startChoices(upgDex).filter(id => id !== first)
+      .sort((a, b) => G.Moves.BY_ID[a].name.localeCompare(G.Moves.BY_ID[b].name, 'es'));
+    const el = document.createElement('div');
+    el.className = 'panel ban-picker';
+    el.innerHTML = `<p class="sub" style="margin:0 0 8px">Elige el segundo ataque con el que empieza. Lo puedes cambiar cuando quieras, gratis.</p>
+      <div class="ban-moves"><button class="chip ${!cur ? 'on' : ''}" data-id="">${G.T('Al azar')}</button>${ids.map(id => { const d = G.Moves.BY_ID[id];
+        return `<button class="chip ${id === cur ? 'on' : ''}" data-id="${id}">${G.Icons.html('move:' + id, 16)} ${d.name}</button>`; }).join('')}</div>`;
+    el.querySelectorAll<HTMLElement>('[data-id]').forEach(b => {
+      b.onclick = () => {
+        const id = b.dataset.id!;
+        s.pstart2 = s.pstart2 || {};
+        if (!id) delete s.pstart2[upgDex]; else s.pstart2[upgDex] = id;
+        // El elegido no puede estar vetado.
+        const l = banList(), i = id ? l.indexOf(id) : -1;
+        if (i >= 0) l.splice(i, 1);
+        G.DB.commit();
+        G.Audio.sfx('select');
+        G.UI.toast(id ? G.I18n.f('{x} empezará también con {x}', G.DEX_BY[upgDex].name, G.Moves.BY_ID[id].name) : G.T('El segundo ataque saldrá al azar'));
+        renderUpgrades();
+      };
+    });
+    return el;
+  }
+
   // ---------------- veto: movimientos bloqueados ----------------
   // Lista por Pokémon en save.pban[dex]; con N niveles de Veto, N movimientos.
   let banOpen = false;
@@ -452,8 +610,8 @@ export const MenuUI = (() => {
   }
   function banPicker(max: number) {
     const mon = G.DEX_BY[upgDex];
-    const start = G.startMoveOf(upgDex);
-    const ids = G.Moves.poolFor(mon).filter(id => id !== start)
+    const start = G.startMoveOf(upgDex), start2 = G.startMove2Of(upgDex);
+    const ids = G.Moves.poolFor(mon, true).filter(id => id !== start && id !== start2)
       .sort((a, b) => G.Moves.BY_ID[a].name.localeCompare(G.Moves.BY_ID[b].name, 'es'));
     const list = banList();
     const el = document.createElement('div');

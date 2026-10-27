@@ -21,7 +21,7 @@ export const UI = (() => {
   // Los elementos de index.html existen siempre; `$<HTMLInputElement>(id)` para el tipo concreto.
   const $ = <T extends HTMLElement = HTMLElement>(id: string): T => document.getElementById(id) as T;
   const SCREENS = ['scr-login', 'scr-test', 'scr-result', 'scr-starters', 'scr-menu',
-                   'scr-dex', 'scr-upgrades', 'scr-gacha', 'scr-levelup', 'scr-pause', 'scr-over',
+                   'scr-dex', 'scr-upgrades', 'scr-shop', 'scr-gacha', 'scr-levelup', 'scr-pause', 'scr-over',
                    'scr-nick', 'scr-friends', 'scr-rooms', 'scr-lobby', 'scr-rank', 'scr-item', 'scr-goals', 'scr-bond', 'scr-mod'];
 
   function show(id: string, keepMenu = false) {
@@ -67,6 +67,14 @@ export const UI = (() => {
 
   function typeChips(types: PokeType[]) {
     return types.map((t: PokeType) => `<span class="type" style="background:${G.U.TYPE_COLOR[t]}">${G.U.TYPE_NAME[t]}</span>`).join('');
+  }
+
+  /** Etiqueta de un ataque físico o especial (ver Moves.CAT_NAME); vacío si no hace daño. */
+  function catChip(cat?: 'phys' | 'spec') {
+    if (!cat) return '';
+    const tip = cat === 'phys' ? 'Físico: pega con el Ataque del Pokémon y lo frena la Defensa'
+                               : 'Especial: pega con el At. Esp. del Pokémon y lo frena la Def. Esp.';
+    return `<span class="cat-chip cat-${cat}" title="${tip}">${G.Moves.CAT_NAME[cat]}</span>`;
   }
 
   /** Rareza: la Poké Ball que le corresponde (ver G.Icons.rarity). */
@@ -304,7 +312,7 @@ export const UI = (() => {
     return cv;
   }
 
-  return { $, show, hide, hideAll, isOpen, chrome, refreshCoins, toast, typeChips, stars, confirmDelete,
+  return { $, show, hide, hideAll, isOpen, chrome, refreshCoins, toast, typeChips, catChip, stars, confirmDelete,
            sprite, spriteCanvas, tick, initChrome, soundControls };
 })();
 G.UI = UI;

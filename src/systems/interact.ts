@@ -118,7 +118,9 @@ export const Interact = (() => {
         else e.hurt(90 + lvl * 18, '#ff7b3d', e.x - x, e.y - y, 220);
       }
     }
-    if (pl && !pl.dead && G.U.dist2(x, y, pl.x, pl.y) < (TRAP_R * 0.7) ** 2) {
+    // (Levitación y Muro Mágico: las trampas no les hacen nada; Flexibilidad y parecidas, la pegajosa no les frena.)
+    const ab = (pl && pl.abil) || null;
+    if (pl && !pl.dead && G.U.dist2(x, y, pl.x, pl.y) < (TRAP_R * 0.7) ** 2 && !(ab && (ab.levitate || ab.trapProof || (k === 1 && ab.steady)))) {
       pl.invuln = 0;
       if (k === 0) pl.hurt(pl.maxHp * 0.1);
       else if (k === 1) { pl.slowT = 3.5; G.FX.dmgText(pl.x, pl.y - pl.bodyH - 6, '¡Pegajoso!', '#8bd94a'); }

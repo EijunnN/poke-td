@@ -8,7 +8,7 @@ import { Run } from '../run';
 /** Lo que se enseña al acabar la run (la Defensa cambia las cuatro cifras de arriba con `cells`). */
 interface RunResult {
   dead: boolean; time: number; level: number; kills: number; bosses: number; coins: number; record: boolean;
-  t1: number; t10: number; judge: { time: number; bosses: number } | null;
+  t1: number; t10: number; judge: { time: number; bosses: number; dmg: number } | null;
   moves: MoveInstance[]; caught: { dex: number; isNew?: boolean }[]; breakdown: string;
   /** Daño de la run (medidor de daño); la Defensa no lo lleva. */
   dmg?: DmgReport;
@@ -31,6 +31,23 @@ export const RunUI = (() => {
   let openedAt = 0;
   const armGuard = () => { openedAt = performance.now(); };
   const guarded = () => performance.now() - openedAt < GUARD_MS;
+
+  /**
+   * Una carta se elige al levantar el dedo encima de ella. El clic del navegador no
+   * llega si hay otro dedo en la pantalla (el pulgar en el joystick) y la partida se
+   * quedaba parada con las cartas abiertas. Con ratón sigue valiendo el clic.
+   */
+  function onTap(el: HTMLElement, fn: () => void) {
+    let id = -1, at = 0;
+    el.addEventListener('pointerdown', e => { if (e.pointerType !== 'mouse') id = e.pointerId; });
+    el.addEventListener('pointerup', e => {
+      if (e.pointerId !== id) return;
+      id = -1; at = performance.now();
+      fn();
+    });
+    el.addEventListener('pointercancel', () => { id = -1; });
+    el.onclick = () => { if (performance.now() - at > 600) fn(); };
+  }
 
   /** @param coop  en grupo: tras elegir, se queda esperando a los demás */
   function showLevelUp(level: number, list: Card[], cb: (c: Card) => void, coop = false) {
@@ -82,10 +99,10 @@ export const RunUI = (() => {
       if (c.type === 'evo') el.classList.add('evo');
       el.innerHTML =
         `<div class="ico" style="background:${c.color}33">${G.Icons.html(c.icon, 32)}</div>
-         <div class="txt"><div class="nm">${c.title} ${tag}</div><div class="ds">${c.desc}${p ? G.StatsUI.cardHtml(c, p) : ''}</div></div>
+         <div class="txt"><div class="nm">${c.title} ${tag}${G.UI.catChip(c.cat)}</div><div class="ds">${c.desc}${p ? G.StatsUI.cardHtml(c, p) : ''}</div></div>
          <div class="key">${i + 1}</div>`;
       el.dataset.sfx = 'none';             // el juego pone su propio sonido al elegir
-      el.onclick = () => pick(i);
+      onTap(el, () => pick(i));
       box.appendChild(el);
     });
   }
@@ -147,7 +164,7 @@ export const RunUI = (() => {
     const cells: [string, string | number][] = r.cells || [['Tiempo', G.U.mmss(r.time)], ['Nivel', r.level], ['Derrotados', r.kills], ['Jefes', r.bosses]];
     $('over-stats').innerHTML = `
       ${cells.map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join('')}
-      ${r.judge ? `<div style="grid-column:1/-1"><span>Ante Arceus</span><b class="gold">${G.U.mmss(r.judge.time)} · ${r.judge.bosses} ${r.judge.bosses === 1 ? 'legendario' : 'legendarios'}</b></div>` : ''}
+      ${r.judge ? `<div style="grid-column:1/-1"><span>Ante Arceus</span><b class="gold">${G.U.mmss(r.judge.time)} · ${r.judge.bosses} ${r.judge.bosses === 1 ? 'legendario' : 'legendarios'}</b></div>${r.judge.dmg > 0 ? `<div style="grid-column:1/-1"><span>Daño a Arceus</span><b class="gold">${r.judge.dmg.toLocaleString(G.I18n.lang === 'en' ? 'en-US' : 'es-ES')}</b></div>` : ''}` : ''}
       <div style="grid-column:1/-1"><span>Pokémonedas ganadas</span>
         <b class="gold"><span class="coin"></span> +${r.coins}</b>
         <div style="font-size:12px;color:var(--muted)">${r.breakdown}</div></div>
@@ -242,7 +259,7 @@ export const RunUI = (() => {
       el.innerHTML = `<div class="ico">${G.Icons.html(o.ico, 36)}</div>
         <div class="txt"><div class="nm">${o.title}</div><div class="ds">${o.desc}</div></div>
         <div class="key">${i + 1}</div>`;
-      el.onclick = () => { if (guarded()) return; G.UI.hide('scr-item'); cb(o.id); };
+      onTap(el, () => { if (guarded()) return; G.UI.hide('scr-item'); cb(o.id); });
       box.appendChild(el);
     });
     G.UI.show('scr-item');
@@ -287,7 +304,7 @@ export const RunUI = (() => {
          <div class="txt"><div class="nm">${m.name} <span class="tag-chip" style="background:${col}">Nv.${m.lvl}</span></div><div class="ds">${desc}</div></div>
          <div class="key">${i + 1}</div>`;
       el.dataset.sfx = 'none';
-      el.onclick = () => pickBond(i);
+      onTap(el, () => pickBond(i));
       box.appendChild(el);
     });
   }

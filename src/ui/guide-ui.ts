@@ -84,8 +84,8 @@ export const GuideUI = (() => {
          '<b>Rifts:</b> portals that appear now and then. Inside you fight a legendary in an arena of its type.'],
         ['<b>Clima:</b> con lluvia el Agua se potencia y el Fuego se debilita; también hay sol, arena, nieve y niebla.',
          '<b>Weather:</b> rain powers up Water and weakens Fire; there is also sun, sand, snow and fog.'],
-        ['En el <b>minuto 30</b> llega la Sentencia de Arceus: invencible, cada vez más rápido y con un legendario más cada pocos segundos. ¿Cuánto aguantas?',
-         'At <b>minute 30</b> the Judgment of Arceus arrives: invincible, faster and faster, with another legendary every few seconds. How long can you last?'],
+        ['En el <b>minuto 30</b> llega la Sentencia de Arceus: no cae, pero puedes herirle (cambia de tipo cada pocos segundos y rompe tu objeto en el minuto 35), y cada pocos segundos llega un legendario más fuerte. ¿Cuánto daño le haces?',
+         'At <b>minute 30</b> the Judgment of Arceus arrives: it cannot fall, but you can hurt it (it changes type every few seconds and breaks your held item at minute 35), and every few seconds a stronger legendary joins. How much damage can you deal?'],
       ])
       + h('En grupo', 'With friends')
       + ul([

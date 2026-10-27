@@ -21,7 +21,7 @@ beforeAll(() => {
   G.Camera = { sees: () => false, kick() {} };
   G.Audio = { sfx() {} };
   G.Projectiles = { clearOrbs() {} };
-  G.Sprites = { hasShiny: () => false, Animator: class { _start() {} play() {} }, bodyRadius: (dex: number) => (dex === 146 ? 35 : dex === 25 ? 6 : 14), bodyHeight: () => 40 };
+  G.Sprites = { hasShiny: () => false, Animator: class { _start() {} play() {} }, bodyRadius: (dex: number) => (dex === 146 ? 35 : dex === 25 ? 6 : 14), bodyHeight: () => 40, playerScale: () => 1 };
   queryOrig = G.EnemyMgr.queryCircle;
   G.EnemyMgr.queryCircle = (x: number, y: number, r: number) => field.filter(e => Math.hypot(e.x - x, e.y - y) <= r);
 });

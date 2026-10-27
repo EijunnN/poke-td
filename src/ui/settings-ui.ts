@@ -68,6 +68,12 @@ export const SettingsUI = (() => {
     return `<div class="set-row"><div class="grow"><b>${esc(label)}</b><small>${esc(desc)}</small></div>
       <button class="btn small switch ${on ? 'gold' : ''}" data-k="${key}">${on ? 'Sí' : 'No'}</button></div>`;
   }
+  /** Deslizador 0–100 % de un ajuste que va de 0 a 1 (se guarda al mover; el porcentaje se ve al momento). */
+  function slider(key: string, label: string) {
+    const pct = Math.round(Number(G.Settings.get(key)) * 100);
+    return `<div class="set-row"><div class="grow"><b>${esc(label)}</b></div><span class="gold" data-pct="${key}">${pct} %</span></div>
+      <div class="set-row"><input type="range" min="0" max="100" step="5" value="${pct}" data-slider="${key}" aria-label="${esc(label)}"></div>`;
+  }
   function choice(key: string, opts: [string | number, string][]) {
     const cur = G.Settings.get(key);
     return `<div class="chips set-chips">${opts.map(([v, l]) => `<button class="chip ${v === cur ? 'on' : ''}" data-k="${key}" data-v="${v}">${esc(l)}</button>`).join('')}</div>`;
@@ -93,6 +99,10 @@ export const SettingsUI = (() => {
         + toggle('dmgNumbers', 'Números de daño', 'Los números que salen al golpear y al recibir daño.')
         + toggle('calm', 'Menos sacudidas y destellos', 'La cámara tiembla menos y los fogonazos son suaves.')
         + toggle('fps', 'Mostrar FPS', 'Fotogramas por segundo, en la esquina de abajo.')
+        + section('Ataques de los compañeros', 'En grupo, los ataques de los demás se ven por encima de los tuyos y tapan el campo. Baja su opacidad para ver mejor los tuyos y a los enemigos (a 0 % no se dibujan). Tus ataques no cambian.')
+        + slider('allyFx', 'Opacidad')
+        + `<div class="set-row"><div class="grow"><b>Desde el minuto</b><small>Antes de ese minuto se ven con toda su opacidad.</small></div></div>`
+        + choice('allyFxFrom', [[0, 'Desde el inicio'], [5, '5'], [10, '10'], [15, '15'], [20, '20'], [30, '30']])
         + section('Chat', 'En las salas. Con <b>Sólo frases</b> ves las frases rápidas de los demás, pero no lo que escriben.')
         + choice('chat', [['all', 'Todo'], ['quick', 'Sólo frases'], ['off', 'Nada']])
         + toggle('chatFilter', 'Censurar palabrotas', 'Tacha palabrotas y enlaces en lo que ves tú (los demás lo ven como lo escribieron).')
@@ -175,6 +185,13 @@ export const SettingsUI = (() => {
 
   function wire(box: HTMLElement) {
     box.querySelectorAll<HTMLElement>('.switch[data-k]').forEach(b => { b.onclick = () => { G.Settings.set(b.dataset.k!, !G.Settings.get(b.dataset.k!)); render(); }; });
+    box.querySelectorAll<HTMLInputElement>('input[data-slider]').forEach(r => {
+      r.oninput = () => {
+        G.Settings.set(r.dataset.slider!, +r.value / 100);
+        const out = box.querySelector<HTMLElement>(`[data-pct="${r.dataset.slider}"]`);
+        if (out) out.textContent = r.value + ' %';
+      };
+    });
     box.querySelectorAll<HTMLElement>('.chip[data-k]').forEach(b => {
       b.onclick = () => { const v = b.dataset.v!; G.Settings.set(b.dataset.k!, isNaN(+v) ? v : +v); render(); };
     });

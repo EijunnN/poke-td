@@ -43,7 +43,12 @@ const DEFS: StatDef[] = [
   { id: 'hp', label: 'Vida máxima', icon: 'heart', read: p => p.maxHp, fmt: n => String(Math.round(n)),
     show: p => Math.ceil(p.hp) + ' / ' + Math.round(p.maxHp) },
   { id: 'atk', label: 'Daño', icon: 'fist', read: p => p.atkMul, fmt: mult,
-    temp: p => p.buffs.atk.n > 0 ? mult(stacked(p.buffs.atk)) : null },
+    temp: p => {
+      // Danza Espada sube los físicos y Maquinación los especiales: con las dos a la vez, se dice cuál es cuál.
+      const a = p.buffs.atk.n > 0, s = p.buffs.spa.n > 0;
+      if (a && s) return 'Fís. ' + mult(stacked(p.buffs.atk)) + ' · Esp. ' + mult(stacked(p.buffs.spa));
+      return s ? 'Esp. ' + mult(stacked(p.buffs.spa)) : a ? mult(stacked(p.buffs.atk)) : null;
+    } },
   { id: 'spd', label: 'Velocidad', icon: 'boot', read: p => p.spdMul, fmt: mult,
     temp: p => p.buffs.spd.n > 0 ? mult(stacked(p.buffs.spd)) : null },
   { id: 'cd', label: 'Recarga', icon: 'clock', read: p => p.cdMul, fmt: mult },
@@ -102,13 +107,32 @@ export function cardHtml(card: Card, p: Player): string {
     <small title="Cartas de esta mejora que llevarías">${n}</small></div>`;
 }
 
+/** Ataque, At. Esp., Defensa y Def. Esp. base del Pokémon; el lado en que más pega va resaltado. */
+export function baseStatsHtml(p: Player): string {
+  if (!p.cats) return '';
+  const [atk, spa, def, spd] = G.statsOf(p.mon.dex), best = p.bestCat();
+  const cell = (label: string, v: number, on: boolean) => `<div class="pz-bs${on ? ' on' : ''}"><span>${label}</span><b>${v}</b></div>`;
+  return `<h4 class="pz-h">Estadísticas base</h4>
+    <div class="pz-base">${cell('Ataque', atk, best === 'phys')}${cell('At. Esp.', spa, best === 'spec')}${cell('Defensa', def, false)}${cell('Def. Esp.', spd, false)}</div>
+    <p class="note">Los ataques físicos pegan con el Ataque y los especiales con el At. Esp. Los golpes cuerpo a cuerpo se frenan con la Defensa y los disparos con la Def. Esp.</p>${natureHtml(p)}`;
+}
+
+/** Su naturaleza y su habilidad (Survivor; el nombre y la descripción ya vienen en el idioma del juego). */
+function natureHtml(p: Player): string {
+  const n = p.nature && G.NATURE_BY[p.nature];
+  if (!n || !p.abil) return '';
+  return `<h4 class="pz-h">Naturaleza y habilidad</h4>
+    <p class="note"><b translate="no">${esc(G.Mons.name(n.n))}</b> · <b translate="no">${esc(G.Mons.abilityName(p.abilId))}</b><br>
+      <span translate="no">${esc(G.AbilityFX.describe(p.abil))}</span></p>`;
+}
+
 export function statsHtml(p: Player): string {
   return `<div class="pz-grid">${statRows(p).map(r => `
     <div class="pz-stat">${G.Icons.html(r.icon, 20)}
       <span class="pz-lb">${r.label}${r.temp ? `<small class="pz-temp">${r.temp} <span>temporal</span></small>` : ''}</span>
       <b>${r.value}</b>
       ${r.n || r.max ? `<small class="pz-n" title="Cartas de esta mejora que llevas">${r.max ? `${r.n}/${r.max}` : '×' + r.n}</small>` : '<small class="pz-n"></small>'}
-    </div>`).join('')}</div>`;
+    </div>`).join('')}</div>${baseStatsHtml(p)}`;
 }
 
 // ---------------- medidor de daño ----------------
@@ -165,8 +189,8 @@ export function moveLines(p: Player): MoveLine[] {
   const out: MoveLine[] = [];
   p.slots.forEach((g, i) => g.forEach((m, j) => out.push({
     slot: i + 1, first: j === 0, active: i === p.active, id: m.id, name: m.name, lvl: m.lvl, color: G.U.TYPE_COLOR[m.type],
-    dmg: m.dmg ? m.dmg * p.atk : null,
-    hits: m.count && (m.kind === 'projectile' || m.kind === 'cone' || m.kind === 'meteor') ? m.count : 1,
+    dmg: m.dmg ? m.dmg * p.atkFor(m) : null,
+    hits: m.count && ['projectile', 'cone', 'meteor', 'homing', 'spin', 'quake'].includes(m.kind) ? m.count : 1,
     cd: m.kind === 'orbit' ? null : m.cd * p.cdMul
   })));
   return out;
@@ -185,7 +209,7 @@ export function summaryHtml(p: Player, time: number, dmg: DmgReport): string {
       </div>`).join('')}</div>`;
 }
 
-export const StatsUI = { fmtN, statRows, cardPreview, cardHtml, statsHtml, damageReport, dmgHtml, runCells, moveLines, summaryHtml };
+export const StatsUI = { fmtN, statRows, cardPreview, cardHtml, statsHtml, baseStatsHtml, damageReport, dmgHtml, runCells, moveLines, summaryHtml };
 G.StatsUI = StatsUI;
 
 declare module '../g' {

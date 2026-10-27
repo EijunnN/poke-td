@@ -11,6 +11,9 @@ import { G } from '../g';
  *     s_all2_p25    histórico sólo con Pikachu (el filtro por Pokémon sólo
  *                   existe en el histórico)
  *   id = tu uid (solitario) o los uid del equipo ordenados y unidos con "_".
+ *   Cada marca de Survivor (solo y grupo) lleva también el mejor daño hecho a Arceus en la Sentencia: se
+ *   sube con la marca y se guarda aunque esa partida no mejore el tiempo; `top` y `myRank` pueden
+ *   ordenar por él (sort 'arceus').
  *   La Arena (modo 'a') no tiene tablas de marcas sino un podio por cuenta (victorias, podios y
  *   partidas): se sube con submitArena y se lee con topArena.
  *
@@ -24,13 +27,13 @@ import { G } from '../g';
  * Red caída, 5xx y 429 se reintentan con espera antes de rendirse.
  */
 /** Una marca del ranking tal como la sirve el servidor. */
-export interface Row { id: string; t: number; uids: string[]; names: string[]; dex: number[]; shiny: boolean[]; lv: number; kills: number }
+export interface Row { id: string; t: number; uids: string[]; names: string[]; dex: number[]; shiny: boolean[]; lv: number; kills: number; arceus: number }
 /**
  * Cómo acabó subir una marca. `ok` con `better` vacío = subió pero no mejora tus marcas. Sin `ok`,
  * `reason` dice por qué (texto para el jugador); con `skipped` ni se intentó porque la partida
  * no cuenta (muy corta, sin rivales...): no hace falta avisar.
  */
-export interface RankResult { mode: string; ok: boolean; better: string[]; reason?: string; skipped?: boolean }
+export interface RankResult { mode: string; ok: boolean; better: string[]; reason?: string; skipped?: boolean; betterDmg?: string[] }
 /** Lo que sube el anfitrión de una Arena: cómo quedó cada jugador (`place` 1 = ganador; los empates repiten puesto). */
 export interface ArenaResult {
   map: string;
@@ -59,6 +62,8 @@ export const Ranking = (() => {
   interface Result { status: number; j: any }
   /** Una marca como viene en el JSON: lo que falta se rellena en rowOf. */
   type RowWire = Pick<Row, 'id' | 't' | 'lv' | 'kills'> & Partial<Row>;
+  /** Por qué se ordena una lista: tiempo (o puntuación) o daño a Arceus. */
+  type Sort = 't' | 'arceus';
   interface ReportGroup { board: string; e: string; names: string[]; t: number; n: number; ids: string[]; at: number }
   interface Member { uid: string; name?: string; dex: number; shiny?: boolean }
 
@@ -75,7 +80,7 @@ export const Ranking = (() => {
     return r.better;
   }
   const rowOf = (v: RowWire): Row => ({ id: v.id, t: v.t, uids: v.uids || [], names: v.names || [], dex: v.dex || [],
-                                    shiny: v.shiny || [], lv: v.lv, kills: v.kills });
+                                    shiny: v.shiny || [], lv: v.lv, kills: v.kills, arceus: v.arceus || 0 });
 
   // ---------------- periodos ----------------
 
@@ -161,6 +166,11 @@ export const Ranking = (() => {
     if (!best) return;                       // (periodos que no conocemos: mejor callar que decir "undefined")
     G.UI.toast('¡Nueva mejor marca ' + names[best] + ' en el ranking!', 3400);
   }
+  /** El tiempo no mejora pero el daño a Arceus sí: se avisa de eso. */
+  function announceDmg(better: string[], betterDmg: string[]) {
+    if (!betterDmg.length || better.length) return;
+    G.UI.toast('¡Nuevo récord de daño a Arceus en el ranking!', 3400);
+  }
 
   /** El motivo (texto para el jugador) de una subida que no ha salido bien. */
   function whyNot(r: Result | null, retried: boolean): string {
@@ -186,28 +196,33 @@ export const Ranking = (() => {
       await sleep(SUBMIT_RETRY[tries]);
     }
     if (!r || !r.j.ok) return finish({ mode, ok: false, better: [], reason: whyNot(r, tries > 0) });
-    const better: string[] = r.j.better || [];
+    const better: string[] = r.j.better || [], betterDmg: string[] = r.j.betterDmg || [];
     announce(better);
-    return finish({ mode, ok: true, better });
+    announceDmg(better, betterDmg);
+    finish({ mode, ok: true, better, ...(betterDmg.length ? { betterDmg } : {}) });
+    return better;
   }
 
   /** La partida no cuenta para el ranking (no es un fallo): se anota el motivo y no se sube. */
   const skip = (mode: string, reason: string) => finish({ mode, ok: false, better: [], reason, skipped: true });
 
-  function submitSolo(r: { t: number; lv: number; kills: number; dex: number; shiny?: boolean }) { return track(submitSoloNow(r)); }
-  async function submitSoloNow(r: { t: number; lv: number; kills: number; dex: number; shiny?: boolean }) {
+  /** Daño a Arceus que se manda: sólo si ha habido (un entero ≥ 1); sin él, la marca sube como antes. */
+  const dmgField = (a?: number) => (a && a >= 1 ? { arceus: Math.floor(a) } : {});
+
+  function submitSolo(r: { t: number; lv: number; kills: number; dex: number; shiny?: boolean; arceus?: number }) { return track(submitSoloNow(r)); }
+  async function submitSoloNow(r: { t: number; lv: number; kills: number; dex: number; shiny?: boolean; arceus?: number }) {
     if (!session()) return [];
     if (r.t < MIN_T) return skip('s', 'Las partidas de menos de 1 minuto no cuentan para el ranking.');
-    return send({ mode: 's', t: r.t, lv: r.lv, kills: r.kills, dex: r.dex, shiny: !!r.shiny });
+    return send({ mode: 's', t: r.t, lv: r.lv, kills: r.kills, ...dmgField(r.arceus), dex: r.dex, shiny: !!r.shiny });
   }
 
   /** La sube el anfitrión, con todo el equipo. */
-  function submitGroup(r: { t: number; lv: number; kills: number; members: Member[] }) { return track(submitGroupNow(r)); }
-  async function submitGroupNow(r: { t: number; lv: number; kills: number; members: Member[] }) {
+  function submitGroup(r: { t: number; lv: number; kills: number; members: Member[]; arceus?: number }) { return track(submitGroupNow(r)); }
+  async function submitGroupNow(r: { t: number; lv: number; kills: number; members: Member[]; arceus?: number }) {
     if (!session()) return [];
     if (r.t < MIN_T) return skip('g', 'Las partidas de menos de 1 minuto no cuentan para el ranking.');
     if (!r.members || r.members.length < 2) return skip('g', 'Una partida en grupo necesita al menos 2 jugadores.');
-    return send({ mode: 'g', t: r.t, lv: r.lv, kills: r.kills,
+    return send({ mode: 'g', t: r.t, lv: r.lv, kills: r.kills, ...dmgField(r.arceus),
                   members: r.members.map(m => ({ uid: String(m.uid), dex: m.dex, shiny: !!m.shiny })) });
   }
 
@@ -249,11 +264,12 @@ export const Ranking = (() => {
   /**
    * Mejores marcas de una tabla (las 50 primeras).
    * @param friendsOnly  sólo tú y tus amigos
+   * @param sort  'arceus': por daño a Arceus (sólo Survivor; sólo salen las marcas con daño)
    */
-  async function top(mode: string, period: string, dex?: number | null, friendsOnly?: boolean): Promise<Row[]> {
+  async function top(mode: string, period: string, dex?: number | null, friendsOnly?: boolean, sort: Sort = 't'): Promise<Row[]> {
     if (!session()) return [];
     const circle = friendsOnly ? G.Social.friends.filter(f => f.status === 'ok').map(f => f.uid).slice(0, 30).join(',') || ',' : null;
-    const j = await need('GET', '/top' + qs({ mode, period, dex: period === 'a' ? dex : null, circle }));
+    const j = await need('GET', '/top' + qs({ mode, period, dex: period === 'a' ? dex : null, circle, sort: sort === 'arceus' ? sort : null }));
     return (j.rows as RowWire[]).map(rowOf);
   }
 
@@ -269,11 +285,11 @@ export const Ranking = (() => {
     return { rows: j.rows as ArenaRow[], mine: (j.mine as ArenaRow | null) ?? null };
   }
 
-  /** Tu puesto en la tabla (aunque no salgas en el top). → { pos, t, row } | null */
-  async function myRank(mode: string, period: string, dex?: number | null): Promise<{ pos: number; t: number; row: Row } | null> {
+  /** Tu puesto en la tabla (aunque no salgas en el top; con sort 'arceus', en la de daño a Arceus). → { pos, t, arceus, row } | null */
+  async function myRank(mode: string, period: string, dex?: number | null, sort: Sort = 't'): Promise<{ pos: number; t: number; arceus: number; row: Row } | null> {
     if (!session()) return null;
-    const j = await need('GET', '/rank' + qs({ mode, period, dex: period === 'a' ? dex : null }));
-    return j.rank ? { pos: j.rank.pos, t: j.rank.t, row: rowOf(j.rank.row) } : null;
+    const j = await need('GET', '/rank' + qs({ mode, period, dex: period === 'a' ? dex : null, sort: sort === 'arceus' ? sort : null }));
+    return j.rank ? { pos: j.rank.pos, t: j.rank.t, arceus: j.rank.arceus || 0, row: rowOf(j.rank.row) } : null;
   }
 
   /** Quita todas tus marcas (al borrar la cuenta el servidor ya se las lleva solo). */

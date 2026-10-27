@@ -45,9 +45,10 @@ export const Survivor = (() => {
   let spectating = false;
   /**
    * Caído en grupo: adónde mira la cámara. Se mueve con las teclas de andar (o el joystick);
-   * Tab / E / Q la llevan a seguir a un compañero o a tu Pokémon. null mientras estás en pie.
+   * Tab / E / Q (LB / RB en el mando) o el botón del HUD la llevan a seguir a un compañero vivo o a tu Pokémon.
+   * null mientras estás en pie.
    */
-  let look: { x: number; y: number; i: number; who: { x: number; y: number } | null } | null = null;
+  let look: { x: number; y: number; who: Player | null } | null = null;
   const LOOK_SPEED = 520;
 
   /** @param coop  { seed, host, members } para una partida en grupo (con `watch`, como espectador) */
@@ -84,6 +85,7 @@ export const Survivor = (() => {
     runReal = performance.now(); tampered = false;
 
     pl = new G.Player(mon, perks, !!save.partnerShiny && G.DB.ownsShiny(mon.dex));
+    G.Mons.apply(pl);                       // su naturaleza y su habilidad (antes que los movimientos: la habilidad puede cambiar la recarga o la vida)
     banked = { t1: 0, t10: 0 };
     caught = [];
     // Atajos: movimientos con hueco fijo (save.pbind[dex] = [id del 1, id del 2, ...]),
@@ -92,10 +94,12 @@ export const Survivor = (() => {
     pl.addMove(G.startMoveOf(mon.dex));
     // Mejora "Veto": movimientos que no quieres que te salgan.
     pl.banned = new Set((save.pban && save.pban[mon.dex] || []).slice(0, perks.bans));
-    // Mejora "Repertorio": un segundo movimiento de ataque al azar.
+    // Mejora "Repertorio": un segundo movimiento de ataque, el elegido con "Segundo movimiento inicial" o, si no, al azar.
     if (perks.startMoves >= 2) {
-      const pool = G.Moves.poolFor(mon).filter(id => !pl.hasMove(id) && !pl.banned.has(id) && G.Moves.BY_ID[id].kind !== 'buff');
-      if (pool.length) pl.addMove(G.U.pick(pool));
+      const pick2 = G.startMove2Of(mon.dex);
+      const pool = G.Moves.poolFor(mon, true).filter(id => !pl.hasMove(id) && !pl.banned.has(id) && G.Moves.BY_ID[id].kind !== 'buff');
+      if (pick2 && !pl.hasMove(pick2)) pl.addMove(pick2);
+      else if (pool.length) pl.addMove(G.U.pick(pool));
       pl.setActive(0);
     }
 
@@ -305,7 +309,7 @@ export const Survivor = (() => {
     if (G.Social.me) G.Social.publishProfile();
 
     // Ranking: en solitario cada uno lo suyo; en grupo lo sube el anfitrión.
-    const mark = { t: Math.floor(time), lv: pl.level, kills: pl.kills };
+    const mark = { t: Math.floor(time), lv: pl.level, kills: pl.kills, arceus: judge ? judge.dmg : 0 };
     // Si la partida se ha tocado (ver clean()), no sube al ranking (sin avisar); lo demás, sí.
     const ok = clean();
     if (ok && !coop) G.Ranking.submitSolo(Object.assign(mark, { dex: pl.dex, shiny: pl.shiny }));
@@ -622,20 +626,32 @@ export const Survivor = (() => {
 
   /** Caído en grupo: la cámara va libre (el anfitrión te manda los enemigos de donde miras, net/coop.ts). */
   function lookTick(dt: number) {
-    if (!look) look = { x: pl.x, y: pl.y, i: 0, who: pl };
+    if (!look) look = { x: pl.x, y: pl.y, who: pl };
+    // El compañero al que seguías ha caído (o se ha ido): vuelves a ti.
+    if (look.who && look.who !== pl && (look.who.dead || !G.Coop.puppets().includes(look.who))) look.who = pl;
     const [ax, ay] = pl.frozen ? [0, 0] : G.Input.axis();
     if (ax || ay) { look.who = null; look.x += ax * LOOK_SPEED * dt; look.y += ay * LOOK_SPEED * dt; }
     else if (look.who) { look.x = look.who.x; look.y = look.who.y; }
     G.Camera.follow(look.x, look.y, dt);
   }
 
-  /** Caído en grupo: Tab / E, la cámara al siguiente compañero; Q, al anterior (tu Pokémon va en la lista). */
+  /** A quién se puede mirar estando caído: tu Pokémon y los compañeros que siguen en pie. */
+  const lookList = () => [pl, ...G.Coop.puppets().filter(p => !p.dead)];
+
+  /** Caído en grupo: la cámara al siguiente compañero vivo (-1: al anterior); tu Pokémon va en la lista. */
+  function cycleLook(d: number) {
+    if (!look || !pl.dead || !G.Coop.active) return;
+    const list = lookList();
+    if (list.length < 2) return;
+    const i = look.who ? list.indexOf(look.who) : -1;
+    look.who = list[((i < 0 ? 0 : i) + d + list.length) % list.length];
+    G.Audio.sfx('click');
+  }
+
+  /** Caído en grupo: Tab / E (LB / RB), la cámara al siguiente compañero; Q, al anterior. */
   function lookKeys() {
     const d = G.Input.tap('tab') || G.Input.tap('keye') ? 1 : G.Input.tap('keyq') ? -1 : 0;
-    if (!d || !look) return;
-    const list = [pl, ...G.Coop.puppets()];
-    look.i = ((look.i + d) % list.length + list.length) % list.length;
-    look.who = list[look.i];
+    if (d) cycleLook(d);
   }
 
   /** Anfitrión: si caéis todos, se acaba (tras ver caer al último). */
@@ -764,7 +780,11 @@ export const Survivor = (() => {
     id: 'survivor',
     start, update, idle, keysModal, keysPlay, drawables, render, everyone,
     quit: quitRun,
-    levelXp, flash, offerBond,
+    levelXp, flash, offerBond, cycleLook,
+    /** El compañero al que miras estando caído (null si miras tu cuerpo o la cámara va libre). */
+    get watching(): Player | null { return look && look.who && look.who !== pl ? look.who : null; },
+    /** ¿Hay algún compañero vivo al que mirar? */
+    canWatch() { return !!pl && pl.dead && G.Coop.active && G.Coop.puppets().some(p => !p.dead); },
     /** Para pruebas: salta el reloj de la run. */
     debugTime(t: number) { tampered = true; time = t; },
     /** La partida se ha tocado con herramientas de prueba: no sube al ranking. */

@@ -7,6 +7,8 @@ import { G } from '../g';
  *   dmgNumbers  true/false                        números de daño
  *   calm        true/false                        menos sacudidas y destellos
  *   fps         true/false                        contador de FPS
+ *   allyFx      0 .. 1                            opacidad de los ataques de los compañeros (cooperativo); los tuyos no cambian
+ *   allyFxFrom  0 | 5 | 10 | ...                  desde qué minuto de la partida se aplica (0: siempre)
  *   stick       0.8 | 1 | 1.25                    tamaño del joystick táctil
  *   stickMode   'follow' | 'fixed'                joystick táctil: aparece donde tocas, o fijo abajo a la izquierda
  *   res         'auto' | 'high' | 'normal'        resolución del lienzo (auto según la pantalla, ×1,5 o ×1)
@@ -23,6 +25,8 @@ export interface SettingsData {
   dmgNumbers: boolean;
   calm: boolean;
   fps: boolean;
+  allyFx: number;
+  allyFxFrom: number;
   stick: number;
   stickMode: 'follow' | 'fixed';
   res: 'auto' | 'high' | 'normal';
@@ -36,11 +40,13 @@ export interface SettingsData {
 
 export const Settings = (() => {
   const KEY = 'ps.settings';
-  const DEF: SettingsData = { quality: 'auto', dmgNumbers: true, calm: false, fps: false, stick: 1, stickMode: 'follow', res: 'auto', chat: 'all', chatFilter: false, gachaSkip: false, aimCursor: false };
+  const DEF: SettingsData = { quality: 'auto', dmgNumbers: true, calm: false, fps: false, allyFx: 1, allyFxFrom: 0, stick: 1, stickMode: 'follow', res: 'auto', chat: 'all', chatFilter: false, gachaSkip: false, aimCursor: false };
   let s: SettingsData = Object.assign({}, DEF);
   try { Object.assign(s, JSON.parse(localStorage.getItem(KEY) || '{}')); } catch (e) { /* nada */ }
   // 'high' era lo de por defecto (y se guardaba al cambiar cualquier otro ajuste): pasa a 'auto', que en un
   // portátil con pantalla Retina dibuja la mitad de píxeles (se calentaban). Quien quiera, vuelve a elegir Alta.
+  if (!(s.allyFx >= 0 && s.allyFx <= 1)) s.allyFx = 1;
+  if (!(s.allyFxFrom >= 0)) s.allyFxFrom = 0;
   if (!s.resV) { if (s.res === 'high') s.res = 'auto'; s.resV = 1; }
   const fns = new Set<(k: string, v: unknown) => void>();
 

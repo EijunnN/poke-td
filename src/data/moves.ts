@@ -1,5 +1,6 @@
 import { G } from '../g';
 import type { PokeType } from './types';
+import { catShareOf } from './stat-mods';
 /* ============ moves.js — catálogo de movimientos ============
  *
  * kind (comportamiento, implementado en systems/combat.js):
@@ -19,6 +20,15 @@ import type { PokeType } from './types';
  *   dash        cruzas hacia el enemigo golpeando todo el camino (sin recibir daño)
  *   trail       vas dejando charcos que dañan a lo que los pisa
  *   cone        muchos disparos cortos en abanico (aliento, chorro...)
+ *   ---- desde 2026-10-27 (más ataques por tipo; mismos gráficos) ----
+ *   homing      proyectiles que persiguen al enemigo (`homing` = lo fuerte que giran)
+ *   bounce      un proyectil que rebota de enemigo en enemigo `bounce` veces
+ *   charge      se carga `charge` s y sale un rayo enorme (el de `beam`)
+ *   spin        giras golpeando todo alrededor `count` veces seguidas
+ *   quake       una onda avanza por el suelo en línea: `count` explosiones
+ *   vortex      un remolino atrae a los enemigos a su centro (`pull`) y les va dañando
+ *   shove       onda alrededor que daña y aparta a los enemigos (`knock`)
+ *   stun        zona con aviso que daña y deja aturdidos (quietos) `stun` s
  *
  * Sólo el movimiento ACTIVO se ejecuta. Se cambia con 1-4 / Q / E.
  *
@@ -29,13 +39,18 @@ import type { PokeType } from './types';
  *   mods multiplicativos -> dmg, cd, speed, radius, dur, amount, arc
  *   mods aditivos        -> count, pierce, stacks
  */
+/** Categoría de un ataque en los juegos: los físicos escalan con Ataque (y los frena Defensa), los especiales con At. Esp. */
+export type MoveCat = 'phys' | 'spec';
+
 /** Clase de movimiento: cómo se comporta (ver la lista de arriba). */
 export type MoveKind = 'projectile' | 'melee' | 'beam' | 'orbit' | 'nova' | 'aura' | 'buff' | 'boomerang'
-  | 'chain' | 'mine' | 'meteor' | 'turret' | 'dash' | 'trail' | 'cone';
+  | 'chain' | 'mine' | 'meteor' | 'turret' | 'dash' | 'trail' | 'cone'
+  | 'homing' | 'bounce' | 'charge' | 'spin' | 'quake' | 'vortex' | 'shove' | 'stun';
 
 /** Modificadores de una mejora o evolución: los de MULT se multiplican, los de ADD se suman. */
 export type MoveMods = Partial<Record<'dmg' | 'cd' | 'speed' | 'radius' | 'dur' | 'amount' | 'arc' | 'width'
-  | 'spread' | 'life' | 'size' | 'rate' | 'count' | 'pierce' | 'stacks', number>>;
+  | 'spread' | 'life' | 'size' | 'rate' | 'homing' | 'pull' | 'knock' | 'stun' | 'charge' | 'count' | 'pierce' | 'stacks'
+  | 'bounce', number>>;
 
 /** Un escalón de mejora (nivel 1 -> 2 ...): texto para la carta y lo que cambia. */
 export interface MoveUpgrade {
@@ -49,6 +64,8 @@ export interface MoveDef {
   name: string;
   type: PokeType;
   kind: MoveKind;
+  /** Físico o especial. Los potenciadores (`buff`) no hacen daño y no la tienen. */
+  cat?: MoveCat;
   desc: string;
   cd: number;
   dmg?: number;
@@ -56,7 +73,7 @@ export interface MoveDef {
   arc?: number;
   knock?: number;
   width?: number;
-  stat?: 'atk' | 'spd' | 'def' | 'regen';
+  stat?: 'atk' | 'spa' | 'spd' | 'def' | 'regen';
   amount?: number;
   dur?: number;
   stacks?: number;
@@ -73,6 +90,16 @@ export interface MoveDef {
   slow?: number;
   homing?: number;
   hex?: number;
+  /** Rebotes de un proyectil (`bounce`). */
+  bounce?: number;
+  /** Segundos de carga antes de soltar el rayo (`charge`). */
+  charge?: number;
+  /** Lo que atrae un remolino, en unidades por segundo (`vortex`). */
+  pull?: number;
+  /** Segundos que deja aturdido (`stun`). */
+  stun?: number;
+  /** Parte del daño que cura al lanzador (Beso Drenaje). */
+  drain?: number;
   /** Escalera de mejoras y número de niveles (los rellena el propio módulo). */
   ups?: MoveUpgrade[];
   maxLvl?: number;
@@ -82,6 +109,8 @@ export interface MoveDef {
 export interface MoveLearner {
   types: readonly PokeType[];
   start?: string;
+  /** Número de Pokédex: sólo hace falta para los movimientos que no salen por tipo (ver ONLY_LEARNERS). */
+  dex?: number;
 }
 
 /** Movimiento en una run: la ficha con las mejoras aplicadas y su estado (ver Moves.instance). */
@@ -192,6 +221,54 @@ export const Moves = (() => {
       { t: '+30% alcance',                  m: { life: 1.30 } },
       { t: '+3 disparos y +1 perforación',  m: { count: 3, pierce: 1 } }
     ],
+    homing: [
+      { t: '+1 proyectil',                  m: { count: 1, spread: 1.3 } },
+      { t: '+45% daño',                     m: { dmg: 1.45 } },
+      { t: 'Persigue con más fuerza y -20% recarga', m: { homing: 1.6, cd: 0.8 } },
+      { t: '+1 proyectil y +40% daño',      m: { count: 1, dmg: 1.40, spread: 1.2 } }
+    ],
+    bounce: [
+      { t: '+1 rebote',                     m: { bounce: 1 } },
+      { t: '+45% daño',                     m: { dmg: 1.45 } },
+      { t: '-25% recarga',                  m: { cd: 0.75 } },
+      { t: '+1 proyectil y +1 rebote',      m: { count: 1, bounce: 1, spread: 1.3 } }
+    ],
+    charge: [
+      { t: '+45% daño',                     m: { dmg: 1.45 } },
+      { t: '+30% alcance y grosor',         m: { radius: 1.30, width: 1.30 } },
+      { t: 'Carga más rápido y -20% recarga', m: { charge: 0.7, cd: 0.8 } },
+      { t: '+50% daño',                     m: { dmg: 1.50 } }
+    ],
+    spin: [
+      { t: '+40% daño',                     m: { dmg: 1.40 } },
+      { t: '+25% radio',                    m: { radius: 1.25 } },
+      { t: '+1 vuelta',                     m: { count: 1 } },
+      { t: '-25% recarga y +30% daño',      m: { cd: 0.75, dmg: 1.30 } }
+    ],
+    quake: [
+      { t: '+2 ondas',                      m: { count: 2 } },
+      { t: '+45% daño',                     m: { dmg: 1.45 } },
+      { t: '+25% tamaño',                   m: { radius: 1.25 } },
+      { t: '-25% recarga y +2 ondas',       m: { cd: 0.75, count: 2 } }
+    ],
+    vortex: [
+      { t: '+40% daño',                     m: { dmg: 1.40 } },
+      { t: '+30% radio',                    m: { radius: 1.30 } },
+      { t: '+50% duración',                 m: { dur: 1.50 } },
+      { t: 'Atrae más fuerte y +40% daño',  m: { pull: 1.40, dmg: 1.40 } }
+    ],
+    shove: [
+      { t: '+40% daño',                     m: { dmg: 1.40 } },
+      { t: '+25% radio',                    m: { radius: 1.25 } },
+      { t: '-25% recarga',                  m: { cd: 0.75 } },
+      { t: '+50% empuje y +40% daño',       m: { knock: 1.50, dmg: 1.40 } }
+    ],
+    stun: [
+      { t: '+40% daño',                     m: { dmg: 1.40 } },
+      { t: '+25% radio',                    m: { radius: 1.25 } },
+      { t: '+50% aturdimiento',             m: { stun: 1.50 } },
+      { t: '-25% recarga y +30% daño',      m: { cd: 0.75, dmg: 1.30 } }
+    ],
     buff: [
       { t: '+1 acumulación máxima',         m: { stacks: 1 } },
       { t: '+40% potencia',                 m: { amount: 1.40 } },
@@ -211,7 +288,7 @@ export const Moves = (() => {
       cd: 0.75, dmg: 20, radius: 110, width: 34, knock: 40 },
 
     { id: 'swords-dance', name: 'Danza Espada', type: 'normal', kind: 'buff',
-      desc: 'No hace daño: acumula ATAQUE mientras esté activo.',
+      desc: 'No hace daño: acumula ATAQUE FÍSICO (sólo sube los ataques físicos) mientras esté activo.',
       cd: 0.85, stat: 'atk', amount: 0.13, dur: 7, stacks: 5 },
 
     { id: 'agility', name: 'Agilidad', type: 'normal', kind: 'buff',
@@ -396,7 +473,7 @@ export const Moves = (() => {
       cd: 1.0, dmg: 24, radius: 230, width: 34 },
 
     { id: 'dragon-dance', name: 'Danza Dragón', type: 'dragon', kind: 'buff',
-      desc: 'No hace daño: acumula ATAQUE más rápido que Danza Espada.',
+      desc: 'No hace daño: acumula ATAQUE FÍSICO más rápido que Danza Espada.',
       cd: 0.7, stat: 'atk', amount: 0.11, dur: 7, stacks: 5 },
 
     // ---------------- HADA ----------------
@@ -430,6 +507,11 @@ export const Moves = (() => {
       desc: 'Una sombra te rodea y consume lo cercano.',
       cd: 0.5, dmg: 9, radius: 72 },
 
+    // Como en los juegos es de tipo Siniestro, pero no la aprenden todos los Siniestro: ver ONLY_LEARNERS.
+    { id: 'nasty-plot', name: 'Maquinación', type: 'dark', kind: 'buff',
+      desc: 'No hace daño: acumula ATAQUE ESPECIAL (sólo sube los ataques especiales) mientras esté activo.',
+      cd: 0.85, stat: 'spa', amount: 0.13, dur: 7, stacks: 5 },
+
     // ---------------- NUEVOS (2026-10-10): mismas formas, otras mecánicas ----------------
     { id: 'bonemerang', name: 'Huesomerang', type: 'ground', kind: 'boomerang',
       desc: 'Un hueso que va y vuelve golpeando fuerte.',
@@ -453,7 +535,7 @@ export const Moves = (() => {
 
     { id: 'meteor-mash', name: 'Puño Meteoro', type: 'steel', kind: 'meteor',
       desc: 'Dos meteoros de acero que aplastan donde caen.',
-      cd: 1.4, dmg: 34, count: 2, radius: 54, knock: 80 },
+      cd: 1.4, dmg: 24, count: 2, radius: 48, knock: 80 },     // (27-10-2026: era 34 y 54; al máximo hacía casi el doble que Avalancha)
 
     { id: 'will-o-wisp', name: 'Fuego Fatuo', type: 'fire', kind: 'turret',
       desc: 'Deja una llama flotante que dispara sola y quema.',
@@ -480,6 +562,147 @@ export const Moves = (() => {
       cd: 0.9, dmg: 17, count: 4, radius: 150, hex: 1.7 }
   ];
 
+  // ---------------- NUEVOS (2026-10-27): todos los tipos con 5 o más, con formas nuevas de atacar ----------------
+  // Sólo los aprende quien los pide con `poolFor(mon, true)` (el Survivor): la Defensa no los ve, y su reparto de
+  // ataques de torre y su balance siguen como estaban.
+  const NEW_RAW: MoveDef[] = [
+    // Normal
+    { id: 'hyper-beam', name: 'Hiperrayo', type: 'normal', kind: 'charge',
+      desc: 'Se carga un momento y suelta un rayo enorme que lo atraviesa todo.',
+      cd: 2.2, charge: 0.75, dmg: 58, radius: 300, width: 44 },
+    { id: 'rapid-spin', name: 'Giro Rápido', type: 'normal', kind: 'spin',
+      desc: 'Giras sobre ti mismo y golpeas varias veces a todo lo que te rodea.',
+      cd: 1.0, dmg: 9, count: 3, radius: 62 },
+    // Fuego
+    { id: 'flame-charge', name: 'Nitrocarga', type: 'fire', kind: 'dash',
+      desc: 'Te lanzas envuelto en llamas y quemas todo el camino.',
+      cd: 0.8, dmg: 19, radius: 115, width: 36, burn: 1 },
+    // Agua
+    { id: 'whirlpool', name: 'Torbellino', type: 'water', kind: 'vortex',
+      desc: 'Un remolino que arrastra a los enemigos hacia su centro y los va dañando.',
+      cd: 3.0, dmg: 8, radius: 72, dur: 2.6, pull: 150 },
+    // Planta
+    { id: 'seed-bomb', name: 'Bomba Germen', type: 'grass', kind: 'bounce',
+      desc: 'Una semilla que rebota de enemigo en enemigo.',
+      cd: 0.6, dmg: 10, speed: 320, life: 1.6, size: 7, bounce: 3 },
+    { id: 'energy-ball', name: 'Energibola', type: 'grass', kind: 'homing',
+      desc: 'Una bola de energía que sigue al enemigo allá donde vaya.',
+      cd: 0.62, dmg: 19, speed: 280, life: 2.0, size: 8, homing: 5 },
+    { id: 'solar-beam', name: 'Rayo Solar', type: 'grass', kind: 'charge',
+      desc: 'Absorbe luz un momento y la suelta en un rayo enorme.',
+      cd: 2.3, charge: 0.85, dmg: 62, radius: 290, width: 40 },
+    // Eléctrico
+    { id: 'thunder-wave', name: 'Onda Trueno', type: 'electric', kind: 'stun',
+      desc: 'Una descarga que avisa en el suelo y deja paralizado a quien pilla.',
+      cd: 1.6, dmg: 22, radius: 58, stun: 1.0 },
+    { id: 'electro-ball', name: 'Bola Voltio', type: 'electric', kind: 'bounce',
+      desc: 'Una bola eléctrica que salta de un enemigo a otro.',
+      cd: 0.62, dmg: 10, speed: 340, life: 1.6, size: 7, bounce: 3 },
+    // Psíquico
+    { id: 'extrasensory', name: 'Paranormal', type: 'psychic', kind: 'shove',
+      desc: 'Una onda mental que daña y aparta a todos los que tienes cerca.',
+      cd: 1.2, dmg: 16, radius: 92, knock: 320 },
+    { id: 'mist-ball', name: 'Bola Neblina', type: 'psychic', kind: 'homing',
+      desc: 'Una bola de bruma que persigue al enemigo y lo frena.',
+      cd: 0.55, dmg: 13, speed: 270, life: 2.0, size: 8, homing: 5, slow: 0.3 },
+    // Veneno
+    { id: 'acid-spray', name: 'Bomba Ácida', type: 'poison', kind: 'bounce',
+      desc: 'Un chorro ácido que salta entre enemigos y los envenena.',
+      cd: 0.66, dmg: 8, speed: 310, life: 1.6, size: 7, bounce: 3, poison: 1 },
+    // Tierra
+    { id: 'sand-tomb', name: 'Bucle Arena', type: 'ground', kind: 'vortex',
+      desc: 'Un remolino de arena que atrapa y arrastra a los enemigos.',
+      cd: 3.0, dmg: 9, radius: 70, dur: 2.6, pull: 140 },
+    { id: 'magnitude', name: 'Magnitud', type: 'ground', kind: 'quake',
+      desc: 'El suelo revienta en línea delante de ti, onda tras onda.',
+      cd: 1.15, dmg: 18, count: 6, radius: 30 },
+    // Volador
+    { id: 'whirlwind', name: 'Remolino', type: 'flying', kind: 'shove',
+      desc: 'Una ráfaga que barre a todos los que tienes cerca.',
+      cd: 1.1, dmg: 14, radius: 96, knock: 360 },
+    { id: 'air-slash', name: 'Tajo Aéreo', type: 'flying', kind: 'homing',
+      desc: 'Dos cuchillas de aire que buscan al enemigo.',
+      cd: 0.55, dmg: 9, count: 2, spread: 0.35, speed: 330, life: 1.6, size: 7, homing: 4 },
+    // Bicho
+    { id: 'signal-beam', name: 'Rayo Señal', type: 'bug', kind: 'bounce',
+      desc: 'Un destello que rebota entre los enemigos.',
+      cd: 0.6, dmg: 10, speed: 340, life: 1.6, size: 7, bounce: 3 },
+    { id: 'u-turn', name: 'Ida y Vuelta', type: 'bug', kind: 'dash',
+      desc: 'Cruzas entre los enemigos golpeando a todos los del camino.',
+      cd: 0.7, dmg: 17, radius: 120, width: 34 },
+    // Roca
+    { id: 'rock-tomb', name: 'Tumba Rocas', type: 'rock', kind: 'stun',
+      desc: 'Caen rocas donde avisa el suelo y dejan atrapado a quien pillan.',
+      cd: 1.7, dmg: 31, radius: 56, stun: 0.9 },
+    { id: 'ancient-power', name: 'Poder Pasado', type: 'rock', kind: 'orbit',
+      desc: 'Rocas antiguas que giran a tu alrededor.',
+      cd: 0.28, dmg: 13, count: 3, radius: 70, speed: 2.6, size: 9 },
+    { id: 'power-gem', name: 'Joya de Luz', type: 'rock', kind: 'bounce',
+      desc: 'Un destello de gema que rebota de enemigo en enemigo.',
+      cd: 0.66, dmg: 11, speed: 320, life: 1.6, size: 8, bounce: 3 },
+    // Hielo
+    { id: 'ice-shard', name: 'Canto Helado', type: 'ice', kind: 'homing',
+      desc: 'Esquirlas rapidísimas que persiguen al enemigo.',
+      cd: 0.32, dmg: 9, speed: 380, life: 1.5, size: 6, homing: 7 },
+    { id: 'freeze-dry', name: 'Liofilización', type: 'ice', kind: 'stun',
+      desc: 'Un frío repentino que avisa en el suelo y deja helado a quien pilla.',
+      cd: 1.6, dmg: 24, radius: 60, stun: 1.0, slow: 0.5 },
+    // Lucha
+    { id: 'rolling-kick', name: 'Patada Giro', type: 'fighting', kind: 'spin',
+      desc: 'Patadas en giro que golpean todo lo que tienes alrededor.',
+      cd: 0.95, dmg: 11, count: 3, radius: 60 },
+    { id: 'vacuum-wave', name: 'Onda Vacío', type: 'fighting', kind: 'shove',
+      desc: 'Un puñetazo al aire que lanza una onda y aparta a los enemigos.',
+      cd: 1.1, dmg: 17, radius: 88, knock: 330 },
+    { id: 'dynamic-punch', name: 'Puño Dinámico', type: 'fighting', kind: 'stun',
+      desc: 'Un puñetazo tremendo donde avisa el suelo: aturde a quien pilla.',
+      cd: 1.7, dmg: 33, radius: 54, stun: 0.9 },
+    // Fantasma
+    { id: 'shadow-sneak', name: 'Sombra Vil', type: 'ghost', kind: 'homing',
+      desc: 'Una sombra que se escurre por el suelo hasta el enemigo.',
+      cd: 0.45, dmg: 14, speed: 300, life: 1.8, size: 7, homing: 6 },
+    { id: 'ominous-wind', name: 'Viento Aciago', type: 'ghost', kind: 'vortex',
+      desc: 'Un viento maldito que arremolina a los enemigos y los va dañando.',
+      cd: 3.0, dmg: 9, radius: 74, dur: 2.6, pull: 140 },
+    // Dragón
+    { id: 'dragon-breath', name: 'Dragoaliento', type: 'dragon', kind: 'cone',
+      desc: 'Un aliento de dragón en abanico corto que frena.',
+      cd: 0.7, dmg: 7, count: 7, arc: 0.95, speed: 330, life: 0.5, size: 7, slow: 0.25 },
+    { id: 'dragon-claw', name: 'Garra Dragón', type: 'dragon', kind: 'melee',
+      desc: 'Un zarpazo de dragón en arco.',
+      cd: 0.52, dmg: 19, radius: 52, arc: 2.0, knock: 70 },
+    { id: 'outrage', name: 'Enfado', type: 'dragon', kind: 'spin',
+      desc: 'Una furia de golpes en giro que no deja a nadie en pie.',
+      cd: 1.1, dmg: 12, count: 4, radius: 64 },
+    // Hada
+    { id: 'draining-kiss', name: 'Beso Drenaje', type: 'fairy', kind: 'homing',
+      desc: 'Un beso que persigue al enemigo y te cura un poco al darle.',
+      cd: 0.55, dmg: 13, speed: 280, life: 2.0, size: 7, homing: 5, drain: 0.12 },
+    { id: 'play-rough', name: 'Carantoña', type: 'fairy', kind: 'melee',
+      desc: 'Un ataque juguetón, pero muy fuerte, en arco.',
+      cd: 0.6, dmg: 22, radius: 50, arc: 2.0, knock: 60 },
+    { id: 'disarming-voice', name: 'Voz Cautivadora', type: 'fairy', kind: 'shove',
+      desc: 'Un grito encantador que daña y aparta a los que tienes cerca.',
+      cd: 1.15, dmg: 15, radius: 94, knock: 300 },
+    // Acero
+    { id: 'mirror-shot', name: 'Disparo Espejo', type: 'steel', kind: 'bounce',
+      desc: 'Un destello metálico que rebota entre los enemigos.',
+      cd: 0.64, dmg: 10, speed: 340, life: 1.6, size: 7, bounce: 3 },
+    { id: 'gyro-ball', name: 'Giro Bola', type: 'steel', kind: 'spin',
+      desc: 'Giras como una bola de acero golpeando todo alrededor.',
+      cd: 1.05, dmg: 12, count: 3, radius: 60 },
+    // Siniestro
+    { id: 'sucker-punch', name: 'Golpe Bajo', type: 'dark', kind: 'homing',
+      desc: 'Un golpe a traición que busca al enemigo.',
+      cd: 0.7, dmg: 22, speed: 330, life: 1.6, size: 7, homing: 6 },
+    { id: 'night-slash', name: 'Tajo Umbrío', type: 'dark', kind: 'spin',
+      desc: 'Cortes en giro que alcanzan a todo lo que te rodea.',
+      cd: 1.0, dmg: 11, count: 3, radius: 62 }
+  ];
+  /** Los ids de los de arriba: poolFor(mon) sin `withNew` no los da. */
+  const NEW_IDS = new Set(NEW_RAW.map(m => m.id));
+  RAW.push(...NEW_RAW);
+
   // Cuerpo a cuerpo (12-10-2026): +20 % de daño y +25 % de alcance y de arco
   // (y -25 % de daño recibido mientras sea tu ataque activo, en player.js).
   // Pegaban bien, pero había que arriesgar mucho más que con los de distancia.
@@ -490,9 +713,57 @@ export const Moves = (() => {
     if (m.arc) m.arc = Math.min(3, +(m.arc * 1.25).toFixed(2));
   }
 
+  // Categoría de cada ataque: la de los juegos de Pokémon. Los que allí son de estado
+  // (Fuego Fatuo, Sustituto, Púas, Tóxico...) se han puesto por lo que son aquí: lo que
+  // dispara un fuego o un muñeco es especial; lo que se clava o se pisa, físico.
+  const PHYSICAL = new Set([
+    'tackle', 'quick-attack', 'body-slam',
+    'flame-wheel', 'vine-whip', 'razor-leaf', 'wing-attack', 'aerial-ace',
+    'poison-sting', 'toxic-spikes', 'bulldoze', 'spikes', 'bonemerang',
+    'bug-bite', 'string-shot', 'rock-throw', 'rock-slide', 'meteor-mash',
+    'karate-chop', 'lick', 'metal-claw', 'bite', 'psycho-cut',
+    // los de 2026-10-27: lo que se lanza con el cuerpo, las garras o lo que se clava o cae
+    'rapid-spin', 'flame-charge', 'seed-bomb', 'sand-tomb', 'magnitude', 'u-turn', 'rock-tomb', 'ice-shard',
+    'rolling-kick', 'dynamic-punch', 'shadow-sneak', 'dragon-claw', 'outrage', 'play-rough', 'gyro-ball',
+    'sucker-punch', 'night-slash'
+  ]);
+  const SPECIAL = new Set([
+    'hyper-voice', 'substitute',
+    'ember', 'flamethrower', 'fire-spin', 'heat-wave', 'will-o-wisp',
+    'water-gun', 'bubble', 'hydro-pump', 'bubble-beam',
+    'leaf-storm', 'giga-drain', 'thunder-shock', 'discharge', 'thunderbolt',
+    'confusion', 'psybeam', 'psychic', 'sludge', 'toxic', 'mud-shot', 'gust',
+    'bug-buzz', 'ice-beam', 'powder-snow', 'hail', 'aura-sphere', 'shadow-ball', 'hex',
+    'dragon-rage', 'fairy-wind', 'dazzling-gleam', 'flash-cannon', 'dark-pulse', 'night-shade',
+    // los de 2026-10-27
+    'hyper-beam', 'solar-beam', 'energy-ball', 'whirlpool', 'thunder-wave', 'electro-ball', 'extrasensory',
+    'mist-ball', 'acid-spray', 'whirlwind', 'air-slash', 'signal-beam', 'ancient-power', 'power-gem', 'freeze-dry',
+    'vacuum-wave', 'ominous-wind', 'dragon-breath', 'draining-kiss', 'disarming-voice', 'mirror-shot'
+  ]);
+  for (const m of RAW) {
+    if (m.kind === 'buff') continue;
+    if (PHYSICAL.has(m.id)) m.cat = 'phys';
+    else if (SPECIAL.has(m.id)) m.cat = 'spec';
+    else throw new Error('Movimiento sin categoría (física o especial): ' + m.id);
+  }
+
+  // Movimientos que no salen por tipo, sino sólo a quien los aprende en los juegos (números de
+  // Pokédex de PokeAPI, move/nasty-plot, entre los jugables). Los demás de su tipo no los tienen.
+  const ONLY_LEARNERS: Record<string, Set<number>> = {
+    'nasty-plot': new Set([
+      25, 26, 37, 38, 39, 40, 41, 42, 52, 53, 54, 55, 65, 80, 92, 93, 94, 96, 97, 122, 124, 150, 151, 163, 164, 169,
+      172, 175, 176, 190, 198, 199, 200, 203, 215, 228, 229, 238, 251, 261, 262, 273, 274, 275, 300, 301, 302, 311,
+      312, 326, 331, 332, 337, 342, 344, 352, 353, 354, 386, 390, 391, 392, 424, 429, 430, 431, 432, 434, 435, 439,
+      441, 442, 447, 448, 453, 454, 461, 468, 474, 478, 479, 480, 481, 482, 491, 504, 505, 509, 510, 511, 512, 513,
+      515, 527, 528, 562, 563, 570, 571, 574, 575, 576, 605, 606, 629, 630, 633, 634, 635, 641, 642, 645, 655, 677,
+      678, 682, 686, 687, 711, 720, 722, 723, 724, 725, 726, 727, 757, 758, 803, 804, 821, 822, 823, 827, 828, 854,
+      855, 859, 860, 861, 863, 867, 877, 897, 903, 906, 907, 908, 978, 981, 1000, 1004, 1012, 1013, 1015, 1016, 1019
+    ])
+  };
+
   // Pool de movimientos por tipo. El pool `normal` lo tienen todos.
   const POOL: Record<string, string[]> = {};
-  for (const m of RAW) (POOL[m.type] = POOL[m.type] || []).push(m.id);
+  for (const m of RAW) if (!ONLY_LEARNERS[m.id]) (POOL[m.type] = POOL[m.type] || []).push(m.id);
 
   const BY_ID: Record<string, MoveDef> = {};
   for (const m of RAW) {
@@ -501,11 +772,20 @@ export const Moves = (() => {
     BY_ID[m.id] = m;
   }
 
-  /** Movimientos que este Pokémon puede aprender (sus tipos + normal). */
-  function poolFor(mon: MoveLearner): string[] {
+  /**
+   * Movimientos que este Pokémon puede aprender (sus tipos + normal).
+   * @param withNew  con los de 2026-10-27 (el Survivor). Sin esto, sólo los de antes: la Defensa
+   *                 (modes/td.ts) reparte sus ataques de torre con esta lista y no debe cambiar.
+   * @param taught   con los que el Pokémon ha aprendido con MT (Tienda Kecleon, ver Mons); por defecto, igual que
+   *                 `withNew`. Con `false` sale lo que sabe de serie (Mons.natural).
+   */
+  function poolFor(mon: MoveLearner, withNew = false, taught = withNew): string[] {
     const ids = new Set(POOL.normal);
     for (const t of mon.types) for (const id of (POOL[t] || [])) ids.add(id);
-    return [...ids];
+    if (mon.dex != null) for (const id in ONLY_LEARNERS) if (ONLY_LEARNERS[id].has(mon.dex)) ids.add(id);
+    const out = [...ids].filter(id => withNew || !NEW_IDS.has(id));
+    if (taught && mon.dex != null && G.Mons) for (const id of G.Mons.taught(mon.dex)) if (!out.includes(id)) out.push(id);
+    return out;
   }
 
   /**
@@ -520,8 +800,9 @@ export const Moves = (() => {
     return s;
   }
 
-  const MULT: string[] = ['dmg', 'cd', 'speed', 'radius', 'dur', 'amount', 'arc', 'width', 'spread', 'life', 'size', 'rate'];
-  const ADD: string[] = ['count', 'pierce', 'stacks'];
+  const MULT: string[] = ['dmg', 'cd', 'speed', 'radius', 'dur', 'amount', 'arc', 'width', 'spread', 'life', 'size', 'rate',
+                          'homing', 'pull', 'knock', 'stun', 'charge'];
+  const ADD: string[] = ['count', 'pierce', 'stacks', 'bounce'];
 
   function applyMods(s: MoveInstance, m: MoveMods) {
     // Los mods son números y se aplican a los campos numéricos de la instancia.
@@ -555,10 +836,22 @@ export const Moves = (() => {
     ghost: 'shadow-ball', dragon: 'dragon-rage', fairy: 'fairy-wind', steel: 'metal-claw',
     dark: 'bite', normal: 'tackle'
   };
-  function startFor(mon: MoveLearner): string {
+  /** Formas de movimiento que sirven para empezar una partida (sin minas, meteoros, torretas, auras...). */
+  const START_KINDS = new Set<MoveKind>(['projectile', 'melee', 'beam', 'boomerang', 'cone', 'chain', 'nova']);
+  /** Por debajo de esto, el ataque inicial cae en el lado flojo del Pokémon (ver catShareOf). */
+  const START_FLOOR = 0.88;
+
+  /**
+   * @param cats  con ataques físicos y especiales (el Survivor): si el inicial de su tipo cae en su lado
+   *              flojo (Gyarados y el agua, todo especial), empieza por uno de sus tipos del lado bueno
+   */
+  function startFor(mon: MoveLearner, cats = false): string {
     if (mon.start && BY_ID[mon.start]) return mon.start;
-    for (const t of mon.types) if (START[t]) return START[t]!;
-    return 'tackle';
+    let id = 'tackle';
+    for (const t of mon.types) if (START[t]) { id = START[t]!; break; }
+    if (!cats || mon.dex == null || catShareOf(mon.dex, BY_ID[id].cat!) >= START_FLOOR) return id;
+    const good = mon.types.flatMap(t => POOL[t] || []).filter(m => START_KINDS.has(BY_ID[m].kind) && catShareOf(mon.dex!, BY_ID[m].cat!) >= START_FLOOR);
+    return good[0] || id;
   }
 
   // ---------------- evolución de movimientos ----------------
@@ -599,7 +892,27 @@ export const Moves = (() => {
     'hail': ['Alud', 'cd'],                  'meteor-mash': ['Bomba Imán', 'atk'],
     'will-o-wisp': ['Infierno', 'cd'],       'substitute': ['Doble Equipo', 'def'],
     'aerial-ace': ['Acróbata', 'spd'],       'flame-wheel': ['Envite Ígneo', 'spd'],
-    'bubble-beam': ['Acua Cola', 'atk'],     'hex': ['Poltergeist', 'mag']
+    'bubble-beam': ['Acua Cola', 'atk'],     'hex': ['Poltergeist', 'mag'],
+    // los de 2026-10-27
+    'hyper-beam': ['Rayo Prisma', 'atk'],    'rapid-spin': ['Triataque', 'spd'],
+    'flame-charge': ['Golpe Calor', 'spd'],  'whirlpool': ['Salmuera', 'rgn'],
+    'seed-bomb': ['Mazazo', 'atk'],          'energy-ball': ['Gigadrenado', 'rgn'],
+    'solar-beam': ['Cuchilla Solar', 'cd'],  'thunder-wave': ['Voltio Cruel', 'atk'],
+    'electro-ball': ['Chispa', 'spd'],       'extrasensory': ['Psicoonda', 'def'],
+    'mist-ball': ['Resplandor', 'cd'],       'acid-spray': ['Onda Tóxica', 'rgn'],
+    'sand-tomb': ['Fuerza Equina', 'hp'],    'magnitude': ['Taladradora', 'atk'],
+    'whirlwind': ['Huracán', 'spd'],         'air-slash': ['Ataque Aéreo', 'cd'],
+    'signal-beam': ['Megacuerno', 'atk'],    'u-turn': ['Sanguijuela', 'rgn'],
+    'rock-tomb': ['Testarazo', 'hp'],        'ancient-power': ['Tormenta de Diamantes', 'def'],
+    'power-gem': ['Rayo Meteórico', 'atk'],  'ice-shard': ['Carámbano', 'cd'],
+    'freeze-dry': ['Frío Polar', 'atk'],     'rolling-kick': ['Patada Salto Alta', 'spd'],
+    'vacuum-wave': ['Puño Incremento', 'def'], 'dynamic-punch': ['Megapuño', 'atk'],
+    'shadow-sneak': ['Garra Umbría', 'cd'],  'ominous-wind': ['Golpe Umbrío', 'mag'],
+    'dragon-breath': ['Pulso Dragón', 'atk'], 'dragon-claw': ['Carga Dragón', 'atk'],
+    'outrage': ['Dracoflecha', 'hp'],        'draining-kiss': ['Luz Lunar', 'rgn'],
+    'play-rough': ['Choque Anímico', 'atk'], 'disarming-voice': ['Encanto', 'def'],
+    'mirror-shot': ['Metaláser', 'atk'],     'gyro-ball': ['Cuerpo Pesado', 'def'],
+    'sucker-punch': ['Juego Sucio', 'atk'],  'night-slash': ['Lariat Oscuro', 'spd']
   };
   // Lo que gana al evolucionar, según cómo funcione.
   const EVO_MODS: Partial<Record<MoveKind, MoveUpgrade>> = {
@@ -616,7 +929,15 @@ export const Moves = (() => {
     turret:     { t: '×1,8 daño, +1 a la vez y dispara más rápido', m: { dmg: 1.8, count: 1, rate: 0.8 } },
     dash:       { t: '×1,9 daño, más distancia y menos recarga', m: { dmg: 1.9, radius: 1.25, cd: 0.8 } },
     trail:      { t: '×1,8 daño, charcos más grandes y duraderos', m: { dmg: 1.8, radius: 1.25, dur: 1.3 } },
-    cone:       { t: '×1,7 daño, +4 disparos y +1 perforación', m: { dmg: 1.7, count: 4, pierce: 1 } }
+    cone:       { t: '×1,7 daño, +4 disparos y +1 perforación', m: { dmg: 1.7, count: 4, pierce: 1 } },
+    homing:     { t: '×1,8 daño, +2 proyectiles y más grandes', m: { dmg: 1.8, count: 2, size: 1.3, spread: 1.2 } },
+    bounce:     { t: '×1,8 daño, +2 rebotes y +1 proyectil', m: { dmg: 1.8, bounce: 2, count: 1, spread: 1.3 } },
+    charge:     { t: '×1,8 daño, rayo un 50% más grueso y carga más rápido', m: { dmg: 1.8, width: 1.5, charge: 0.7 } },
+    spin:       { t: '×1,8 daño, +1 vuelta y más radio', m: { dmg: 1.8, count: 1, radius: 1.2 } },
+    quake:      { t: '×1,8 daño, +3 ondas y ondas más grandes', m: { dmg: 1.8, count: 3, radius: 1.25 } },
+    vortex:     { t: '×1,8 daño, más radio y atrae más fuerte', m: { dmg: 1.8, radius: 1.3, pull: 1.4 } },
+    shove:      { t: '×1,8 daño, más radio y empuja más', m: { dmg: 1.8, radius: 1.25, knock: 1.4 } },
+    stun:       { t: '×1,8 daño, más radio y aturde más rato', m: { dmg: 1.8, radius: 1.3, stun: 1.4 } }
   };
 
   /** ¿Puede evolucionar ya? → { name, needs, needName, text, ready } o null */
@@ -639,8 +960,11 @@ export const Moves = (() => {
     return true;
   }
 
+  /** Nombre de cada categoría tal como sale en pantalla. */
+  const CAT_NAME: Record<MoveCat, string> = { phys: 'Físico', spec: 'Especial' };
+
   return { ALL: RAW, BY_ID, POOL, poolFor, instance, levelUp, nextUpText, startFor,
-              EVO, NEED_NAME, evoInfo, evolve };
+              EVO, NEED_NAME, evoInfo, evolve, CAT_NAME };
 })();
 G.Moves = Moves;
 

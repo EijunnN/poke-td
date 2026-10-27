@@ -7,22 +7,25 @@
  *          El servidor apunta la hora a la que empieza la partida (en grupo, la
  *          del anfitrión). mode: 's' solitario · 'g' grupo · 'd' Defensa (tower defense) · 'e' Defensa en grupo
  *          · 'a' Arena (aquí sólo se avisa: su resultado se sube a /api/ranking/arena, ver server/arena.ts).
- *   POST   /api/ranking/submit  { mode:'s', t, lv, kills, dex, shiny }
- *                               { mode:'g', t, lv, kills, members:[{ uid, dex, shiny }] }
- *                                                               -> { ok, better:['d','w','m','a'] }
+ *   POST   /api/ranking/submit  { mode:'s', t, lv, kills, arceus?, dex, shiny }
+ *                               { mode:'g', t, lv, kills, arceus?, members:[{ uid, dex, shiny }] }
+ *                                                               -> { ok, better:['d','w','m','a'], betterDmg:[...] }
  *                               { mode:'d', waves, lives, secs, kills, dex, shiny }   (Defensa)
  *                               { mode:'e', waves, lives, secs, kills, members:[{ uid, dex, shiny }] }   (Defensa en grupo)
  *          Sube la marca a cada tabla donde mejora (sólo mejora, nunca empeora):
  *          las de hoy, semana, mes e histórico, y la del histórico de cada Pokémon.
- *          `better` son los periodos (no el de Pokémon) donde ha mejorado. En
+ *          `better` son los periodos (no el de Pokémon) donde ha mejorado. `arceus` es el daño
+ *          hecho a Arceus en la Sentencia (sólo en el Survivor, opcional): se guarda el mejor de
+ *          cada tabla aunque la partida no mejore el tiempo (`betterDmg`: donde ha mejorado). En
  *          grupo la sube el anfitrión, que debe estar en `members`; los nombres
  *          salen de la base de datos, no de lo que mande el cliente.
- *   GET    /api/ranking/top?mode&period[&dex][&circle=1,2,3]    -> { ok, rows, admin }
+ *   GET    /api/ranking/top?mode&period[&dex][&circle=1,2,3][&sort=arceus] -> { ok, rows, admin }
  *          Top 50 de una tabla (period: d|w|m|a; dex sólo cuenta en 'a'). Con
  *          `circle` (uids separados por comas, máx. 30) sólo salen las marcas donde
- *          estén esas cuentas o la tuya. Fila: { id, t, uids, names, dex, shiny, lv, kills }.
- *   GET    /api/ranking/rank?mode&period[&dex]                  -> { ok, rank, admin }
- *          Tu mejor puesto exacto (aunque pases del 50) o null: rank = { pos, t, row }.
+ *          estén esas cuentas o la tuya. Fila: { id, t, uids, names, dex, shiny, lv, kills, arceus }.
+ *          Con sort=arceus (sólo Survivor) se ordena por daño a Arceus y sólo salen las marcas con daño > 0.
+ *   GET    /api/ranking/rank?mode&period[&dex][&sort=arceus]    -> { ok, rank, admin }
+ *          Tu mejor puesto exacto (aunque pases del 50) o null: rank = { pos, t, arceus, row }.
  *   POST   /api/ranking/report  { board, e }                    -> { ok, dup }
  *          Reporta una marca (una vez por jugador y marca; la tuya no).
  *   DELETE /api/ranking/mine                                    -> { ok, removed }
@@ -42,7 +45,7 @@
  *   POST   /api/ranking/admin/dismiss      { ids }              -> { ok }
  *
  * Tablas (se crean aquí; todo lo que cuelga de una cuenta se borra con ella):
- *   ranking_entries  la marca de cada jugador o equipo en cada tabla: (board, id) -> t, lv, kills, at
+ *   ranking_entries  la marca de cada jugador o equipo en cada tabla: (board, id) -> t, lv, kills, arceus, at
  *   ranking_members  quiénes forman la marca (con su Pokémon); si se va uno, se va la marca entera
  *   ranking_runs     cuándo empezó la última partida de cada cuenta (anti-trampas)
  *   ranking_reports  reportes de marcas sospechosas, uno por jugador y marca
@@ -64,6 +67,8 @@
  *     partida, una subida); el modo tiene que coincidir
  *   - t entero, entre 60 s y 1 h, y no más que el tiempo real desde /start + 30 s
  *   - nivel entero entre 1 y 10 + t/4, derrotados entero entre 0 y 100 + 12·t
+ *   - daño a Arceus entero ≥ 0 que se recorta a maxArceusDmg (tiempo en la Sentencia, nivel y jugadores);
+ *     más del doble de eso se rechaza. La Defensa no lo lleva
  *   - Pokémon entero entre 1 y 2000
  *   - la cuenta (y en grupo, ningún miembro) no puede estar marcada
  *   - grupo de 2 a 4 cuentas distintas y existentes (en la Defensa, hasta 8), con el anfitrión dentro
@@ -104,6 +109,16 @@ const TOP = 50;
 const MIN_T = 60;
 /** Ninguna marca real pasa de 1 h (la Sentencia de Arceus acaba las partidas hacia el minuto 31-32). */
 const MAX_T = 3600;
+/** Minuto de la partida (en segundos) en que empieza la Sentencia de Arceus. */
+const ARCEUS_AT = 1800;
+/**
+ * Lo más que se le puede hacer a Arceus en una partida que ha durado `t` s: por jugador y segundo
+ * de Sentencia, según el nivel (muy por encima de lo que da una partida real; sólo frena lo absurdo).
+ */
+export function maxArceusDmg(t: number, lv: number, players: number) {
+  if (t < ARCEUS_AT) return 0;
+  return Math.floor((t - ARCEUS_AT + 5) * players * (4000 + 3000 * lv));
+}
 /** Margen sobre el tiempo real transcurrido desde /start. */
 export const GRACE_S = 30;
 export const MAX_DEX = 2000;
@@ -159,8 +174,8 @@ export const UID_RE = /^[1-9]\d{0,12}$/;
 
 // ---------------- tipos ----------------
 
-interface Row { id: string; t: number; uids: string[]; names: string[]; dex: number[]; shiny: boolean[]; lv: number; kills: number }
-interface EntryRow { id: string; t: number; lv: number; kills: number }
+interface Row { id: string; t: number; uids: string[]; names: string[]; dex: number[]; shiny: boolean[]; lv: number; kills: number; arceus: number }
+interface EntryRow { id: string; t: number; lv: number; kills: number; arceus: number }
 
 const isInt = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v);
 const placeholders = (n: number) => Array.from({ length: n }, () => '?').join(',');
@@ -198,6 +213,7 @@ export function createRanking(db: Db, opts: RankingOptions = {}): Module {
       t INTEGER NOT NULL,
       lv INTEGER NOT NULL,
       kills INTEGER NOT NULL,
+      arceus INTEGER NOT NULL DEFAULT 0,
       at INTEGER NOT NULL,
       PRIMARY KEY (board, id)
     ) WITHOUT ROWID;
@@ -236,6 +252,11 @@ export function createRanking(db: Db, opts: RankingOptions = {}): Module {
     CREATE TRIGGER IF NOT EXISTS ranking_entries_gone AFTER DELETE ON ranking_entries
     BEGIN DELETE FROM ranking_reports WHERE board = OLD.board AND entry = OLD.id; END;
   `);
+  // Migración: las bases anteriores no tienen el daño a Arceus (CREATE IF NOT EXISTS no las toca).
+  if (!raw.query<{ name: string }, []>('PRAGMA table_info(ranking_entries)').all().some(c => c.name === 'arceus')) {
+    raw.exec('ALTER TABLE ranking_entries ADD COLUMN arceus INTEGER NOT NULL DEFAULT 0');
+  }
+  raw.exec('CREATE INDEX IF NOT EXISTS ranking_entries_arceus ON ranking_entries(board, arceus DESC, at, id)');
   ensureMarked(db);
 
   const q = {
@@ -245,26 +266,40 @@ export function createRanking(db: Db, opts: RankingOptions = {}): Module {
       'INSERT INTO ranking_runs (user_id, started, mode) VALUES (?1, ?2, ?3) ON CONFLICT(user_id) DO UPDATE SET started = excluded.started, mode = excluded.mode'),
     getRun: raw.query<{ started: number; mode: string }, [number]>('SELECT started, mode FROM ranking_runs WHERE user_id = ?'),
     delRun: raw.query<unknown, [number]>('DELETE FROM ranking_runs WHERE user_id = ?'),
-    // Sólo escribe si mejora (t estrictamente mayor); RETURNING sólo devuelve fila si escribió.
-    upsertEntry: raw.query<{ t: number }, [string, string, number, number, number, number]>(`
-      INSERT INTO ranking_entries (board, id, t, lv, kills, at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-      ON CONFLICT(board, id) DO UPDATE SET t = excluded.t, lv = excluded.lv, kills = excluded.kills, at = excluded.at
+    // Sólo escribe si mejora (t estrictamente mayor); RETURNING sólo devuelve fila si escribió. El daño a Arceus, el mejor de los dos.
+    upsertEntry: raw.query<{ t: number }, [string, string, number, number, number, number, number]>(`
+      INSERT INTO ranking_entries (board, id, t, lv, kills, arceus, at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+      ON CONFLICT(board, id) DO UPDATE SET t = excluded.t, lv = excluded.lv, kills = excluded.kills, at = excluded.at,
+        arceus = MAX(ranking_entries.arceus, excluded.arceus)
         WHERE excluded.t > ranking_entries.t
       RETURNING t`),
+    // El tiempo no mejora pero el daño a Arceus sí: sólo cambia eso. RETURNING: devuelve fila si lo mejoró.
+    bumpArceus: raw.query<{ arceus: number }, [number, string, string]>(
+      'UPDATE ranking_entries SET arceus = ?1 WHERE board = ?2 AND id = ?3 AND arceus < ?1 RETURNING arceus'),
     upsertMember: raw.query<unknown, [string, string, number, number, number]>(`
       INSERT INTO ranking_members (board, id, user_id, dex, shiny) VALUES (?1, ?2, ?3, ?4, ?5)
       ON CONFLICT(board, id, user_id) DO UPDATE SET dex = excluded.dex, shiny = excluded.shiny`),
-    entry: raw.query<EntryRow, [string, string]>('SELECT id, t, lv, kills FROM ranking_entries WHERE board = ? AND id = ?'),
+    entry: raw.query<EntryRow, [string, string]>('SELECT id, t, lv, kills, arceus FROM ranking_entries WHERE board = ? AND id = ?'),
     top: raw.query<EntryRow, [string, number]>(
-      'SELECT id, t, lv, kills FROM ranking_entries WHERE board = ? ORDER BY t DESC, at, id LIMIT ?'),
+      'SELECT id, t, lv, kills, arceus FROM ranking_entries WHERE board = ? ORDER BY t DESC, at, id LIMIT ?'),
+    // Por daño a Arceus: sólo las marcas que le han hecho algo.
+    topArceus: raw.query<EntryRow, [string, number]>(
+      'SELECT id, t, lv, kills, arceus FROM ranking_entries WHERE board = ? AND arceus > 0 ORDER BY arceus DESC, at, id LIMIT ?'),
     // La mejor marca de un jugador en una tabla (con su `at`, para contar quién va delante).
     mine: raw.query<EntryRow & { at: number }, [string, number]>(`
-      SELECT e.id, e.t, e.lv, e.kills, e.at FROM ranking_entries e
+      SELECT e.id, e.t, e.lv, e.kills, e.arceus, e.at FROM ranking_entries e
       JOIN ranking_members m ON m.board = e.board AND m.id = e.id
       WHERE e.board = ? AND m.user_id = ? ORDER BY e.t DESC, e.at, e.id LIMIT 1`),
+    mineArceus: raw.query<EntryRow & { at: number }, [string, number]>(`
+      SELECT e.id, e.t, e.lv, e.kills, e.arceus, e.at FROM ranking_entries e
+      JOIN ranking_members m ON m.board = e.board AND m.id = e.id
+      WHERE e.board = ? AND m.user_id = ? AND e.arceus > 0 ORDER BY e.arceus DESC, e.at, e.id LIMIT 1`),
     above: raw.query<{ n: number }, [string, number, number, string]>(`
       SELECT COUNT(*) AS n FROM ranking_entries
       WHERE board = ?1 AND (t > ?2 OR (t = ?2 AND (at < ?3 OR (at = ?3 AND id < ?4))))`),
+    aboveArceus: raw.query<{ n: number }, [string, number, number, string]>(`
+      SELECT COUNT(*) AS n FROM ranking_entries
+      WHERE board = ?1 AND (arceus > ?2 OR (arceus = ?2 AND (at < ?3 OR (at = ?3 AND id < ?4))))`),
     delEntry: raw.query<unknown, [string, string]>('DELETE FROM ranking_entries WHERE board = ? AND id = ?'),
     delMine: raw.query<unknown, [number]>(
       'DELETE FROM ranking_entries WHERE (board, id) IN (SELECT board, id FROM ranking_members WHERE user_id = ?)'),
@@ -303,7 +338,7 @@ export function createRanking(db: Db, opts: RankingOptions = {}): Module {
       WHERE m.board = ? AND m.id IN (${placeholders(entries.length)}) ORDER BY m.id, m.user_id`)
       .all(board, ...entries.map(e => e.id));
     const by = new Map<string, Row>();
-    for (const e of entries) by.set(e.id, { id: e.id, t: e.t, uids: [], names: [], dex: [], shiny: [], lv: e.lv, kills: e.kills });
+    for (const e of entries) by.set(e.id, { id: e.id, t: e.t, uids: [], names: [], dex: [], shiny: [], lv: e.lv, kills: e.kills, arceus: e.arceus });
     // El orden de los miembros es numérico (ids como '9_10'), no el del texto.
     ms.sort((a, b) => a.user_id - b.user_id);
     for (const m of ms) {
@@ -345,6 +380,8 @@ export function createRanking(db: Db, opts: RankingOptions = {}): Module {
     const mode = b.mode;
     if (!isMode(mode)) return fail(400, 'Modo no válido.');
     let t: number, lv: number, kills: number;
+    /** Daño hecho a Arceus (sólo Survivor; se comprueba al saber el equipo). */
+    let arceus = 0;
     /** Los segundos que tienen que haber pasado de verdad desde /start. */
     let realS: number;
     if (isDefense(mode)) {
@@ -358,8 +395,13 @@ export function createRanking(db: Db, opts: RankingOptions = {}): Module {
     } else {
       ({ t, lv, kills } = b);
       if (!isInt(t) || t < MIN_T || t > MAX_T) return fail(400, 'Tiempo no válido.');
-      if (!isInt(lv) || lv < 1 || lv > 10 + t / 4) return fail(400, 'Nivel no válido.');
-      if (!isInt(kills) || kills < 0 || kills > 100 + t * 12) return fail(400, 'Derrotados no válidos.');
+      // Algo por encima de lo creíble se recorta al máximo en vez de perder la marca entera
+      // (una buena partida que roza el tope no se queda fuera por unos pocos); más del doble, se rechaza.
+      const maxLv = Math.floor(10 + t / 4), maxKills = 100 + t * 12;
+      if (!isInt(lv) || lv < 1 || lv > maxLv * 2) return fail(400, 'Nivel no válido.');
+      if (!isInt(kills) || kills < 0 || kills > maxKills * 2) return fail(400, 'Derrotados no válidos.');
+      lv = Math.min(lv, maxLv);
+      kills = Math.min(kills, maxKills);
       realS = t;
     }
 
@@ -386,6 +428,12 @@ export function createRanking(db: Db, opts: RankingOptions = {}): Module {
       }
     }
     if (team.some(m => isMarked(m.uid))) return fail(403, 'Una cuenta marcada no puede subir marcas.');
+    if (!isDefense(mode) && b.arceus !== undefined && b.arceus !== null) {
+      // Como el nivel y los derrotados: algo por encima de lo creíble se recorta; más del doble, se rechaza.
+      const maxDmg = maxArceusDmg(t, lv, team.length);
+      if (!isInt(b.arceus) || b.arceus < 0 || b.arceus > maxDmg * 2) return fail(400, 'Daño a Arceus no válido.');
+      arceus = Math.min(b.arceus, maxDmg);
+    }
 
     // Anti-trampas: la partida tiene que haber empezado (según el reloj del servidor) y haber durado esto.
     const run = q.getRun.get(uid);
@@ -401,30 +449,38 @@ export function createRanking(db: Db, opts: RankingOptions = {}): Module {
     if (!isDefense(mode)) for (const d of new Set(team.map(m => m.dex))) boards.push([mode + '_' + ALL + '_p' + d, 'p']);
 
     const at = now();
-    const better: string[] = [];
+    const better: string[] = [], betterDmg: string[] = [];
     raw.transaction(() => {
       for (const [board, p] of boards) {
-        if (!q.upsertEntry.get(board, id, t, lv, kills, at)) continue;
+        const prevDmg = q.entry.get(board, id)?.arceus ?? 0;
+        if (!q.upsertEntry.get(board, id, t, lv, kills, arceus, at)) {
+          // El tiempo no mejora, pero el mejor daño a Arceus se guarda igual.
+          if (arceus > 0 && q.bumpArceus.get(arceus, board, id) && p !== 'p' && !betterDmg.includes(p)) betterDmg.push(p);
+          continue;
+        }
         for (const m of team) q.upsertMember.run(board, id, m.uid, m.dex, m.shiny ? 1 : 0);
         if (p !== 'p' && !better.includes(p)) better.push(p);
+        if (arceus > prevDmg && p !== 'p' && !betterDmg.includes(p)) betterDmg.push(p);
       }
     })();
-    return json({ ok: true, better: PERIODS.filter(p => better.includes(p)) });
+    return json({ ok: true, better: PERIODS.filter(p => better.includes(p)), betterDmg: PERIODS.filter(p => betterDmg.includes(p)) });
   }
 
   function top(url: URL, uid: number) {
     const board = boardOf(url.searchParams.get('mode'), url.searchParams.get('period'), url.searchParams.get('dex'));
     if (!board) return fail(400, 'Tabla no válida.');
+    const byArceus = sortArceus(url, board);
+    if (byArceus === null) return fail(400, 'Tabla no válida.');
     const circleRaw = url.searchParams.get('circle');
     let entries: EntryRow[];
-    if (circleRaw === null) entries = q.top.all(board, TOP);
+    if (circleRaw === null) entries = (byArceus ? q.topArceus : q.top).all(board, TOP);
     else {
       const set = new Set<number>([uid]);
       for (const s of circleRaw.split(',').slice(0, 30)) if (UID_RE.test(s)) set.add(+s);
       entries = raw.query<EntryRow, (string | number)[]>(`
-        SELECT e.id, e.t, e.lv, e.kills FROM ranking_entries e
-        WHERE e.board = ? AND EXISTS (SELECT 1 FROM ranking_members m WHERE m.board = e.board AND m.id = e.id AND m.user_id IN (${placeholders(set.size)}))
-        ORDER BY e.t DESC, e.at, e.id LIMIT ${TOP}`).all(board, ...set);
+        SELECT e.id, e.t, e.lv, e.kills, e.arceus FROM ranking_entries e
+        WHERE e.board = ? ${byArceus ? 'AND e.arceus > 0' : ''} AND EXISTS (SELECT 1 FROM ranking_members m WHERE m.board = e.board AND m.id = e.id AND m.user_id IN (${placeholders(set.size)}))
+        ORDER BY ${byArceus ? 'e.arceus' : 'e.t'} DESC, e.at, e.id LIMIT ${TOP}`).all(board, ...set);
     }
     return json({ ok: true, rows: rowsOf(board, entries), admin: isAdmin(uid) });
   }
@@ -432,10 +488,20 @@ export function createRanking(db: Db, opts: RankingOptions = {}): Module {
   function rank(url: URL, uid: number) {
     const board = boardOf(url.searchParams.get('mode'), url.searchParams.get('period'), url.searchParams.get('dex'));
     if (!board) return fail(400, 'Tabla no válida.');
-    const mine = q.mine.get(board, uid);
+    const byArceus = sortArceus(url, board);
+    if (byArceus === null) return fail(400, 'Tabla no válida.');
+    const mine = (byArceus ? q.mineArceus : q.mine).get(board, uid);
     if (!mine) return json({ ok: true, rank: null, admin: isAdmin(uid) });
-    const pos = q.above.get(board, mine.t, mine.at, mine.id)!.n + 1;
-    return json({ ok: true, rank: { pos, t: mine.t, row: rowsOf(board, [mine])[0] }, admin: isAdmin(uid) });
+    const pos = (byArceus ? q.aboveArceus.get(board, mine.arceus, mine.at, mine.id) : q.above.get(board, mine.t, mine.at, mine.id))!.n + 1;
+    return json({ ok: true, rank: { pos, t: mine.t, arceus: mine.arceus, row: rowsOf(board, [mine])[0] }, admin: isAdmin(uid) });
+  }
+
+  /** ¿Se pide la lista por daño a Arceus (`sort=arceus`)? null si no vale para esa tabla (la Defensa no lo lleva). */
+  function sortArceus(url: URL, board: string): boolean | null {
+    const sort = url.searchParams.get('sort');
+    if (sort === null || sort === '' || sort === 't') return false;
+    if (sort !== 'arceus' || isDefense(board[0])) return null;
+    return true;
   }
 
   async function report(req: Request, uid: number) {

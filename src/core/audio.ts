@@ -85,8 +85,6 @@ export const Audio = (() => {
     for (let i = 0; i < nd.length; i++) nd[i] = rand() * 2 - 1;
 
     applyVolumes();
-    // Preparada desde el primer gesto para que arranque al comenzar el Juicio.
-    loadJudgmentTrack();
     return true;
   }
 
@@ -355,8 +353,16 @@ export const Audio = (() => {
         return res.arrayBuffer();
       })
       .then(data => ctx.decodeAudioData(data))
-      .catch(() => null); // Si falla la carga, queda el tema sintetizado del Juicio.
+      // Si falla la carga, queda el tema sintetizado del Juicio (y se reintenta la próxima vez).
+      .catch(() => { judgmentTrack = null; return null; });
   }
+
+  /**
+   * La canción del Juicio pesa unos 6 MB: se descarga poco antes del minuto 30 (lo pide
+   * Judgment.update) y no al primer toque, que la bajaba entera aunque no se llegara nunca.
+   */
+  let preloaded = false;
+  function preloadJudgment() { if (ctx && !preloaded) { preloaded = true; void loadJudgmentTrack(); } }
 
   function startSong(name: string) {
     if (!ctx || !G.MUSIC[name]) return;
@@ -589,7 +595,7 @@ export const Audio = (() => {
   }
 
   return {
-    music, sfx, setVolume, toggleMute, unlock, debugMeter, debugStream,
+    music, sfx, setVolume, toggleMute, unlock, debugMeter, debugStream, preloadJudgment,
     /** ¿Ya puede sonar? (el navegador sólo deja tras tocar algo, salvo excepciones) */
     canPlay() { return !!ctx && ctx.state === 'running'; },
     get settings() { return settings; },

@@ -1,6 +1,7 @@
 import { G } from '../g';
 import type { Player } from '../entities/player';
 import type { PokeType } from '../data/types';
+import type { MoveCat, MoveDef } from '../data/moves';
 /* ============ levelup.js — las tres cartas de subida de nivel ============
  * Tipos de carta:
  *   new   aprender un movimiento nuevo (sólo si quedan huecos de los 4; un vínculo libera huecos)
@@ -11,6 +12,8 @@ import type { PokeType } from '../data/types';
 export interface Card {
   w: number; type: 'new' | 'evo' | 'up' | 'stat'; key: string;
   icon: string; color: string; tag: string; title: string; desc: string;
+  /** Físico o especial, si la carta es de un movimiento que ataca (se pinta como una etiqueta). */
+  cat?: MoveCat;
   apply: (p: Player) => void;
 }
 
@@ -45,6 +48,28 @@ export const LevelUp = (() => {
       apply: pl => pl.heal(pl.maxHp * 0.45) }
   ];
 
+  /**
+   * Cuánto le sirve un movimiento a este Pokémon, de 0 a 1: los de su lado bueno (físico o especial) valen 1 y
+   * los del otro, menos cuanto más flojo sea ese lado. Los potenciadores de ataque cuentan por lo que potencian.
+   */
+  function sideShare(pl: Player, d: MoveDef): number {
+    const cat = d.cat || (d.stat === 'atk' ? 'phys' : d.stat === 'spa' ? 'spec' : null);
+    return !cat ? 0.7 : Math.pow(pl.catShare(cat), 3);
+  }
+
+  /** `n` movimientos distintos al azar, con más suerte para los de su lado bueno (sin categorías, al azar sin más). */
+  function pickMoves(pl: Player, ids: string[], n: number): string[] {
+    if (!pl.cats) return G.U.pickN(ids, n);
+    const left = ids.map(id => ({ id, s: 0.15 + sideShare(pl, G.Moves.BY_ID[id]) }));
+    const out: string[] = [];
+    while (out.length < n && left.length) {
+      let r = Math.random() * left.reduce((a, x) => a + x.s, 0), i = 0;
+      for (; i < left.length - 1; i++) { r -= left[i].s; if (r <= 0) break; }
+      out.push(left.splice(i, 1)[0].id);
+    }
+    return out;
+  }
+
   /** Construye el conjunto de cartas candidatas, con pesos. */
   function candidates(pl: Player): Card[] {
     const out: Card[] = [];
@@ -54,14 +79,14 @@ export const LevelUp = (() => {
       // Con 2 potenciadores ya no se ofrecen más: los buff no hacen daño y
       // llenar los 4 huecos con ellos deja la run sin salida.
       const buffs = pl.moves.filter(m => m.kind === 'buff').length;
-      const pool = G.Moves.poolFor(pl.mon).filter(id =>
+      const pool = G.Moves.poolFor(pl.mon, true).filter(id =>
         !pl.hasMove(id) && !(pl.banned && pl.banned.has(id)) && !(buffs >= 2 && G.Moves.BY_ID[id].kind === 'buff'));
-      for (const id of G.U.pickN(pool, 6)) {
+      for (const id of pickMoves(pl, pool, 6)) {
         const d = G.Moves.BY_ID[id];
         out.push({
-          w: 10, type: 'new', key: 'new:' + id,
+          w: pl.cats ? 4 + 12 * sideShare(pl, d) : 10, type: 'new', key: 'new:' + id,
           icon: 'move:' + id, color: G.U.TYPE_COLOR[d.type],
-          tag: G.U.TYPE_NAME[d.type],
+          tag: G.U.TYPE_NAME[d.type], cat: d.cat,
           title: d.name, desc: d.desc,
           apply: p => p.addMove(id)
         });
@@ -76,7 +101,7 @@ export const LevelUp = (() => {
       if (!ev.ready) { waiting[ev.needs] = m; continue; }
       out.push({
         w: 40, type: 'evo', key: 'evo:' + m.id,
-        icon: 'move:' + m.id, color: '#ffd23f', tag: 'EVOLUCIÓN',
+        icon: 'move:' + m.id, color: '#ffd23f', tag: 'EVOLUCIÓN', cat: m.cat,
         title: m.name + ' → ' + ev.name, desc: ev.text,
         apply: p => {
           G.Moves.evolve(m);
@@ -95,7 +120,7 @@ export const LevelUp = (() => {
       out.push({
         w: 8, type: 'up', key: 'up:' + m.id,
         icon: 'move:' + m.id, color: G.U.TYPE_COLOR[m.type as PokeType],
-        tag: 'Nv.' + m.lvl + ' > ' + (m.lvl + 1),
+        tag: 'Nv.' + m.lvl + ' > ' + (m.lvl + 1), cat: m.cat,
         title: m.name, desc: txt,
         apply: () => G.Moves.levelUp(m)
       });

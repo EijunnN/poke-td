@@ -10,7 +10,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } fr
 import { startServer } from './helpers';
 import { openDb } from '../server/db';
 import { sha256 } from '../server/http';
-import { createRanking, periodIds, type RankingOptions } from '../server/ranking';
+import { createRanking, maxArceusDmg, periodIds, type RankingOptions } from '../server/ranking';
 import { LAST_WAVE, MAX_WAVE, maxDefenseKills, minDefenseTime } from '../src/modes/td-waves';
 
 // Las cuentas de moderación se leen de la variable de entorno al crear el servidor.
@@ -268,9 +268,9 @@ describe('anti-trampas: el tiempo', () => {
 describe('anti-trampas: nivel, derrotados y Pokémon', () => {
   test.each([
     ['nivel 0', { lv: 0 }], ['nivel negativo', { lv: -5 }], ['nivel decimal', { lv: 5.5 }], ['nivel texto', { lv: '5' }],
-    ['nivel imposible para 100 s (> 10 + t/4)', { lv: 36 }], ['nivel enorme', { lv: 1e9 }], ['nivel nulo', { lv: null }],
+    ['nivel imposible para 100 s (> 2·(10 + t/4))', { lv: 71 }], ['nivel enorme', { lv: 1e9 }], ['nivel nulo', { lv: null }],
     ['derrotados negativos', { kills: -1 }], ['derrotados decimales', { kills: 1.5 }], ['derrotados texto', { kills: '10' }],
-    ['derrotados imposibles (> 100 + 12·t)', { kills: 1301 }], ['derrotados enormes', { kills: 1e12 }], ['sin derrotados', { kills: undefined }],
+    ['derrotados imposibles (> 2·(100 + 12·t))', { kills: 2601 }], ['derrotados enormes', { kills: 1e12 }], ['sin derrotados', { kills: undefined }],
     ['Pokémon 0', { dex: 0 }], ['Pokémon negativo', { dex: -1 }], ['Pokémon fuera de rango', { dex: 99999 }], ['Pokémon decimal', { dex: 1.5 }],
     ['Pokémon texto', { dex: 'pikachu' }], ['Pokémon inyección', { dex: "1; DROP TABLE ranking_entries" }], ['sin Pokémon', { dex: undefined }],
     ['modo roto', { mode: 'x' }], ['sin modo', { mode: undefined }],
@@ -289,6 +289,14 @@ describe('anti-trampas: nivel, derrotados y Pokémon', () => {
     const r = await call('POST', '/submit', mark(100, { lv: 35, kills: 1300, dex: 2000 }), u.token);
     expect(r.status).toBe(200);
     expect(await mine(u)).toMatchObject({ t: 100, lv: 35, kills: 1300, dex: [2000] });
+  });
+
+  test('algo por encima del límite se recorta en vez de rechazar la marca', async () => {
+    const u = mkUser();
+    await begin(u, 's', 1000);
+    const r = await call('POST', '/submit', mark(100, { lv: 36, kills: 1301 }), u.token);
+    expect(r.status).toBe(200);
+    expect(await mine(u)).toMatchObject({ t: 100, lv: 35, kills: 1300 });
   });
 
   test('el shiny que no es booleano true cuenta como no shiny', async () => {
@@ -1239,5 +1247,173 @@ describe('Defensa en grupo (modo e)', () => {
     await call('POST', '/admin/purge', { maxT: 600 }, m.token);
     const id = [a.id, b.id].sort((x, y) => x - y).join('_');
     expect(count('ranking_entries', 'id = ?', id)).toBe(4);
+  });
+});
+
+describe('daño a Arceus', () => {
+  // La Sentencia empieza en el minuto 30 (1800 s): las partidas con daño duran más que eso.
+  const dmg = (u: U, t: number, arceus: unknown, over: Record<string, unknown> = {}, age = t + 5) => solo(u, t, { arceus, ...over }, age);
+  const por = (u: U, extra = '') => rows(u, 's', 'a', '&sort=arceus' + extra);
+  const entry = (u: U, board = 's_all2') =>
+    srv.db.raw.query('SELECT t, lv, kills, arceus FROM ranking_entries WHERE board = ? AND id = ?').get(board, u.uid) as any;
+
+  test('sube con la marca, sale en las listas con el daño y en todas las tablas', async () => {
+    const u = mkUser();
+    const r = await dmg(u, 1900, 123456);
+    expect(r.status).toBe(200);
+    expect(r.j.betterDmg).toEqual(['d', 'w', 'm', 'a']);
+    const p = periodIds();
+    for (const board of ['s_' + p.d, 's_' + p.w, 's_' + p.m, 's_all2', 's_all2_p25']) expect(entry(u, board).arceus).toBe(123456);
+    expect((await rows(u))[0].arceus).toBe(123456);                           // la lista de tiempo también lo lleva
+    expect((await por(u)).map(x => [x.uids[0], x.arceus])).toEqual([[u.uid, 123456]]);
+  });
+
+  test('sin el campo (o a 0) la marca sube como antes y no sale en la lista por daño', async () => {
+    const u = mkUser(), v = mkUser(), w = mkUser();
+    expect((await solo(u, 1200)).status).toBe(200);
+    expect((await dmg(v, 1300, 0)).status).toBe(200);
+    expect((await dmg(w, 1400, null)).status).toBe(200);
+    expect(entry(u).arceus).toBe(0);
+    expect((await por(u)).some(x => x.uids[0] === u.uid)).toBe(false);
+    expect((await rank(u, 's', 'a', '&sort=arceus')).j.rank).toBeNull();
+    expect((await rank(u)).j.rank.pos).toBeGreaterThan(0);                    // y su puesto por tiempo sigue ahí
+  });
+
+  test('la lista por daño ordena por daño (no por tiempo) y deja fuera lo que no tiene', async () => {
+    await aparte(async () => {
+      const a = mkUser(), b = mkUser(), c = mkUser(), d = mkUser();
+      await dmg(a, 2000, 5000);        // más tiempo, poco daño
+      await dmg(b, 1850, 90000);       // menos tiempo, mucho daño
+      await dmg(c, 1900, 40000);
+      await solo(d, 2500);             // la que más aguanta, sin daño
+      expect((await por(a)).map(x => x.uids[0])).toEqual([b.uid, c.uid, a.uid]);
+      expect((await rows(a)).map(x => x.uids[0])).toEqual([d.uid, a.uid, c.uid, b.uid]);   // por tiempo, como siempre
+      // Tu puesto exacto en cada orden.
+      expect((await rank(a, 's', 'a', '&sort=arceus')).j.rank).toMatchObject({ pos: 3, arceus: 5000, t: 2000 });
+      expect((await rank(a)).j.rank.pos).toBe(2);
+      expect((await rank(d, 's', 'a', '&sort=arceus')).j.rank).toBeNull();
+    });
+  });
+
+  test('el mejor daño se guarda aunque la partida no mejore el tiempo, y uno peor no lo pisa', async () => {
+    const u = mkUser();
+    await dmg(u, 1900, 1000, { lv: 7, kills: 300 });
+    const r = await dmg(u, 1850, 5000, { lv: 9, kills: 900 });                // peor tiempo, más daño
+    expect(r.j.better).toEqual([]);
+    expect(r.j.betterDmg).toEqual(['d', 'w', 'm', 'a']);
+    expect(entry(u)).toEqual({ t: 1900, lv: 7, kills: 300, arceus: 5000 });     // lo del tiempo, intacto
+    const q = await dmg(u, 1880, 2000);                                         // peor en las dos cosas
+    expect(q.j.better).toEqual([]);
+    expect(q.j.betterDmg).toEqual([]);
+    expect(entry(u).arceus).toBe(5000);
+    const s = await dmg(u, 2000, 100);                                          // mejor tiempo, menos daño: el daño no baja
+    expect(s.j.better).toEqual(['d', 'w', 'm', 'a']);
+    expect(s.j.betterDmg).toEqual([]);
+    expect(entry(u)).toEqual({ t: 2000, lv: 5, kills: 100, arceus: 5000 });
+    expect(huerfanas()).toBe(0);
+  });
+
+  test('un daño de más se recorta al máximo creíble; el doble de ese máximo, se rechaza', async () => {
+    const u = mkUser();
+    const max = maxArceusDmg(1900, 5, 1);
+    expect(max).toBeGreaterThan(1e6);
+    expect((await dmg(u, 1900, max)).status).toBe(200);
+    expect(entry(u).arceus).toBe(max);
+    const v = mkUser();
+    expect((await dmg(v, 1900, max * 2)).status).toBe(200);
+    expect(entry(v).arceus).toBe(max);
+    const w = mkUser();
+    expect((await dmg(w, 1900, max * 2 + 1)).status).toBe(400);
+    expect(entry(w)).toBeNull();                                           // no entró nada
+    // Y la partida no se gasta: se puede repetir bien.
+    expect((await call('POST', '/submit', mark(1900, { arceus: 10 }), w.token)).status).toBe(200);
+  });
+
+  test('el máximo crece con el tiempo en la Sentencia, el nivel y los jugadores', () => {
+    expect(maxArceusDmg(1799, 50, 4)).toBe(0);                                  // antes de la Sentencia no hay daño posible
+    expect(maxArceusDmg(1800, 5, 1)).toBeGreaterThan(0);
+    expect(maxArceusDmg(2400, 5, 1)).toBeGreaterThan(maxArceusDmg(2000, 5, 1));
+    expect(maxArceusDmg(2000, 30, 1)).toBeGreaterThan(maxArceusDmg(2000, 5, 1));
+    expect(maxArceusDmg(2000, 5, 4)).toBe(maxArceusDmg(2000, 5, 1) * 4);
+  });
+
+  test('valores que no valen: antes de la Sentencia, negativos, decimales, texto, enormes', async () => {
+    const u = mkUser();
+    for (const bad of [-1, 1.5, '1000', true, [], {}, 1e308, Number.MAX_SAFE_INTEGER, 2 ** 60]) {
+      const r = await dmg(u, 1900, bad);
+      expect([bad, r.status]).toEqual([bad, 400]);
+    }
+    expect(entry(u)).toBeNull();
+    // Antes del minuto 30 no se le puede haber hecho daño.
+    expect((await dmg(u, 1500, 1)).status).toBe(400);
+    expect((await dmg(u, 1500, 0)).status).toBe(200);
+    // JSON a mano con un NaN (no existe en JSON).
+    await begin(u, 's', 2000);
+    const raw = await call('POST', '/submit', null, u.token, '{"mode":"s","t":1900,"lv":5,"kills":100,"dex":25,"shiny":false,"arceus":NaN}');
+    expect(raw.status).toBe(400);
+  });
+
+  test('en grupo lo sube el anfitrión: el máximo cuenta a los jugadores y sale en la lista por daño', async () => {
+    await aparte(async () => {
+      const a = mkUser(), b = mkUser(), c = mkUser();
+      const solos = maxArceusDmg(1900, 5, 1), grupo = maxArceusDmg(1900, 5, 2);
+      expect(grupo).toBe(solos * 2);
+      expect((await team(a, [a, b], 1900, { arceus: solos * 2 })).status).toBe(200);   // cabe: son dos
+      const gr = await rows(a, 'g', 'a', '&sort=arceus');
+      expect(gr.map(x => [x.uids, x.arceus])).toEqual([[[a.uid, b.uid].sort(), solos * 2]]);
+      expect((await team(a, [a, b], 1900, { arceus: grupo * 2 + 1 })).status).toBe(400);
+      // Lo que sube un equipo no cuenta en la lista de solitario (cada modo, su tabla).
+      expect(await por(c)).toEqual([]);
+      expect((await rank(b, 'g', 'a', '&sort=arceus')).j.rank).toMatchObject({ pos: 1, arceus: solos * 2 });
+    });
+  });
+
+  test('con amigos (circle) y filtro por Pokémon se ordena igual', async () => {
+    await aparte(async () => {
+      const a = mkUser(), b = mkUser(), c = mkUser();
+      await dmg(a, 1900, 100, { dex: 25 });
+      await dmg(b, 1900, 900, { dex: 6 });
+      await dmg(c, 1900, 500, { dex: 25 });
+      expect((await por(a, '&circle=' + c.uid)).map(x => x.uids[0])).toEqual([c.uid, a.uid]);
+      expect((await por(a, '&dex=25')).map(x => x.uids[0])).toEqual([c.uid, a.uid]);
+      expect((await por(a, '&dex=6')).map(x => x.uids[0])).toEqual([b.uid]);
+      // Los periodos de hoy, semana y mes también.
+      for (const p of ['d', 'w', 'm']) expect((await rows(a, 's', p, '&sort=arceus')).length).toBe(3);
+    });
+  });
+
+  test('sort inválido o en Defensa: 400; la Defensa ignora el daño que le manden', async () => {
+    const u = mkUser();
+    for (const s of ['x', 'ARCEUS', 'arceus,t', "arceus'--"]) expect((await top(u, 's', 'a', '&sort=' + encodeURIComponent(s))).status).toBe(400);
+    expect((await top(u, 's', 'a', '&sort=t')).status).toBe(200);
+    expect((await top(u, 's', 'a', '&sort=')).status).toBe(200);
+    expect((await top(u, 'd', 'a', '&sort=arceus')).status).toBe(400);
+    expect((await rank(u, 'e', 'a', '&sort=arceus')).status).toBe(400);
+    await begin(u, 'd', 4000);
+    const r = await call('POST', '/submit', { mode: 'd', waves: 5, lives: 10, secs: Math.ceil(minDefenseTime(5)) + 60, kills: 10, dex: 25, shiny: false, arceus: 999999 }, u.token);
+    expect(r.status).toBe(200);
+    expect(entry(u, 'd_all2').arceus).toBe(0);
+  });
+
+  test('borrar la cuenta se lleva la marca con su daño', async () => {
+    const u = mkUser();
+    await dmg(u, 1900, 777);
+    expect((await call('DELETE', '/mine', undefined, u.token)).j.removed).toBeGreaterThan(0);
+    expect(entry(u)).toBeNull();
+    expect((await por(u)).some(x => x.uids[0] === u.uid)).toBe(false);
+  });
+
+  test('migración: una base anterior (sin la columna) gana el campo sin perder sus marcas, y se puede repetir', () => {
+    const db = openDb(':memory:');
+    db.raw.exec(`CREATE TABLE ranking_entries (
+      board TEXT NOT NULL, id TEXT NOT NULL, t INTEGER NOT NULL, lv INTEGER NOT NULL, kills INTEGER NOT NULL, at INTEGER NOT NULL,
+      PRIMARY KEY (board, id)) WITHOUT ROWID`);
+    db.raw.run("INSERT INTO ranking_entries (board, id, t, lv, kills, at) VALUES ('s_all2', '7', 2000, 10, 500, 1)");
+    createRanking(db);
+    createRanking(db);
+    const cols = (db.raw.query('PRAGMA table_info(ranking_entries)').all() as { name: string }[]).map(c => c.name);
+    expect(cols.filter(c => c === 'arceus')).toEqual(['arceus']);
+    expect(db.raw.query("SELECT t, lv, kills, arceus FROM ranking_entries WHERE board = 's_all2' AND id = '7'").get()).toEqual({ t: 2000, lv: 10, kills: 500, arceus: 0 });
+    db.close();
   });
 });

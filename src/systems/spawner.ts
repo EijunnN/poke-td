@@ -17,6 +17,30 @@ import type { EnemyDef } from '../data/enemies';
 /** Jugador con la velocidad suavizada que le calcula EnemyMgr.update. */
 type Anchor = Player & { _vx?: number; _vy?: number };
 
+/** Curanderos, escuderos e invocadores: como mucho SUPPORT_MAX vivos de cada clase a la vez. */
+export const SUPPORT_MAX = 3;
+const SUPPORT_KINDS = new Set(['healer', 'shielder', 'summoner']);
+
+/** Clases de apoyo que ya tienen SUPPORT_MAX vivos, dado el comportamiento de cada enemigo vivo. */
+export function supportFull(alive: Iterable<string>): Set<string> {
+  const n: Record<string, number> = {}, full = new Set<string>();
+  for (const b of alive) if (SUPPORT_KINDS.has(b) && (n[b] = (n[b] || 0) + 1) >= SUPPORT_MAX) full.add(b);
+  return full;
+}
+
+/**
+ * Qué sale del elenco: si el sorteado es de una clase de apoyo que ya está al tope, otro del elenco
+ * (el primero que no lo sea según `roll`, un número de [0, 1)); null si todo el elenco está al tope.
+ */
+export function pickCapped<T extends { behavior: string }>(bag: T[], roll: number, alive: Iterable<string>): T | null {
+  const def = bag[Math.floor(roll * bag.length)];
+  if (!def || !SUPPORT_KINDS.has(def.behavior)) return def || null;
+  const full = supportFull(alive);
+  if (!full.has(def.behavior)) return def;
+  const rest = bag.filter(d => !full.has(d.behavior));
+  return rest.length ? rest[Math.floor(roll * rest.length)] : null;
+}
+
 export const Spawner = (() => {
   // Tope de enemigos a la vez (antes 420: con tantos se ralentizaba). Cuando
   // se llega al tope, los que siguen saliendo son "élite" (más vida, daño y
@@ -84,7 +108,9 @@ export const Spawner = (() => {
   }
 
   function spawnOne(pl: Anchor, t: number, angle?: number) {
-    const def = G.U.pick(G.Enemies.bagAt(t));
+    // Como mucho 3 curanderos, 3 escuderos y 3 invocadores vivos a la vez: juntos dejaban a la horda inmortal.
+    const def = pickCapped(G.Enemies.bagAt(t), Math.random(), G.EnemyMgr.all().filter(e => !e.dead).map(e => e.behavior));
+    if (!def) return null;
     const pt = freePoint(pl, angle == null ? Math.random() * 6.2832 : angle, isFlyer(def));
     if (!pt) return null;
     const shiny = rollShiny(def.dex);

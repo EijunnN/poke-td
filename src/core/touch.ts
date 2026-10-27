@@ -64,6 +64,11 @@ export const Touch = (() => {
     });
     addEventListener('blur', reset);
     document.addEventListener('visibilitychange', reset);
+    // Por si se pierde el pointerup del joystick (se abrió una pantalla encima, por ejemplo):
+    // sin ningún dedo en la pantalla, el joystick se suelta.
+    const lifted = (e: TouchEvent) => { if (!e.touches.length) reset(); };
+    document.addEventListener('touchend', lifted, true);
+    document.addEventListener('touchcancel', lifted, true);
   }
 
   function hit(x: number, y: number) {

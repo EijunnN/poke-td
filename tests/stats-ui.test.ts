@@ -64,7 +64,7 @@ function fakePlayer(): any {
   const buff = () => ({ n: 0, t: 0, amount: 0, dur: 0, src: null });
   return {
     maxHp: 100, hp: 100, atkMul: 1, spdMul: 1, cdMul: 1, dmgReduce: 0, regenFlat: 0, magnet: 78, xpMul: 1, critChance: 0, coinMul: 1,
-    statsTaken: {}, buffs: { atk: buff(), spd: buff(), def: buff(), regen: buff() }, moves: [],
+    statsTaken: {}, buffs: { atk: buff(), spa: buff(), spd: buff(), def: buff(), regen: buff() }, moves: [],
     addMaxHp(a: number) { this.maxHp += a; this.hp += a; },
     heal() { throw new Error('la previsión no debe curar'); }
   };

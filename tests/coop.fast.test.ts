@@ -568,6 +568,24 @@ describe('cooperativo', () => {
     await waitPage(B, 'B sigue', () => G.Game.state === 'playing');
   });
 
+  test('cartas de nivel: si se pierde el aviso de «ya he elegido» del invitado, su estado lo recupera', async () => {
+    // B tira todos sus avisos 'lp' (como si se perdieran por el camino): sólo le queda el estado periódico.
+    await B.eval(() => {
+      const orig = G.Net.toHost; window.__toHost = orig;
+      G.Net.toHost = (m: any) => orig.call(G.Net, m && m.ev ? { ...m, ev: m.ev.filter((e: any) => e[0] !== 'lp') } : m);
+    });
+    await A.eval(() => G.Game.debugLevelUp());
+    await waitPage(A, 'cartas en A', () => G.Game.state === 'levelup');
+    await waitPage(B, 'cartas en B', () => G.Game.state === 'levelup');
+    await click(A, '#cards .card');
+    await click(B, '#cards .card');
+    await waitPage(A, 'A sigue sin el aviso', () => G.Game.state === 'playing');
+    await waitPage(B, 'B sigue', () => G.Game.state === 'playing');
+    await B.eval(() => { G.Net.toHost = window.__toHost; });
+    expect(await A.allErrors()).toEqual([]);
+    expect(await B.allErrors()).toEqual([]);
+  });
+
   test('objeto y cartas de nivel a la vez en el invitado: salen de una en una y nadie se queda parado', async () => {
     const ids: string[] = await B.eval(() => Object.keys(G.Items.BY));
     await B.eval(i => { G.Game.player.equip(i); }, ids[0]);
@@ -713,6 +731,97 @@ describe('cooperativo', () => {
     expect(await B.allErrors()).toEqual([]);
   });
 
+  // Tras una arena (ganada o perdida) el mapa vuelve entero a los dos (issue upstream JPTER78/pokesurvivor#361: tras salir
+  // de un jefe, los enemigos del invitado se quedaban parados, no daban XP y sólo salían para el anfitrión).
+  /** Pone enemigos del mapa alrededor del anfitrión (y que B los tenga copiados), antes de entrar en la arena. */
+  const mapEnemies = async () => {
+    await A.eval(() => {
+      G.Game.player.xpNext = 1e9;                                                   // sin subidas de nivel que esperen al invitado
+      const def = G.Enemies.bagAt(5)[0], pl = G.Game.player;
+      for (let i = 0; i < 8; i++) G.EnemyMgr.add(new G.Enemy(def, pl.x + Math.cos(i * 0.8) * 260, pl.y + Math.sin(i * 0.8) * 260, G.Enemies.scale(5)));
+    });
+    await rig.run(15);
+    expect(await B.eval(() => G.EnemyMgr.all().filter((e: any) => e.remote && !e.dead).length)).toBeGreaterThan(0);
+  };
+  /** El invitado vuelve a ver, mover y matar los enemigos del anfitrión, y a cobrar lo que sueltan. */
+  const guestHasMap = async () => {
+    await rig.run(40);
+    const hostNear0: number[] = await A.eval(() => {
+      const m = G.Coop.mates[0].pl.net;
+      return G.EnemyMgr.all().filter((e: any) => !e.dead && Math.hypot(e.x - m.x, e.y - m.y) < 800).map((e: any) => e.id);
+    });
+    expect(hostNear0.length).toBeGreaterThan(0);
+    await rig.run(8);                                                               // (los que acaban de nacer aún van de camino)
+    const host: Record<number, { x: number; y: number }> = await A.eval(ids => {
+      const o: any = {};
+      for (const i of ids) { const e = G.EnemyMgr.get(i); if (e && !e.dead) o[i] = { x: e.x, y: e.y }; }
+      return o;
+    }, hostNear0);
+    const guest: Record<number, { x: number; y: number; remote: boolean }> = await B.eval(() => {
+      const o: any = {};
+      for (const e of G.EnemyMgr.all()) if (!e.dead) o[e.id] = { x: e.x, y: e.y, remote: !!e.remote };
+      return o;
+    });
+    const hostNear = Object.keys(host).map(Number);
+    expect(hostNear.length).toBeGreaterThan(0);
+    expect(hostNear.filter(i => !guest[i])).toEqual([]);                            // ve todos los que tiene cerca el anfitrión...
+    for (const i of hostNear) expect(Math.hypot(guest[i].x - host[i].x, guest[i].y - host[i].y)).toBeLessThan(120);   // ...en su sitio (siguen recibiendo posiciones)
+    // Sus golpes llegan, el enemigo cae en las dos copias y el botín (experiencia) aparece también en la suya.
+    const id = hostNear.find(i => guest[i].remote && host[i])!;
+    const k0 = await B.eval(() => G.Game.player.kills);
+    await B.eval(() => { const P = G.Pickups, f = P.addRemote; window.__pk = 0; P.addRemote = (...a: any[]) => { window.__pk++; return f.apply(P, a); }; });
+    await B.eval(i => { G.Coop.hit(G.EnemyMgr.get(i), 1e9, '#ffffff', 0, 0, 0); }, id);
+    await waitPage(A, 'el golpe del invitado mata al enemigo del anfitrión', i => { const e = G.EnemyMgr.get(i); return !e || e.dead; }, id);
+    await rig.run(10);
+    expect(await B.eval(i => { const e = G.EnemyMgr.get(i); return !e || e.dead; }, id)).toBe(true);
+    expect(await B.eval(() => window.__pk)).toBeGreaterThan(0);
+    expect(await B.eval(() => G.Game.player.kills)).toBeGreaterThan(k0);
+    // Y lo que nace después también le llega.
+    const fresh: number = await A.eval(() => {
+      const m = G.Coop.mates[0].pl.net, def = G.Enemies.bagAt(5)[0];
+      return G.EnemyMgr.add(new G.Enemy(def, m.x + 200, m.y, G.Enemies.scale(5))).id;
+    });
+    await waitPage(B, 'B ve al recién nacido', i => { const e = G.EnemyMgr.get(i); return !!e && e.remote; }, fresh);
+  };
+
+  for (const caso of ['ganan los dos', 'pierden los dos', 'B sale antes que A', 'el legendario cae en el último instante']) {
+    test('arena (' + caso + '): al volver al mapa B sigue viendo, moviendo y matando los enemigos del anfitrión', async () => {
+      await dismiss(A); await dismiss(B);
+      await mapEnemies();
+      await A.eval(() => G.Rift.debugArena('grass'));
+      await waitPage(B, 'B dentro de la arena', () => G.Rift.inArena);
+      await waitPage(A, 'A dentro de la arena', () => G.Rift.inArena);
+      await rig.run(10);
+      if (caso === 'pierden los dos') {
+        const cfg = await A.eval(() => G.Rift.snapshot().arena.cfg);
+        await A.eval(c => G.Rift.restore({ rift: null, arena: { cfg: c, phase: 'fight', t: 999 } }), cfg);
+      } else if (caso === 'el legendario cae en el último instante') {
+        await A.eval(() => {
+          const ar = G.Rift.snapshot().arena;
+          G.Rift.restore({ rift: null, arena: { cfg: ar.cfg, phase: 'fight', t: 119.99 } });
+          G.EnemyMgr.all().find((e: any) => e.legend).hurt(1e9);
+        });
+      } else {
+        await A.eval(() => G.EnemyMgr.all().find((e: any) => e.legend).hurt(1e9));
+      }
+      await rig.until('A acaba la arena', async () => { await dismiss(A); return A.eval(() => G.Rift.snapshot().arena?.phase !== 'fight'); }, 200, 3);
+      if (caso.startsWith('B sale antes')) {
+        await waitPage(B, 'B ve la arena acabada', () => G.Rift.snapshot().arena?.phase !== 'fight');
+        await B.eval(() => { G.Rift.arena.endT = 0.01; });                       // el reloj de B va por delante: vuelve al mapa mientras A sigue en la arena
+        await rig.until('B sale de la arena', async () => { await dismiss(B); return B.eval(() => !G.Rift.inArena); }, 60, 1);
+        expect(await A.eval(() => G.Rift.inArena)).toBe(true);
+        await rig.run(10);
+      }
+      await rig.until('los dos fuera de la arena', async () => { await dismiss(A); await dismiss(B); return (await A.eval(() => !G.Rift.inArena)) && (await B.eval(() => !G.Rift.inArena)); }, 300, 3);
+      for (let i = 0; i < 4; i++) { await dismiss(A); await dismiss(B); await rig.run(5); }
+      await waitPage(A, 'A sigue', () => G.Game.state === 'playing');
+      await waitPage(B, 'B sigue', () => G.Game.state === 'playing');
+      await guestHasMap();
+      expect(await A.allErrors()).toEqual([]);
+      expect(await B.allErrors()).toEqual([]);
+    });
+  }
+
   test('el servidor se reinicia a mitad de la partida: 600 enemigos y 400 objetos que el invitado no conoce', async () => {
     const hostRoom = await A.eval(() => G.Social.room.id);
     await A.eval(() => { G.Game.player.xpNext = 1e9; G.EnemyMgr.clear(); G.Pickups.clear(); });   // matar tantos enemigos no debe subir de nivel
@@ -778,6 +887,69 @@ describe('cooperativo', () => {
     await waitPage(B, 'y en la misma fase', () => { const s = G.Judgment.snapshot(); return s && s.phase === 'fight'; });
     expect(await A.allErrors()).toEqual([]);
     expect(await B.allErrors()).toEqual([]);
+  });
+
+  test('Arceus: el daño de B llega al anfitrión y los dos ven el total; un id inventado no cuenta', async () => {
+    await A.eval(() => { if (!G.Judgment.active) { G.EnemyMgr.clear(); G.Judgment.debugStart(); } });
+    await rig.until('A llega a la pelea con Arceus', () => A.eval(() => !!G.Judgment.summary()), 100, 30);
+    await waitPage(B, 'B también está en la pelea', () => !!G.Judgment.summary() && G.EnemyMgr.all().some((e: any) => e.arceus));
+    const before: number = await A.eval(() => G.Judgment.debug.dmg);
+    // Arceus es un blanco más en cada ordenador y su vida no baja.
+    const hp: number = await B.eval(() => { const e = G.EnemyMgr.all().find((x: any) => x.arceus); const h0 = e.hp; e.hurt(1000, '#ffffff', 1, 0, 0, null); return h0 - e.hp; });
+    expect(hp).toBe(0);
+    await A.eval(() => { G.EnemyMgr.all().find((x: any) => x.arceus).hurt(500, '#ffffff', 1, 0, 0, null); });
+    // Un invitado trucado no puede darle golpes por el id de su blanco.
+    await B.eval(() => { G.Coop.toHost(['h', -493, 5e6, '#fff', 0, 0, 0]); });
+    await waitPage(A, 'A cuenta el daño de B', n => G.Judgment.debug.dmg >= n + 1500, before);
+    await waitPage(B, 'B ve el total del equipo', n => G.Judgment.summary().dmg >= n + 1500, before);
+    expect(await A.eval(() => G.Judgment.debug.dmg)).toBeLessThan(before + 1500 + 1e6);
+    expect(await A.eval(() => G.Judgment.debug.plate)).toBe(await B.eval(() => G.Judgment.debug.plate));
+    expect(await A.allErrors()).toEqual([]);
+    expect(await B.allErrors()).toEqual([]);
+  });
+
+  test('un invitado trucado: NaN, números enormes y niveles absurdos se recortan y no cuelgan al anfitrión', async () => {
+    const mv: string = await B.eval(() => G.Game.player.moves[0].id);
+    await B.eval((id: string) => {
+      const orig = G.Net.toHost; window.__toHost = orig;
+      G.Net.toHost = (m: any) => {
+        if (m && m.p) {
+          m.p = m.p.slice();
+          m.p[0] = null; m.p[1] = 1e30; m.p[4] = null; m.p[9] = 1e30; m.p[11] = 1e30; m.p[12] = -5;
+          m.p[7] = id; m.p[8] = 1e9;
+          m.ev = [...(m.ev || []), ['c', id, 1e9, null, 0], ['h', -1, null, 7, null, null, 1e30], ['pb', 1e30, null]];
+        }
+        return orig.call(G.Net, m);
+      };
+    }, mv);
+    await rig.run(12);
+    const got = await A.eval((u: string) => {
+      const n = G.Coop.mate(u).pl.net;
+      return { net: n, f: G.Coop.xpFactor() };
+    }, uidB);
+    expect(Number.isFinite(got.net.x) && Number.isFinite(got.net.hp) && Number.isFinite(got.f)).toBe(true);
+    expect(got.net.xpMul).toBe(10);
+    expect(got.net.mag).toBe(4000);
+    expect(got.net.y).toBeLessThanOrEqual(1e7);
+    expect(got.net.ml).toBeLessThan(50);
+    expect(got.net.rev).toBe(0);
+    await B.eval(() => { G.Net.toHost = window.__toHost; });
+    await rig.run(6);
+    expect(await A.allErrors()).toEqual([]);
+  });
+
+  test('un compañero que se queda callado 3 s deja de ser objetivo de los enemigos hasta que vuelve a hablar', async () => {
+    const quiet = () => A.eval(() => G.Coop.quiet(G.Coop.mates[0].pl));
+    expect(await quiet()).toBe(false);
+    await B.eval(() => { window.__toHost = G.Net.toHost; G.Net.toHost = () => true; });      // la conexión sigue, pero no sale nada
+    await rig.round(4, 2000);
+    expect(await quiet()).toBe(false);                                                        // 2 s: aún es objetivo
+    await rig.round(4, 1500);
+    expect(await quiet()).toBe(true);                                                         // pasados 3 s: ya no
+    expect(await A.eval(() => G.Coop.players().length)).toBe(2);                              // (pero sigue siendo jugador)
+    await B.eval(() => { G.Net.toHost = window.__toHost; });
+    await rig.until('vuelve a ser objetivo', async () => (await quiet()) === false, 30);
+    expect(await A.allErrors()).toEqual([]);
   });
 
   test('el anfitrión sale: la partida acaba para los dos', async () => {

@@ -52,6 +52,38 @@ describe('subir una marca al ranking', () => {
     expect(toasts.length).toBe(1);
   });
 
+  test('el daño a Arceus va con la marca sólo si lo hay; si sólo mejora el daño, se avisa de eso', async () => {
+    replies['POST /ranking/submit'] = [ok({ better: [] })];
+    await R.submitSolo({ ...solo, t: 1900, arceus: 0 });
+    await R.submitSolo({ ...solo, t: 1900 });
+    expect(calls.map(c => 'arceus' in c.body)).toEqual([false, false]);
+    calls.length = 0; toasts.length = 0; results.length = 0;
+    replies['POST /ranking/submit'] = [ok({ better: [], betterDmg: ['a'] })];
+    await R.submitSolo({ ...solo, t: 1900, arceus: 12345.9 });
+    expect(calls[0].body.arceus).toBe(12345);
+    expect(results[0]).toEqual({ mode: 's', ok: true, better: [], betterDmg: ['a'] });
+    expect(toasts).toEqual(['¡Nuevo récord de daño a Arceus en el ranking!']);
+    // Si también mejora el tiempo, sólo sale el aviso de siempre.
+    toasts.length = 0;
+    replies['POST /ranking/submit'] = [ok({ better: ['a'], betterDmg: ['a'] })];
+    await R.submitSolo({ ...solo, t: 1900, arceus: 99999 });
+    expect(toasts.length).toBe(1);
+    expect(toasts[0]).not.toContain('daño');
+  });
+
+  test('ordenar por daño a Arceus pide sort=arceus, sólo en esa lista', async () => {
+    const rowJ = { id: '1', t: 1900, lv: 5, kills: 5, arceus: 77 };
+    for (const q of ['?mode=s&period=a&sort=arceus', '?mode=s&period=a']) {
+      replies['GET /ranking/top' + q] = [ok({ rows: [rowJ] })];
+      replies['GET /ranking/rank' + q] = [ok({ rank: { pos: 1, t: 1900, arceus: 77, row: rowJ } })];
+    }
+    expect((await R.top('s', 'a', null, false, 'arceus'))[0].arceus).toBe(77);
+    expect((await R.myRank('s', 'a', null, 'arceus')).arceus).toBe(77);
+    await R.top('s', 'a'); await R.myRank('s', 'a');
+    expect(calls.map(c => c.path.includes('sort=arceus'))).toEqual([true, true, false, false]);
+    expect(calls.map(c => c.path.split('?')[0])).toEqual(['/ranking/top', '/ranking/rank', '/ranking/top', '/ranking/rank']);
+  });
+
   test('un 429 en /submit se reintenta, no se pierde la marca', async () => {
     replies['POST /ranking/submit'] = [err(429, 'Demasiadas peticiones. Espera un poco.'), err(429, 'Demasiadas peticiones. Espera un poco.'), ok({ better: ['a'] })];
     expect(await R.submitSolo(solo)).toEqual(['a']);

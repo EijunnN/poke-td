@@ -19,7 +19,7 @@ import type { PokeType } from '../data/types';
  *   invitado -> anfitrión  { k:'f', p:[estado], ev:[eventos] }
  *   anfitrión -> invitado  { k:'f', t, lv, xp, xn, ki, bo, co, p:{uid:[estado]},
  *                            e:[[id,x,y,vida,anim,dir,estados]], ev:[eventos],
- *                            ja:[x,y,anim,dir] (Arceus, sólo en la Sentencia) }
+ *                            ja:[x,y,anim,dir,daño,placa] (Arceus, sólo en la Sentencia: daño del equipo y su tipo) }
  *   anfitrión -> todos     { k:'start', seed, host, members:[{uid,name,dex,shiny}] }
  *
  * En el resumen (ya sin partida), "Volver a intentarlo" (ver again*), mensajes fuera de la partida como 'start':
@@ -94,7 +94,7 @@ type CoreHostEv =
   | ['pk', id: number, kind: PickupKind, x: number, y: number, value: number | string] | ['pc', id: number]
   | ['mag'] | ['bomb', x: number, y: number] | ['pb', tx: number, ty: number]
   | ['say', text: string, secs?: number] | ['heal', fraction: number]
-  | ['lu', level: number] | ['lw', names: string[]] | ['lr'] | ['hp', names: string[]]
+  | ['lu', level: number, round?: number] | ['lw', names: string[]] | ['lr'] | ['hp', names: string[]]
   | ['ha', away: number] | ['sh', dex: number] | ['ov', summary: unknown]
   | ['hz', hazard: unknown] | ['fxr', x: number, y: number, r: number, color: string];
 /** Anfitrión -> invitados: lo de los sistemas del Survivor (grieta, Sentencia, clima, eventos). */
@@ -122,6 +122,7 @@ type CoreGuestEv =
   | ['s', id: number, kind: string, value: number]
   | ['c', move: string, lvl: number, aim: number, evolved: number]
   | ['pb', tx: number, ty: number]
+  | ['jh', dmg: number]
   | ['lp'] | ['hs'] | ['he'] | ['re'] | ['bye'] | ['ws'];
 export type TdGuestEv =
   | ['tw'] | ['th'] | ['tp', dex: number, x: number, y: number, shiny: number, trophy: number]
@@ -131,7 +132,7 @@ export type GuestEv = CoreGuestEv | TdGuestEv;
 export type Ev = HostEv | GuestEv;
 /** Estado de un jugador por la red (ver myState / readState). */
 type StateArr = [x: number, y: number, ang: number, walk: number, hp: number, maxHp: number, dead: number, mv: string, ml: number,
-               mag: number, aim: number, xpMul: number, rev: number, lookX?: number | null, lookY?: number | null, dmg?: number];
+               mag: number, aim: number, xpMul: number, rev: number, lookX?: number | null, lookY?: number | null, dmg?: number, picked?: number];
 /** Un enemigo en el fotograma del anfitrión: id, x, y, vida, animación, dirección, estados. */
 type EnemyRow = [id: number, x: number, y: number, hp: number, anim: number, dir: number, st: number];
 /** Fotograma del anfitrión a un invitado. */
@@ -145,6 +146,8 @@ interface ShotLike { x: number; y: number; vx: number; vy: number; dmg: number; 
 export interface Mate {
   uid: string; name: string; color: string; pl: Player; connected: boolean; watcher?: boolean;
   q: HostEv[]; owed: HostEv[]; flushT: number; xpMul: number; state?: StateArr;
+  /** Anfitrión: cuándo (performance.now) llegó lo último de él; si pasa de SILENT_MS, los enemigos dejan de perseguirlo. */
+  heard: number;
   /** Daño que lleva hecho en la partida (lo manda en su estado; es el medidor de daño). */
   dmg?: number;
 }
@@ -169,6 +172,8 @@ export const Coop = (() => {
   const MAX_OUT = 300;
   /** Enemigos por fotograma como mucho (~35 B cada uno: el fotograma entero se queda muy por debajo de los 64 KB del servidor). */
   const MAX_E = 900;
+  /** Eventos que se leen de un fotograma del invitado como mucho (el resto se descarta). */
+  const MAX_IN_EV = 500;
 
   let active = false, host = false, me: string | null = null, hostUid: string | null = null;
   /** Eres espectador en esta partida. */
@@ -187,6 +192,15 @@ export const Coop = (() => {
   let hostAway = false, stalled = false, lastHostAt = 0;
   const STALL_MS = 2500;
   let members: CoopMember[] = [];
+  /**
+   * Rondas de cartas de nivel: el anfitrión numera cada una (`round`, va en 'lu') y el invitado manda en su
+   * estado la última que ha elegido (`myPick`). Si se pierde el aviso 'lp', el anfitrión se entera igual.
+   * Va por número de ronda y no por nivel: con varios niveles de golpe, varias rondas tienen el mismo.
+   */
+  let round = 0, myRound = 0, myPick = 0;
+  /** Anfitrión: si de un compañero no llega nada en este tiempo, los enemigos dejan de perseguirlo hasta que vuelva a mandar estado. */
+  const SILENT_MS = 3000;
+  const silent = (m: Mate) => performance.now() - m.heard > SILENT_MS;
   let broken: string[] = [];            // anfitrión: props rotos en esta partida ("tx,ty"), para reenviarlos
   /** Resumen de una partida en grupo: la cuenta de "Volver a intentarlo" (ver againOpen). La lleva el anfitrión; los invitados sólo reciben el estado. */
   let ag: { cb: (st: AgainState) => void; host: boolean; team: Set<string>; ready: Set<string>; gone: Set<string> } | null = null;
@@ -215,7 +229,7 @@ export const Coop = (() => {
     members = cfg.members;
     mates.clear();
     ag = null; lastGame = { mode: cfg.mode, map: cfg.map, arena: cfg.arena };
-    outEv = []; flushT = 0; waiting = new Set(); holds = new Set(); broken = [];
+    outEv = []; flushT = 0; waiting = new Set(); holds = new Set(); broken = []; round = 0; myRound = 0; myPick = 0;
     hostAway = false; stalled = false; lastHostAt = performance.now();
     // Espectador: en cuanto tiene la partida montada, pide el estado entero (lo que el anfitrión
     // le mandó al verlo llegar pudo llegar antes de esto, y entonces se perdió).
@@ -229,7 +243,7 @@ export const Coop = (() => {
       p.x = x; p.y = y;
       p.net = { x, y, ang: Math.PI / 2, walk: 0, hp: p.maxHp, maxHp: p.maxHp, dead: 0, mv: G.startMoveOf(mon.dex), ml: 1, mag: 78, aim: Math.PI / 2, rev: 0 };
       G.Sprites.preload([mon.dex], 8000, p.shiny);
-      mates.set(m.uid, { uid: m.uid, name: m.name, color: COLORS[i], pl: p, connected: true, q: [], owed: [], flushT: 0, xpMul: 1 });
+      mates.set(m.uid, { uid: m.uid, name: m.name, color: COLORS[i], pl: p, connected: true, q: [], owed: [], flushT: 0, xpMul: 1, heard: performance.now() });
     });
   }
 
@@ -261,6 +275,16 @@ export const Coop = (() => {
     for (const m of mates.values()) if (m.connected && !m.watcher) out.push(m.pl);
     return out;
   }
+  /**
+   * Anfitrión: ¿es `p` un compañero que lleva callado más de SILENT_MS (conexión colgada sin cortarse)?
+   * Los enemigos y Arceus no lo eligen de objetivo hasta que vuelve a mandar algo. Sigue siendo
+   * jugador para todo lo demás (no cuenta como caído ni se queda fuera de la grieta).
+   */
+  function quiet(p: Player) {
+    if (!host) return false;
+    for (const m of mates.values()) if (m.pl === p) return silent(m);
+    return false;
+  }
   function puppets() { const out: Player[] = []; for (const m of mates.values()) if (m.connected && !m.watcher) out.push(m.pl); return out; }
 
   // ---------------- espectadores (anfitrión) ----------------
@@ -268,7 +292,7 @@ export const Coop = (() => {
   /** Alguien empieza a mirar: se le trata como a un invitado que vuelve (se le manda todo). */
   function addWatcher(u: string, name: string) {
     if (!host || !active || mates.has(u)) return;
-    mates.set(u, { uid: u, name, color: '#ffffff', pl: { x: 0, y: 0 } as Player, connected: true, watcher: true, q: [], owed: [], flushT: 0, xpMul: 1 });
+    mates.set(u, { uid: u, name, color: '#ffffff', pl: { x: 0, y: 0 } as Player, connected: true, watcher: true, q: [], owed: [], flushT: 0, xpMul: 1, heard: performance.now() });
     resync(u);
   }
   /** Anfitrión: los que miran según la sala (server/realtime.ts los cuenta en la sala). */
@@ -304,7 +328,7 @@ export const Coop = (() => {
     // Caído, la cámara va libre (modes/survivor.ts): el anfitrión te manda lo que hay donde miras.
     // En pie esos dos huecos van a null, para que el daño (medidor, ver Recount) quede siempre al final (versiones mezcladas).
     if (local!.dead) s.push(r1(G.Camera.x), r1(G.Camera.y)); else s.push(null, null);
-    s.push(r1(local!.dmgDealt));
+    s.push(r1(local!.dmgDealt), myPick);
     return s;
   }
 
@@ -316,6 +340,32 @@ export const Coop = (() => {
 
   /** Daño acumulado que va al final de un estado (si no viene, como de una versión vieja, cuenta 0). */
   const dmgOf = (a: StateArr) => Number.isFinite(a[15]) ? Math.max(0, a[15]!) : 0;
+
+  // Todo lo que llega de otro jugador se recorta: un cliente trucado (o un mensaje roto) no debe poder
+  // mandar NaN, infinitos ni números enormes que congelen la partida (xpMul, nivel de un movimiento...).
+  const MAX_POS = 1e7;
+  const MAX_DMG = 1e7;                                    // daño de un golpe declarado por un invitado
+  const clampNum = (v: unknown, lo: number, hi: number, def: number) => typeof v === 'number' && Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : def;
+  const clampStr = (v: unknown, max: number) => typeof v === 'string' ? v.slice(0, max) : '';
+
+  /** Un estado recibido, con cada número finito y dentro de rango (`prev`: el último bueno, por si éste viene roto). */
+  function cleanState(a: unknown, prev?: StateArr): StateArr | null {
+    if (!Array.isArray(a)) return null;
+    const maxHp = clampNum(a[5], 1, 1e6, prev ? prev[5] : 100);
+    const mv = clampStr(a[7], 40), def = mv ? G.Moves.BY_ID[mv] : null;
+    const lookOk = Number.isFinite(a[13]) && Number.isFinite(a[14]);
+    const s: StateArr = [
+      clampNum(a[0], -MAX_POS, MAX_POS, prev ? prev[0] : 0), clampNum(a[1], -MAX_POS, MAX_POS, prev ? prev[1] : 0),
+      clampNum(a[2], -100, 100, 0), a[3] ? 1 : 0,
+      clampNum(a[4], 0, maxHp, prev ? Math.min(prev[4], maxHp) : maxHp), maxHp, a[6] ? 1 : 0,
+      def ? mv : '', def ? Math.floor(clampNum(a[8], 1, def.maxLvl || 1, 1)) : 1,
+      clampNum(a[9], 0, 4000, 78), clampNum(a[10], -100, 100, 0), clampNum(a[11], 0.1, 10, 1), clampNum(a[12], 0, 10, 0),
+      lookOk ? clampNum(a[13], -MAX_POS, MAX_POS, 0) : null, lookOk ? clampNum(a[14], -MAX_POS, MAX_POS, 0) : null,
+      clampNum(a[15], 0, 1e12, 0)
+    ];
+    if (Number.isFinite(a[16])) s.push(Math.floor(clampNum(a[16], 0, 1e9, 0)));
+    return s;
+  }
 
   function readState(a: StateArr) {
     return { x: a[0], y: a[1], ang: a[2], walk: a[3], hp: a[4], maxHp: a[5], dead: a[6], mv: a[7], ml: a[8],
@@ -346,7 +396,7 @@ export const Coop = (() => {
     const r2n = NEAR * NEAR;
     for (const e of G.EnemyMgr.all()) {
       // Los jefes van siempre: la barra y la flecha de la pantalla lo señalan aunque esté lejos (si no, su copia se queda donde salió).
-      if (e.dead || (!e.boss && G.U.dist2(e.x, e.y, near.x, near.y) > r2n)) continue;
+      if (e.dead || e.arceus || (!e.boss && G.U.dist2(e.x, e.y, near.x, near.y) > r2n)) continue;
       if (out.length >= MAX_E) break;
       const a = ANIMS.indexOf(e.anim.cur);
       out.push([e.id, r1(e.x), r1(e.y), Math.ceil(e.hp), a < 0 ? 0 : a, e.anim.dir,
@@ -455,11 +505,11 @@ export const Coop = (() => {
     if (!host || !m || !m.connected) return;
     // Primero lo que cambia el mapa (Sentencia, grieta, clima), luego lo que hay en él.
     const evs: HostEv[] = [['rs'], ['st', G.Judgment.snapshot(), G.Rift.snapshot(), G.Weather.snapshot()]];
-    for (const e of G.EnemyMgr.all()) if (!e.dead && !e.remote) evs.push(enemyEv(e));
+    for (const e of G.EnemyMgr.all()) if (!e.dead && !e.remote && !e.arceus) evs.push(enemyEv(e));
     for (const o of G.Pickups.all()) if (o.id != null) evs.push(['pk', o.id, o.kind, r1(o.x), r1(o.y), o.value]);
     for (const k of broken) { const [x, y] = k.split(','); evs.push(['pb', +x, +y]); }
     if (waiting.size) {
-      if (waiting.has(u)) evs.push(['lu', api.team().level]);
+      if (waiting.has(u)) evs.push(['lu', api.team().level, round]);
       evs.push(['lw', [...waiting].map(nameOf)]);
     } else evs.push(['lr']);
     evs.push(['hp', holdNames()]);
@@ -488,39 +538,58 @@ export const Coop = (() => {
     if (!m || !m.connected) return;
     // Un espectador sólo dice dónde mira (para mandarle los enemigos de cerca); y si se va.
     if (m.watcher) {
-      if (Array.isArray(msg.p) && Number.isFinite(msg.p[0]) && Number.isFinite(msg.p[1])) { m.pl.x = msg.p[0]; m.pl.y = msg.p[1]; }
-      if ((msg.ev || []).some(e => e && e[0] === 'bye')) { mates.delete(from); return; }
-      if ((msg.ev || []).some(e => e && e[0] === 'ws')) resync(from);
+      m.heard = performance.now();
+      const wev = Array.isArray(msg.ev) ? msg.ev.slice(0, MAX_IN_EV) : [];
+      if (Array.isArray(msg.p) && Number.isFinite(msg.p[0]) && Number.isFinite(msg.p[1])) {
+        m.pl.x = clampNum(msg.p[0], -MAX_POS, MAX_POS, 0); m.pl.y = clampNum(msg.p[1], -MAX_POS, MAX_POS, 0);
+      }
+      if (wev.some(e => Array.isArray(e) && e[0] === 'bye')) { mates.delete(from); return; }
+      if (wev.some(e => Array.isArray(e) && e[0] === 'ws')) resync(from);
       return;
     }
-    if (msg.p) { m.state = msg.p; m.pl.net = readState(msg.p); m.xpMul = m.pl.net.xpMul || 1; m.dmg = dmgOf(msg.p); }
-    for (const ev of msg.ev || []) {
+    m.heard = performance.now();
+    const st = cleanState(msg.p, m.state);
+    if (st) {
+      m.state = st; m.pl.net = readState(st); m.xpMul = st[11]; m.dmg = dmgOf(st);
+      // Dice que ya eligió en la ronda de ahora: si el aviso 'lp' se perdió, se da por elegida igual.
+      if (round && st[16] === round && waiting.has(from)) picked(from);
+    }
+    for (const ev of Array.isArray(msg.ev) ? msg.ev.slice(0, MAX_IN_EV) : []) {
+      if (!Array.isArray(ev)) continue;
       switch (ev[0]) {
         case 'h': {
           const e = G.EnemyMgr.get(ev[1]);
-          if (!e || e.dead || e.remote) break;
+          if (!e || e.dead || e.remote || e.arceus) break;
           hitFrom = from;
-          e.hurt(ev[2], ev[3], ev[4], ev[5], ev[6]);
+          e.hurt(clampNum(ev[2], 0, MAX_DMG, 0), clampStr(ev[3], 24) || '#fff', clampNum(ev[4], -1e3, 1e3, 0), clampNum(ev[5], -1e3, 1e3, 0), clampNum(ev[6], 0, 1e3, 0));
           hitFrom = null;
           break;
         }
         case 's': {
           const e = G.EnemyMgr.get(ev[1]);
           if (!e || e.dead) break;
-          if (ev[2] === 'b') e.applyBurn(ev[3]);
-          else if (ev[2] === 'p') e.applyPoison(ev[3]);
-          else if (ev[2] === 's') e.applySlow(ev[3]);
+          if (ev[2] === 'b') e.applyBurn(clampNum(ev[3], 0, 8, 1));
+          else if (ev[2] === 'p') e.applyPoison(clampNum(ev[3], 0, 8, 1));
+          else if (ev[2] === 's') e.applySlow(clampNum(ev[3], 0, 1, 0));
+          else if (ev[2] === 'd') e.applyDaze(clampNum(ev[3], 0, 5, 0));
           break;
         }
-        case 'c':
-          G.Combat.ghostCast(m.pl, ev[1], ev[2], ev[3], !!ev[4]);
-          emit(['c', from, ev[1], ev[2], ev[3], ev[4]], from);
+        case 'c': {
+          const def = typeof ev[1] === 'string' ? G.Moves.BY_ID[ev[1]] : null;
+          if (!def) break;
+          const lvl = Math.floor(clampNum(ev[2], 1, def.maxLvl || 1, 1)), aim = clampNum(ev[3], -100, 100, 0);
+          G.Combat.ghostCast(m.pl, ev[1], lvl, aim, !!ev[4]);
+          emit(['c', from, ev[1], lvl, aim, ev[4] ? 1 : 0], from);
           break;
-        case 'pb':
+        }
+        case 'pb': {
+          if (!Number.isInteger(ev[1]) || !Number.isInteger(ev[2]) || Math.abs(ev[1]) > MAX_POS || Math.abs(ev[2]) > MAX_POS) break;
           G.World.breakAt(ev[1], ev[2]);
           noteBroken(ev[1], ev[2]);
           emit(['pb', ev[1], ev[2]], from);
           break;
+        }
+        case 'jh': G.Judgment.guestHit(clampNum(ev[1], 0, 1e9, 0)); break;      // daño a Arceus de un invitado
         case 'lp': picked(from); break;
         case 'hs': holdOn(from); break;
         case 'he': holdOff(from); break;
@@ -553,7 +622,8 @@ export const Coop = (() => {
                    t1: (msg.tk || [])[0], t10: (msg.tk || [])[1] });
     for (const u in msg.p || {}) {
       const m = mates.get(u);
-      if (m) { m.pl.net = readState(msg.p![u]); m.dmg = dmgOf(msg.p![u]); }
+      const st = m ? cleanState(msg.p![u], m.state) : null;
+      if (m && st) { m.state = st; m.pl.net = readState(st); m.dmg = dmgOf(st); }
     }
     const now = performance.now();
     for (const a of msg.e || []) {
@@ -589,7 +659,7 @@ export const Coop = (() => {
       case 'eg': G.EnemyMgr.removeRemote(ev[1], false); break;
       case 'hn': { const e = G.EnemyMgr.get(ev[1]); if (e && !e.dead) e.showHurt(ev[2], ev[3]); break; }
       case 'es':
-        G.Projectiles.spawn({ x: ev[1], y: ev[2], vx: ev[3], vy: ev[4], dmg: ev[5], r: ev[6], life: ev[7],
+        G.Projectiles.spawn({ x: ev[1], y: ev[2], vx: ev[3], vy: ev[4], dmg: ev[5], r: clampNum(ev[6], 0, 300, 6), life: clampNum(ev[7], 0, 30, 3),
                               friendly: false, color: '#ff7a9e', vis: G.VFX.forType(ev[8]), mtype: ev[8] });
         break;
       case 'c': {
@@ -608,7 +678,7 @@ export const Coop = (() => {
       case 'pb': G.World.breakAt(ev[1], ev[2]); break;
       case 'say': G.Spawner.say(ev[1], ev[2]); break;
       case 'heal': if (!local!.dead) { local!.heal(local!.maxHp * ev[1]); G.FX.ring(local!.x, local!.y, 6, 60, '#5fe08a', 0.4, 3); } break;
-      case 'lu': api.levelStart(ev[1]); break;
+      case 'lu': myRound = Number.isInteger(ev[2]) ? ev[2]! : 0; api.levelStart(ev[1]); break;
       case 'lw': api.waiting(ev[1]); break;
       case 'lr': api.resume(); break;
       case 'hp': api.hold && api.hold(ev[1]); break;
@@ -620,7 +690,7 @@ export const Coop = (() => {
       case 'wx': G.Weather.onEvent(ev); break;
       case 'ev': G.Events.onNet(ev); break;
       case 'hz': G.Hazards.add(ev[1] as Parameters<typeof G.Hazards.add>[0], true); break;
-      case 'fxr': G.FX.ring(ev[1], ev[2], 8, ev[3], ev[4], 0.5, 3); break;
+      case 'fxr': G.FX.ring(ev[1], ev[2], 8, clampNum(ev[3], 0, 2000, 0), clampStr(ev[4], 24) || '#fff', 0.5, 3); break;
       default: if (api.onEvent) api.onEvent(hostUid!, ev as TdHostEv);
     }
   }
@@ -676,7 +746,7 @@ export const Coop = (() => {
   function levelStart(level: number) {
     waiting = new Set([me!]);
     for (const m of mates.values()) if (m.connected && !m.watcher) waiting.add(m.uid);
-    emit(['lu', level]);
+    emit(['lu', level, ++round]);
     flushAll();
     api.levelStart(level);
     sendWaiting();
@@ -725,6 +795,7 @@ export const Coop = (() => {
 
   /** Has elegido tu carta. */
   function localPicked() {
+    myPick = myRound;
     if (host) picked(me!);
     else { outEv.push(['lp']); flushClient(true); }
   }
@@ -811,7 +882,7 @@ export const Coop = (() => {
   }
 
   return {
-    ANIMS, COLORS, begin, end, leave, tick, players, puppets, xpFactor, scaleRate, scaleHp, addWatcher, syncWatchers,
+    ANIMS, COLORS, begin, end, leave, tick, players, quiet, puppets, xpFactor, scaleRate, scaleHp, addWatcher, syncWatchers,
     cast, hit, status, hurtShown, enemyAdded, enemyGone, enemyShot, pickupAdded, pickupGone, say,
     propBroken, collected, shinyCaught, levelStart, localPicked, over, holdStart, holdEnd, againOpen, againSet,
     /** Anfitrión: evento para todos. Invitado: evento para el anfitrión. */

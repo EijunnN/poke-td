@@ -158,6 +158,23 @@ export const Sprites = (() => {
     return G.U.clamp(w * 0.22, 5, 26) * PX * scale;
   }
 
+  /*
+   * Escala a la que se dibuja tu Pokémon. Los grandes (Onix, Gyarados, Wailord,
+   * Eternatus...) tapaban media pantalla y se hacían difíciles de jugar: hasta
+   * BIG_H píxeles de alto (la gran mayoría) se dibujan igual, y lo que pasa de
+   * ahí cuenta sólo un BIG_K. Los muy anchos y no tan altos (Cetitan,
+   * Regieleki) cuentan por su ancho (el del marco × 0,55). Se redondea a
+   * 1/16 para que el pixel art no se deforme. Sólo cambia el dibujo: el choque
+   * del jugador ya no depende del sprite (ver Player.r).
+   */
+  const BIG_H = 36, BIG_K = 0.4;
+  function playerScale(dex: number) {
+    const m = animMeta(dex, 'Idle');
+    const h = m ? Math.max(m.ay, m.w * 0.55) : 24;
+    if (h <= BIG_H) return 1;
+    return Math.round((BIG_H + (h - BIG_H) * BIG_K) / h * 16) / 16;
+  }
+
   /** Alto visual aproximado (para barras de vida y números de daño). */
   function bodyHeight(dex: number, scale = 1) {
     const m = animMeta(dex, 'Idle');
@@ -299,7 +316,7 @@ export const Sprites = (() => {
     }
   }
 
-  return { PX, meta, hasShiny, hovers, white, animMeta, sheet, preload, dirFromAngle, bodyRadius, bodyHeight,
+  return { PX, meta, hasShiny, hovers, white, animMeta, sheet, preload, dirFromAngle, bodyRadius, bodyHeight, playerScale,
            drawShadow, Animator, ANIMS, get sheetCount() { return sheets.size; } };
 })();
 G.Sprites = Sprites;

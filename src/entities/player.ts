@@ -1,9 +1,12 @@
 import { G } from '../g';
 import type { Pokemon } from '../data/pokedex';
-import type { MoveInstance, MoveKind } from '../data/moves';
+import type { MoveCat, MoveInstance, MoveKind } from '../data/moves';
+import { statsOf } from '../data/base-stats';
+import { atkOf, guardOf } from '../data/stat-mods';
 import type { PokeType } from '../data/types';
 import type { Enemy } from './enemy';
 import type { Prop } from '../world/world';
+import type { AbilityFx } from '../data/ability-fx';
 /* ============ player.js — el Pokémon que controlas ============
  * (x, y) son los PIES. Sólo UN movimiento está activo a la vez: se dispara
  * solo y se cambia con 1-4 / Q / E. Cada disparo reproduce la animación de
@@ -11,7 +14,7 @@ import type { Prop } from '../world/world';
  */
 /** dur: lo que dura entero (para el aro del HUD) · src: el movimiento que lo dio (su icono). */
 interface Buff { n: number; t: number; amount: number; dur: number; src: string | null }
-type BuffStat = 'atk' | 'spd' | 'def' | 'regen';
+type BuffStat = 'atk' | 'spa' | 'spd' | 'def' | 'regen';
 
 /** Mejoras permanentes ya resueltas (G.Upgrades.perks); las que falten valen lo de por defecto. */
 type Perks = Partial<ReturnType<typeof G.Upgrades.perks>>;
@@ -43,6 +46,7 @@ export class Player {
   declare x: number;
   declare y: number;
   declare r: number;                  // radio de colisión / contacto (acotado)
+  declare scale: number;              // a la que se dibuja (los grandes, algo más pequeños; ver Sprites.playerScale)
   declare visR: number;               // radio visual, según el sprite (sólo para dibujar)
   declare bodyH: number;
 
@@ -59,6 +63,14 @@ export class Player {
   declare hp: number;
   declare baseSpd: number;
   declare baseAtk: number;
+  /** Multiplicador de daño de los ataques físicos y de los especiales (de Ataque y At. Esp.), ver atkOf. */
+  declare basePhys: number;
+  declare baseSpec: number;
+  /** Daño recibido por golpes físicos y especiales (de Defensa y Def. Esp.), ver guardOf. */
+  declare guardPhys: number;
+  declare guardSpec: number;
+  /** Con categorías (Survivor): cada ataque usa su stat. Sin ellas (la Defensa) todo cuenta como antes. */
+  declare cats: boolean;
 
   declare moves: MoveInstance[];         // instancias de G.Moves
   declare slots: MoveInstance[][];
@@ -99,6 +111,12 @@ export class Player {
   declare sashT: number;
   declare bellHeal: number;
   declare statsTaken: Record<string, number>;
+  /** Naturaleza y habilidad (Survivor; las pone Mons.apply). `ab`: lo que la habilidad lleva contado en la partida. */
+  declare nature: string;
+  declare abil: AbilityFx | null;
+  declare abilId: string;
+  declare ab: Record<string, number> | undefined;
+  declare sturdyAt: number;
 
   // Los asignan otros módulos (game.ts, coop.ts, combat.ts) o el propio ciclo, no el constructor.
   declare remote: boolean;
@@ -131,13 +149,14 @@ export class Player {
     this.mon = mon;
     this.dex = mon.dex;
     this.shiny = shiny && G.Sprites.hasShiny(mon.dex);
-    this.anim = new G.Sprites.Animator(mon.dex, 1, this.shiny);
+    this.scale = G.Sprites.playerScale(mon.dex);
+    this.anim = new G.Sprites.Animator(mon.dex, this.scale, this.shiny);
     this.x = 0; this.y = 0;
     // El hueco que ocupas no crece con el sprite (Moltres 35 px, la mediana 14):
     // si no, los grandes chocan con todo y los pequeños son casi imposibles de tocar.
-    this.visR = G.Sprites.bodyRadius(mon.dex);
+    this.visR = G.Sprites.bodyRadius(mon.dex, this.scale);
     this.r = G.U.clamp(this.visR, 10, 16);
-    this.bodyH = G.Sprites.bodyHeight(mon.dex);
+    this.bodyH = G.Sprites.bodyHeight(mon.dex, this.scale);
 
     this.atkMul = perks.atkMul || 1;
     this.spdMul = perks.spdMul || 1;
@@ -152,6 +171,12 @@ export class Player {
     this.hp = this.maxHp;
     this.baseSpd = mon.spd;
     this.baseAtk = mon.atk;
+    const [atk, spa, def, spd] = statsOf(mon.dex);
+    this.basePhys = atkOf(atk);
+    this.baseSpec = atkOf(spa);
+    this.guardPhys = guardOf(def);
+    this.guardSpec = guardOf(spd);
+    this.cats = true;
 
     this.moves = [];           // todos los movimientos aprendidos
     this.slots = [];           // huecos: cada uno, una lista de movimientos que se lanzan a la vez
@@ -161,6 +186,7 @@ export class Player {
 
     this.buffs = {
       atk: { n: 0, t: 0, amount: 0, dur: 0, src: null },
+      spa: { n: 0, t: 0, amount: 0, dur: 0, src: null },
       spd: { n: 0, t: 0, amount: 0, dur: 0, src: null },
       def: { n: 0, t: 0, amount: 0, dur: 0, src: null },
       regen: { n: 0, t: 0, amount: 0, dur: 0, src: null }
@@ -196,6 +222,19 @@ export class Player {
     this.sashT = -999;         // última vez que salvó la Banda Focus
     this.bellHeal = 0;         // curación pendiente del Cascabel Concha
     this.statsTaken = {};      // mejoras de stat cogidas (condición de evolución)
+    this.nature = '';
+    this.abil = null;          // efecto de su habilidad (data/ability-fx.ts); lo pone setAbility
+    this.abilId = '';
+    this.sturdyAt = -999;      // última vez que le salvó Robustez
+  }
+
+  /** Pone la habilidad (AbilityFX.of) y aplica lo que hace al empezar. */
+  setAbility(id: string) {
+    this.abilId = id || '';
+    this.abil = G.AbilityFX.of(id, this.mon);
+    this.ab = {};
+    if (this.abil.cdMul) this.cdMul *= this.abil.cdMul;
+    if (this.abil.start) this.abil.start(this);
   }
 
   /** Segundos que hay que estar junto a un compañero caído para levantarlo. */
@@ -210,10 +249,35 @@ export class Player {
 
   // ---------------- stats efectivos ----------------
   get atk() { return this.baseAtk * this.atkMul * (1 + this.buffs.atk.n * this.buffs.atk.amount); }
+  /**
+   * Multiplicador de daño para ese ataque: su categoría decide el stat base y el potenciador (Danza Espada /
+   * Maquinación), y un monotipo pega un 20 % más con los ataques de su tipo.
+   */
+  atkFor(m: { cat?: MoveCat; type?: PokeType; id?: string; kind?: string }) {
+    if (!this.cats || !m.cat) return this.atk;
+    const phys = m.cat === 'phys', b = phys ? this.buffs.atk : this.buffs.spa;
+    // (Habilidad: × al daño, ver data/ability-fx.ts; la parte que depende del enemigo va en el combate.)
+    const ab = this.abil && this.abil.out ? this.abil.out(this, m) : 1;
+    return (phys ? this.basePhys : this.baseSpec) * this.atkMul * (1 + b.n * b.amount) * (this.isMono(m.type) ? Player.MONO_K : 1) * ab;
+  }
+  /** Lo que más pegan los de un solo tipo con los ataques de ese tipo (tienen menos variedad que los de dos). */
+  static get MONO_K() { return 1.2; }
+  /** ¿Es de un solo tipo y es ese el del ataque? */
+  isMono(type?: PokeType) { return !!type && this.mon.types.length === 1 && this.mon.types[0] === type; }
+  /** Qué parte del daño del lado bueno da esta categoría: 1 en el mejor, menos en el otro (para ponderar las cartas). */
+  catShare(cat: MoveCat) {
+    return (cat === 'phys' ? this.basePhys : this.baseSpec) / Math.max(this.basePhys, this.baseSpec);
+  }
+  /** Lado en el que pega más ('' si andan parejos: menos de un 10 % de diferencia). */
+  bestCat(): MoveCat | '' {
+    return this.catShare('spec') < 0.91 ? 'phys' : this.catShare('phys') < 0.91 ? 'spec' : '';
+  }
   get spd() {
-    const s = this.baseSpd * this.spdMul * (1 + this.buffs.spd.n * this.buffs.spd.amount) * (this.slowT > 0 ? 0.5 : 1);
+    // (Habilidades: "steady" no se frena; speed() multiplica, ver data/ability-fx.ts.)
+    const ab = this.abil, stuck = this.slowT > 0 && !(ab && ab.steady);
+    const s = this.baseSpd * this.spdMul * (1 + this.buffs.spd.n * this.buffs.spd.amount) * (stuck ? 0.5 : 1) * (ab && ab.speed ? ab.speed(this) : 1);
     const w = G.Weather.speedFor(this.mon.types);
-    const slow = this.inLiquid ? G.World.liquidEffect(this.mon.types).slow || 1 : 1;
+    const slow = this.inLiquid && !(ab && ab.steady) ? G.World.liquidEffect(this.mon.types).slow || 1 : 1;
     return s * slow * w;
   }
   get reduction() { return Math.min(0.8, this.dmgReduce + this.buffs.def.n * this.buffs.def.amount); }
@@ -335,10 +399,14 @@ export class Player {
     }
     const ANIM: Record<MoveKind, string> = { melee: 'Attack', beam: 'Shoot', projectile: 'Shoot', nova: 'Attack',
                    aura: 'Charge', buff: 'Charge', orbit: 'Charge', boomerang: 'Shoot', chain: 'Shoot',
-                   mine: 'Charge', meteor: 'Charge', turret: 'Charge', dash: 'Attack', trail: 'Walk', cone: 'Shoot' };
+                   mine: 'Charge', meteor: 'Charge', turret: 'Charge', dash: 'Attack', trail: 'Walk', cone: 'Shoot',
+                   homing: 'Shoot', bounce: 'Shoot', charge: 'Charge', spin: 'Attack', quake: 'Attack', vortex: 'Charge',
+                   shove: 'Attack', stun: 'Charge' };
     const anim = ANIM[m.kind] || 'Attack';
     // Las familias nuevas suenan como la parecida de las de siempre.
-    const SND: Partial<Record<MoveKind, string>> = { boomerang: 'projectile', chain: 'beam', mine: 'nova', meteor: 'nova', turret: 'buff', dash: 'melee', trail: 'aura', cone: 'projectile' };
+    const SND: Partial<Record<MoveKind, string>> = { boomerang: 'projectile', chain: 'beam', mine: 'nova', meteor: 'nova', turret: 'buff', dash: 'melee', trail: 'aura', cone: 'projectile',
+                                           homing: 'projectile', bounce: 'projectile', charge: 'beam', spin: 'melee', quake: 'nova',
+                                           vortex: 'aura', shove: 'nova', stun: 'nova' };
     // El rastro no suena a cada charco (sería un zumbido constante).
     if (m.kind !== 'trail') G.Audio.sfx('shot', { kind: SND[m.kind] || m.kind, type: m.type });
     if (m.kind === 'trail') return;
@@ -355,9 +423,25 @@ export class Player {
   /**
    * @param type  tipo del ataque (tabla de tipos y clima); sin tipo, daño tal cual
    * @param pure  daño que no baja con la defensa ni el cuerpo a cuerpo (Arceus)
+   * @param cat   clase del golpe: físico (contacto) o especial (disparos); su Defensa o Def. Esp. lo frena
    */
-  hurt(amount: number, type: PokeType | null = null, pure = false) {
+  hurt(amount: number, type: PokeType | null = null, pure = false, cat: MoveCat | null = null) {
     if (this.invuln > 0 || this.reviveShield > 0 || this.dead) return;
+    // Habilidad (data/ability-fx.ts): absorber un tipo, esquivar o recibir menos.
+    const ab = this.abil;
+    if (ab && !pure) {
+      if (type && ab.absorb === type) {
+        this.invuln = 0.3;
+        this.heal(this.maxHp * 0.03);
+        return;
+      }
+      if (ab.dodge && Math.random() < ab.dodge(this, type, cat)) {
+        this.invuln = 0.3;
+        G.FX.dmgText(this.x, this.y - this.bodyH - 4, '¡Esquiva!', '#bfe8ff');
+        return;
+      }
+      if (ab.inMul) amount *= ab.inMul(this, type, cat);
+    }
     let eff: 'super' | 'weak' | null = null;
     if (type) {
       const k = G.Types.mult(type, this.mon.types);
@@ -367,7 +451,8 @@ export class Player {
     // Con un ataque cuerpo a cuerpo activo se recibe un 25 % menos: hay que
     // estar encima de los enemigos para pegar (iban muy por detrás).
     const close = this.activeGroup().some(m => m.kind === 'melee') ? 0.75 : 1;
-    const d = pure ? Math.max(1, amount) : Math.max(1, amount * (1 - this.reduction) * close);
+    const guard = cat && this.cats ? (cat === 'phys' ? this.guardPhys : this.guardSpec) : 1;
+    const d = pure ? Math.max(1, amount) : Math.max(1, amount * (1 - this.reduction) * close * guard);
     this.hp -= d;
     this.invuln = 0.45;
     this.flash = 0.14;
@@ -382,6 +467,14 @@ export class Player {
       G.FX.dmgText(this.x, this.y - this.bodyH - 16, '¡Banda Focus!', '#ff9a3d', true);
       G.FX.ring(this.x, this.y, 6, 70, '#ff9a3d', 0.5, 4);
     }
+    // Robustez (habilidad): lo mismo, una vez cada 90 s.
+    if (this.hp <= 0 && ab && ab.sturdy && performance.now() - this.sturdyAt > 90000) {
+      this.sturdyAt = performance.now();
+      this.hp = 1; this.invuln = 1.2;
+      G.FX.dmgText(this.x, this.y - this.bodyH - 16, '¡Robustez!', '#c9b48a', true);
+      G.FX.ring(this.x, this.y, 6, 70, '#c9b48a', 0.5, 4);
+    }
+    if (ab && ab.hurt && this.hp > 0) ab.hurt(this, type, cat);
     if (this.hp <= 0) {
       this.hp = 0; this.dead = true;
       this.anim.play('Faint', { hold: true });
@@ -391,6 +484,7 @@ export class Player {
   }
 
   heal(amount: number) {
+    if (this.abil && this.abil.healMul) amount *= this.abil.healMul;     // Gula, Recogida
     const before = this.hp;
     this.hp = Math.min(this.maxHp, this.hp + amount);
     const got = Math.round(this.hp - before);
@@ -401,9 +495,12 @@ export class Player {
 
   /** Devuelve cuántos niveles ha subido (pueden ser varios de golpe). */
   gainXp(amount: number) {
-    this.xp += amount * this.xpMul;
+    // Un valor roto (infinito, NaN: un compañero con el juego trucado) dejaría el bucle sin fin.
+    const add = amount * this.xpMul;
+    if (!Number.isFinite(add) || add <= 0) return 0;
+    this.xp += add;
     let leveled = 0;
-    while (this.xp >= this.xpNext) {
+    while (this.xp >= this.xpNext && leveled < 50) {
       this.xp -= this.xpNext;
       this.level++;
       this.xpNext = Player.xpFor(this.level);
@@ -485,10 +582,24 @@ export class Player {
   addBuff(stat: BuffStat, amount: number, dur: number, maxStacks: number, src?: string) {
     const b = this.buffs[stat];
     if (!b) return;
+    // Uno más flojo (Armadura Frágil, Tumbos...) no pisa a uno más fuerte que siga activo (Agilidad).
+    if (b.n > 0 && b.t > 0 && b.amount * b.n > amount * maxStacks) return;
     b.amount = amount;
     b.n = Math.min(maxStacks, b.n + 1);
     b.t = b.dur = dur;
     if (src) b.src = src;
+  }
+
+  /** Lo que hace la habilidad cada fotograma: su `tick` y, Sequía, Llovizna..., su clima al empezar y cada 3 min. */
+  private abilityTick(dt: number) {
+    const ab = this.abil!;
+    if (ab.tick) ab.tick(this, dt);
+    // En grupo lo pone el anfitrión, que es quien manda el clima a todos.
+    const s = this.ab || (this.ab = {});
+    if (ab.summon && (!G.Coop.active || G.Coop.isHost) && (s.sumT = (s.sumT || 0) - dt) <= 0) {
+      s.sumT = 180;
+      if (!G.Weather.current) G.Weather.debugStart(ab.summon, 60);
+    }
   }
 
   // ---------------- ciclo ----------------
@@ -508,6 +619,7 @@ export class Player {
     if (this.bellHeal > 0) { const h = Math.min(this.bellHeal, 4 * dt); this.hp = Math.min(this.maxHp, this.hp + h); this.bellHeal -= h; }
     if (this.power && (this.power.t -= dt) <= 0) { this.power.def.off(this); this.power = null; }
     if (this.regen > 0) this.hp = Math.min(this.maxHp, this.hp + this.regen * dt);
+    if (this.abil) this.abilityTick(dt);
 
     // --- movimiento con colisiones ---
     // (En cooperativo la pausa no para el juego: sólo te quedas quieto.)
@@ -524,10 +636,11 @@ export class Player {
     if (this.walking) this.moveAngle = Math.atan2(ay, ax);
 
     // --- terreno líquido ---
-    this.inLiquid = G.World.isLiquid(this.x, this.y);
+    // (Levitación: flota por encima del agua y la lava.)
+    this.inLiquid = !(this.abil && this.abil.levitate) && G.World.isLiquid(this.x, this.y);
     if (this.inLiquid) {
       const le = G.World.liquidEffect(this.mon.types);
-      if (le.dmg) {
+      if (le.dmg && !(this.abil && this.abil.lavaProof)) {
         this.lavaTick -= dt;
         if (this.lavaTick <= 0) {
           this.lavaTick = le.every!; this.invuln = 0;
@@ -646,7 +759,7 @@ export class Player {
       ctx.beginPath(); ctx.ellipse(this.x, this.y, this.visR * 1.5, this.visR * 0.6, 0, 0, 6.2832); ctx.stroke();
       ctx.restore();
     }
-    G.Sprites.drawShadow(ctx, this.dex, this.x, this.y);
+    G.Sprites.drawShadow(ctx, this.dex, this.x, this.y, this.scale);
     // Poder de altar: aro de su color latiendo bajo los pies.
     if (this.power && !this.dead) {
       ctx.save();
@@ -661,7 +774,7 @@ export class Player {
     this.anim.draw(ctx, this.x, this.y, { flash: this.flash > 0, softFlash: true, alpha, color: '#ffcb3d' });
 
     // Arcos de buff alrededor de los pies.
-    const COL: Record<BuffStat, string> = { atk: '#ff6b4d', spd: '#7fe0ff', def: '#b0b8c8', regen: '#5fe08a' };
+    const COL: Record<BuffStat, string> = { atk: '#ff6b4d', spa: '#b46bff', spd: '#7fe0ff', def: '#b0b8c8', regen: '#5fe08a' };
     let i = 0;
     for (const k in this.buffs) {
       const b = this.buffs[k as BuffStat];

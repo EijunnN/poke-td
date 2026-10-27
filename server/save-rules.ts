@@ -36,6 +36,13 @@
  *   entero con un minuto, un script que subiera cada minuto lo cobraría cada vez. (Por eso PUT /api/save no
  *   necesita tope de frecuencia: api.ts, SAVE_GAP.)
  *
+ * Tienda Kecleon (Mentas, Cápsulas y MT, con Pokémonedas): lo que sube en save.bag, save.tms y save.ptm (MT aprendidas)
+ * entre dos guardados tiene que poder pagarse con las monedas que había, las que pudo ganar y lo que valen las
+ * tiradas que tenía (reembolsos del gacha); si no, la cuenta queda apuntada. Los precios están en SHOP_PRICE y
+ * TM_MIN_PRICE (tests/save-rules.test.ts los compara con src/data/shop.ts y src/data/tms.ts). Las MT aprendidas
+ * (ptm) nunca se olvidan: se restituyen como las colecciones que sólo crecen. Que cambien la naturaleza o la
+ * habilidad (pnat, pabil) no se vigila: sólo dan una ventaja pequeña y una Menta ya se pagó al comprarla.
+ *
  * Depósito de margen (por cuenta, en la tabla save_budget): los tickets llegan A GOLPES (un ×10 de
  * un jefe, del legendario de la grieta, de Gholdengo o de un cofre grande vale 10 tiradas de una vez,
  * y en una partida con suerte caen varios), mientras que el presupuesto de arriba los reparte por
@@ -63,6 +70,13 @@ const size = (v: unknown) => (isObj(v) ? Object.keys(v).length : 0);
 
 /** Las colecciones que sólo crecen (clave -> cuándo). Igual que el union de db.ts, merge. */
 const GROWING = ['owned', 'shiny', 'legends', 'arenas', 'itemsFound', 'evoMoves', 'ach'] as const;
+
+/** Campos de la Tienda Kecleon, todos mapas (objeto con claves): si llegan con otra forma, la partida está rota. */
+const SHOP_MAPS = ['bag', 'tms', 'ptm', 'pnat', 'pabil', 'pstart2'] as const;
+
+/** Lo que cuesta cada objeto de la Mochila en la Tienda Kecleon (src/data/shop.ts) y la MT más barata (src/data/tms.ts). */
+export const SHOP_PRICE: Record<string, number> = { mint: 1500, cap: 1500, caph: 5000 };
+export const TM_MIN_PRICE = 400;
 
 /** El depósito de margen (ver la cabecera): tiradas por segundo de tiempo real, y tope. */
 export const BUDGET = { rate: 0.1, cap: 80 };
@@ -105,6 +119,7 @@ function shapeError(s: Obj): string | null {
   if (s.created !== undefined && !(typeof s.created === 'number' && Number.isFinite(s.created))) return 'created';
   if (s.stats !== undefined && (!isObj(s.stats) || (s.stats.missionsDone !== undefined && !money(s.stats.missionsDone)))) return 'stats';
   for (const k of GROWING) if (s[k] !== undefined && !isObj(s[k])) return k;
+  for (const k of SHOP_MAPS) if (s[k] !== undefined && !isObj(s[k])) return k;
   return null;
 }
 
@@ -117,6 +132,15 @@ function keepProgress(prev: Obj, next: Obj): Obj {
     for (const k of Object.keys(prev[c])) if (!(k in merged)) merged[k] = prev[c][k];
     out[c] = merged;
   }
+  // MT aprendidas: nunca se olvidan (por Pokémon, la unión de las dos listas).
+  if (isObj(prev.ptm)) {
+    const pt: Obj = { ...(isObj(out.ptm) ? out.ptm : {}) };
+    for (const d of Object.keys(prev.ptm)) {
+      if (!Array.isArray(prev.ptm[d])) continue;
+      pt[d] = [...new Set([...(Array.isArray(pt[d]) ? pt[d] : []), ...prev.ptm[d]])];
+    }
+    out.ptm = pt;
+  }
   if (isObj(prev.stats)) {
     const st: Obj = { ...(isObj(out.stats) ? out.stats : {}) };
     for (const [k, v] of Object.entries(prev.stats)) if (typeof v === 'number' && Number.isFinite(v) && !(num(st[k]) >= v)) st[k] = v;
@@ -126,6 +150,22 @@ function keepProgress(prev: Obj, next: Obj): Obj {
 }
 
 const tk = (s: Obj, k: string) => num(isObj(s.tickets) ? s.tickets[k] : 0);
+
+/** Suma de los valores de un mapa de cuentas ({ id: n }). */
+const total = (m: unknown) => (isObj(m) ? Object.values(m).reduce<number>((a, v) => a + Math.max(0, num(v)), 0) : 0);
+/** MT aprendidas en total (listas por Pokémon). */
+const taughtN = (m: unknown) => (isObj(m) ? Object.values(m).reduce<number>((a, l) => a + (Array.isArray(l) ? l.length : 0), 0) : 0);
+/**
+ * Lo que costó, como mínimo, lo que ha subido en la Mochila entre dos guardados: cada objeto nuevo a su precio y cada
+ * MT nueva (las sin usar que han subido más las aprendidas) a la más barata. Lo gastado dentro del mismo intervalo
+ * (comprar y usar) no se ve, y eso sólo juega a favor del jugador.
+ */
+export function shopCost(o: Obj, n: Obj): number {
+  let c = 0;
+  for (const [id, price] of Object.entries(SHOP_PRICE)) c += Math.max(0, num(isObj(n.bag) ? n.bag[id] : 0) - num(isObj(o.bag) ? o.bag[id] : 0)) * price;
+  c += Math.max(0, total(n.tms) - total(o.tms) + taughtN(n.ptm) - taughtN(o.ptm)) * TM_MIN_PRICE;
+  return c;
+}
 const mis = (s: Obj) => num(isObj(s.stats) ? s.stats.missionsDone : 0);
 
 /** Lo mínimo de cualquier partida que no se pueda explicar con un presupuesto. */
@@ -155,6 +195,10 @@ function possibleSave(o: Obj, n: Obj, secs: number, now: number): { why: string;
 
   const e = Math.min(Math.max(secs, 0), LIMITS.gapSecs);          // segundos de juego que pudo haber
   const k = Math.min(Math.max(secs, 0) / LIMITS.marginSecs, 1);   // margen fijo (0-1): proporcional al tiempo real desde el último guardado, así subir a menudo no lo multiplica
+  // Tienda Kecleon: lo comprado se paga con las monedas que tenía, las que pudo ganar y los reembolsos del gacha (< 300 por tirada).
+  const spent = shopCost(o, n);
+  if (spent > 0 && spent > Math.max(0, num(o.coins) - num(n.coins)) + 8000 * k + 40 * e + 1000 * dm + 300 * (tk(o, 't1') + 10 * tk(o, 't10')))
+    return { why: 'más objetos de la Tienda Kecleon de los que se pueden pagar' };
   let achV = 0;
   for (const id of Object.keys(isObj(n.ach) ? n.ach : {})) if (!(isObj(o.ach) && id in o.ach)) achV += achValue(id);
 

@@ -25,6 +25,8 @@ export interface Hazard {
   pct?: number;
   pure?: boolean;
   vis?: string;
+  /** Tipo que sólo da el aspecto (los rayos de Arceus y su Placa); el daño no lo mira. */
+  vt?: PokeType;
   t: number;
   hit: boolean;
   end: number;
@@ -41,7 +43,7 @@ export const Hazards = (() => {
     list.push(o);
     if (!fromNet && G.Coop.isHost) {
       G.Coop.broadcast(['hz', { kind: o.kind, x: Math.round(o.x), y: Math.round(o.y), r: o.r, angle: o.angle, len: o.len, w: o.w,
-                                delay: o.delay, dmg: Math.round(o.dmg), type: o.type, color: o.color, pct: o.pct, pure: o.pure, vis: o.vis }]);
+                                delay: o.delay, dmg: Math.round(o.dmg), type: o.type, color: o.color, pct: o.pct, pure: o.pure, vis: o.vis, vt: o.vt }]);
     }
     return o;
   }
@@ -78,7 +80,7 @@ export const Hazards = (() => {
     const near = G.Camera.sees(h.x, h.y, 120);
     if (h.vis === 'pillar') {
       // Pilar de luz que cae del cielo.
-      G.FX.beam(h.x, h.y, -Math.PI / 2, 420, h.r * 1.1, h.color, G.VFX.forType('electric'));
+      G.FX.beam(h.x, h.y, -Math.PI / 2, 420, h.r * 1.1, h.color, G.VFX.forType(h.vt || 'electric'));
       G.FX.ring(h.x, h.y, 4, h.r * 1.3, '#fff3c8', 0.4, 5);
       G.FX.burst(h.x, h.y - 6, h.color, 10, 180);
       if (near) { G.Audio.sfx('judge'); G.Camera.kick(0.2); }
@@ -87,7 +89,7 @@ export const Hazards = (() => {
       G.FX.burst(h.x, h.y - 6, h.color, Math.round(h.r / 3), 160);
       if (near) { G.Audio.sfx('break'); if (h.r > 60) G.Camera.kick(0.35); }
     } else {
-      G.FX.beam(h.x, h.y - G.LIFT, h.angle, h.len, h.w, h.color, G.VFX.forType(h.type || (h.pure ? 'electric' : 'normal')));
+      G.FX.beam(h.x, h.y - G.LIFT, h.angle, h.len, h.w, h.color, G.VFX.forType(h.vt || h.type || (h.pure ? 'electric' : 'normal')));
       if (near) G.Audio.sfx('shot', { kind: 'beam', type: h.type ?? undefined });
     }
   }
@@ -95,8 +97,16 @@ export const Hazards = (() => {
   /** Avisos en el suelo (debajo de los Pokémon). */
   function draw(ctx: CanvasRenderingContext2D) {
     const blink = Math.sin(performance.now() / 60) > 0;
+    // Lo que cae fuera de la vista ni se pinta (con la Sentencia llegan a haber decenas de avisos a la vez).
+    const cam = G.Camera, vL = cam.left(), vT = cam.top(), vR = vL + cam.w, vB = vT + cam.h;
     for (const h of list) {
       if (h.hit) continue;
+      if (h.kind === 'zone') {
+        if (h.x + h.r < vL || h.x - h.r > vR || h.y + h.r < vT || h.y - h.r > vB) continue;
+      } else {
+        const ex = h.x + Math.cos(h.angle) * h.len, ey = h.y + Math.sin(h.angle) * h.len, m = h.w / 2 + 4;
+        if (Math.max(h.x, ex) + m < vL || Math.min(h.x, ex) - m > vR || Math.max(h.y, ey) + m < vT || Math.min(h.y, ey) - m > vB) continue;
+      }
       const k = Math.min(1, h.t / h.delay);
       ctx.save();
       if (h.kind === 'zone') {

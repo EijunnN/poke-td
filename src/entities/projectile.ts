@@ -27,6 +27,10 @@ export interface Projectile {
   friendly: boolean;
   color: string;
   homing: number; slow: number; burn: number; poison: number; knock: number;
+  /** Rebotes que le quedan: al dar a un enemigo sale hacia otro (ver combat.ts, rebound). */
+  bounce?: number;
+  /** Parte del daño que cura a su dueño al dar (Beso Drenaje). */
+  drain?: number;
   orb: boolean;
   /** Cada cuántos segundos un orbe vuelve a golpear al mismo. */
   rehit: number;
@@ -124,7 +128,12 @@ export const Projectiles = (() => {
       p.px = p.x; p.py = p.y;          // para la colisión barrida (ver combat.js)
       if (p.vis && p.vis.trail && G.Camera.sees(p.x, p.y, 20)) {
         p.trailT = (p.trailT || 0) - dt;
-        if (p.trailT <= 0) { p.trailT = 0.04; G.FX.trail(p.vis.trail, p.vis.pal, p.x, p.y - G.LIFT, p.vx, p.vy); }
+        if (p.trailT <= 0) {
+          p.trailT = 0.04;
+          G.FX.ghost(!!p.ghost);        // (la estela de un compañero también va con su opacidad)
+          G.FX.trail(p.vis.trail, p.vis.pal, p.x, p.y - G.LIFT, p.vx, p.vy);
+          G.FX.ghost(false);
+        }
       }
       p.x += p.vx * dt;
       p.y += p.vy * dt;
@@ -152,20 +161,40 @@ export const Projectiles = (() => {
   function draw(ctx: CanvasRenderingContext2D) {
     const L = G.LIFT;
     // Sombras primero, todas juntas.
+    // (los de un compañero, con la opacidad que se haya puesto en Ajustes → Gráficos)
+    const gk = G.FX.allyAlpha();
+    // (las sombras y los aros, cada tipo en un solo trazado: con decenas de disparos a la vez eran dos
+    // operaciones de lienzo por disparo)
     ctx.fillStyle = 'rgba(0,0,0,.25)';
+    ctx.beginPath();
     for (const p of list) {
-      ctx.beginPath(); ctx.ellipse(p.x, p.y, p.r * 0.9, p.r * 0.38, 0, 0, 6.2832); ctx.fill();
+      if (p.ghost && gk < 1) continue;
+      ctx.moveTo(p.x + p.r * 0.9, p.y); ctx.ellipse(p.x, p.y, p.r * 0.9, p.r * 0.38, 0, 0, 6.2832);
+    }
+    ctx.fill();
+    if (gk < 1 && gk > 0) {
+      ctx.globalAlpha = gk;
+      ctx.beginPath();
+      for (const p of list) {
+        if (!p.ghost) continue;
+        ctx.moveTo(p.x + p.r * 0.9, p.y); ctx.ellipse(p.x, p.y, p.r * 0.9, p.r * 0.38, 0, 0, 6.2832);
+      }
+      ctx.fill();
+      ctx.globalAlpha = 1;
     }
     // Los disparos enemigos llevan un aro rojo en el suelo: "esto te hace daño".
     ctx.fillStyle = 'rgba(255,60,80,.35)';
+    ctx.beginPath();
     for (const p of list) {
       if (p.friendly) continue;
-      ctx.beginPath(); ctx.ellipse(p.x, p.y, p.r * 1.5, p.r * 0.6, 0, 0, 6.2832); ctx.fill();
+      ctx.moveTo(p.x + p.r * 1.5, p.y); ctx.ellipse(p.x, p.y, p.r * 1.5, p.r * 0.6, 0, 0, 6.2832);
     }
+    ctx.fill();
     for (const p of list) {
+      if (p.ghost && gk <= 0) continue;
       const v = p.vis || G.VFX.forType('normal');
       const shape = v.proj;
-      const a = p.orb ? 1 : Math.min(1, (p.life - p.t) * 4);
+      const a = (p.orb ? 1 : Math.min(1, (p.life - p.t) * 4)) * (p.ghost ? gk : 1);
       let angle = 0;
       if (G.VFX.isDir(shape)) angle = p.orb ? p.oa! + Math.PI / 2 : Math.atan2(p.vy, p.vx);
       else if (G.VFX.spins(shape)) angle = p.t * 9;

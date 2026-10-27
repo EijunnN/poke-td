@@ -4,7 +4,7 @@ import { G } from '../g';
  */
 /** Ícono de una mejora (nombre del dibujo en la UI). */
 export type UpgradeIcon = 'heart' | 'fist' | 'boot' | 'clock' | 'shield' | 'sprout' | 'magnet' | 'book'
-  | 'coin' | 'cards' | 'star' | 'up' | 'ban';
+  | 'coin' | 'cards' | 'star' | 'up' | 'ban' | 'cursor';
 
 /** Una mejora permanente. `max` niveles; `base` coste del nivel 1; `grow` factor de coste por nivel. */
 export interface UpgradeDef {
@@ -15,6 +15,8 @@ export interface UpgradeDef {
   max: number;
   base: number;
   grow: number;
+  /** Otra mejora que hay que tener antes (en el mismo Pokémon). */
+  needs?: string;
 }
 
 export const Upgrades = (() => {
@@ -31,7 +33,11 @@ export const Upgrades = (() => {
     { id: 'moves',  icon: 'cards', name: 'Repertorio',     unit: 'Empiezas con 2 movimientos', max: 1, base: 1500, grow: 1 },
     { id: 'crit',   icon: 'star', name: 'Golpe Crítico',  unit: '+3% de críticos (x1,5 de daño)', max: 10, base: 90, grow: 1.4 },
     { id: 'reroll', icon: 'up', name: 'Cambio de cartas', unit: '+1 cambio de cartas de nivel por run', max: 5, base: 150, grow: 1.6 },
-    { id: 'ban',    icon: 'ban', name: 'Veto',           unit: 'Bloquea 1 movimiento: no te sale en las cartas', max: 3, base: 300, grow: 1.9 }
+    { id: 'ban',    icon: 'ban', name: 'Veto',           unit: 'Bloquea 1 movimiento: no te sale en las cartas', max: 3, base: 300, grow: 1.9 },
+    // Se compra una vez y luego se elige gratis (save.pstart, ver G.startMoveOf).
+    { id: 'start',  icon: 'cursor', name: 'Movimiento inicial', unit: 'Eliges con qué ataque empiezas la partida', max: 1, base: 400, grow: 1 },
+    // Igual, para el segundo de Repertorio (save.pstart2, ver G.startMove2Of). Sin Repertorio no se compra.
+    { id: 'start2', icon: 'cursor', name: 'Segundo movimiento inicial', unit: 'Eliges el segundo ataque con el que empiezas (necesita Repertorio)', max: 1, base: 400, grow: 1, needs: 'moves' }
   ];
   const BY: Record<string, UpgradeDef> = {};
   for (const u of LIST) BY[u.id] = u;

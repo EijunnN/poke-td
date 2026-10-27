@@ -68,6 +68,14 @@ export interface SaveData {
   pupgDone?: boolean;                    // migración v2 -> v3 hecha
   pbind?: Record<string, (string | null)[]>;   // atajos de movimientos por Pokémon
   pban?: Record<string, string[]>;       // movimientos vetados por Pokémon
+  pstart?: Record<string, string>;       // movimiento inicial elegido por Pokémon (mejora Movimiento inicial)
+  pstart2?: Record<string, string>;      // segundo movimiento inicial elegido (mejora Segundo movimiento inicial)
+  // Tienda Kecleon (ver data/shop.ts y systems/mons.ts):
+  bag: Record<string, number>;           // Mochila: Menta, Cápsulas (id -> cuántas)
+  tms: Record<string, number>;           // MT sin usar: movimiento -> cuántas
+  ptm: Record<string, string[]>;         // dex -> movimientos aprendidos con MT (para siempre)
+  pnat: Record<string, [string, number]>;   // dex -> [naturaleza, fecha]: la cambiada con Menta (si no, la que le tocó)
+  pabil: Record<string, [number, number]>;  // dex -> [hueco 0|1|2, fecha]: la habilidad cambiada con Cápsula (2 = oculta)
   dexFav?: Record<string, number>;       // favoritos de la colección: dex -> momento del cambio (negativo = quitado; ver data/dex-query.ts)
   [extra: string]: any;                  // campos que añaden otros módulos
 }
@@ -131,6 +139,11 @@ export const DB = (() => {
       personality: null,      // { trait, scores }
       upgrades: {},           // (antiguo) mejoras de la cuenta; ahora van por Pokémon
       pupg: {},               // dex -> { id -> nivel }: mejoras de cada Pokémon
+      bag: {},                // Mochila: Mentas y Cápsulas (id -> cuántas)
+      tms: {},                // MT sin usar (movimiento -> cuántas)
+      ptm: {},                // dex -> movimientos aprendidos con MT
+      pnat: {},               // dex -> [naturaleza, fecha] cambiada con Menta
+      pabil: {},              // dex -> [hueco, fecha] cambiada con Cápsula
       tickets: { t1: 0, t10: 0 },   // tickets del gacha (x1 y x10)
       pity: {},               // generación del banner -> tiradas sin ★5
       legends: {},            // dex -> fecha: legendarios vencidos en grietas
@@ -201,6 +214,40 @@ export const DB = (() => {
         s.pban[d] = [...new Set(l.filter(id => typeof id === 'string' && (!G.Moves || G.Moves.BY_ID[id])))].slice(0, 3);
       }
     } else s.pban = {};
+    // Movimiento inicial: por Pokémon, un movimiento que exista (si no, se quita y vuelve el de serie).
+    if (!s.pstart || typeof s.pstart !== 'object' || Array.isArray(s.pstart)) s.pstart = {};
+    for (const d of Object.keys(s.pstart)) {
+      if (typeof s.pstart[d] !== 'string' || (G.DEX_BY && !G.DEX_BY[+d]) || (G.Moves && !G.Moves.BY_ID[s.pstart[d]])) delete s.pstart[d];
+    }
+    // Segundo movimiento inicial: igual que el primero.
+    if (!s.pstart2 || typeof s.pstart2 !== 'object' || Array.isArray(s.pstart2)) s.pstart2 = {};
+    for (const d of Object.keys(s.pstart2)) {
+      if (typeof s.pstart2[d] !== 'string' || (G.DEX_BY && !G.DEX_BY[+d]) || (G.Moves && !G.Moves.BY_ID[s.pstart2[d]])) delete s.pstart2[d];
+    }
+    // Mochila y MT: cuántas de cada cosa que exista (la Mochila no pasa de 99 de cada; una MT, de 9).
+    for (const [k, ok, max] of [['bag', (id: string) => !G.Shop || !!G.Shop.ITEMS[id], 99], ['tms', (id: string) => !G.Moves || !!G.Moves.BY_ID[id], 9]] as const) {
+      if (!s[k] || typeof s[k] !== 'object' || Array.isArray(s[k])) s[k] = {};
+      for (const id of Object.keys(s[k])) {
+        s[k][id] = Math.min(max, n(s[k][id]));
+        if (!s[k][id] || !ok(id)) delete s[k][id];
+      }
+    }
+    // MT aprendidas: movimientos que existen, sin repetir, de un Pokémon que existe.
+    if (!s.ptm || typeof s.ptm !== 'object' || Array.isArray(s.ptm)) s.ptm = {};
+    for (const d of Object.keys(s.ptm)) {
+      const l = Array.isArray(s.ptm[d]) ? s.ptm[d] : [];
+      s.ptm[d] = [...new Set(l.filter((id: unknown) => typeof id === 'string' && (!G.Moves || G.Moves.BY_ID[id])))].slice(0, 80);
+      if (!s.ptm[d].length || (G.DEX_BY && !G.DEX_BY[+d])) delete s.ptm[d];
+    }
+    // Naturaleza y habilidad elegidas: [valor, fecha].
+    for (const [k, ok] of [['pnat', (v: unknown) => typeof v === 'string' && (!G.NATURE_BY || !!G.NATURE_BY[v])], ['pabil', (v: unknown) => v === 0 || v === 1 || v === 2]] as const) {
+      if (!s[k] || typeof s[k] !== 'object' || Array.isArray(s[k])) s[k] = {};
+      for (const d of Object.keys(s[k])) {
+        const e = s[k][d];
+        if (!Array.isArray(e) || !ok(e[0]) || (G.DEX_BY && !G.DEX_BY[+d])) delete s[k][d];
+        else (s[k] as Record<string, unknown[]>)[d] = [e[0], n(e[1])];
+      }
+    }
     // Favoritos de la colección: opcional (las partidas viejas no lo tienen); lo que haya, bien formado.
     if (s.dexFav !== undefined) s.dexFav = DexQuery.cleanFavs(s.dexFav, d => !G.DEX_BY || !!G.DEX_BY[d]);
     if (G.Upgrades) for (const d of Object.keys(s.pupg || {})) {
@@ -243,6 +290,21 @@ export const DB = (() => {
       for (const k in older.pupg[d]) mine[k] = Math.max(mine[k] || 0, older.pupg[d][k]);
     }
     r.pupgDone = r.pupgDone || older.pupgDone;
+    // Movimiento inicial: el de la versión más reciente; si ahí no estaba elegido, el de la otra.
+    const pstart = r.pstart = r.pstart || {}, olderStart = older.pstart || {};
+    for (const d in olderStart) if (!(d in pstart)) pstart[d] = olderStart[d];
+    // Segundo movimiento inicial: igual.
+    const pstart2 = r.pstart2 = r.pstart2 || {}, olderStart2 = older.pstart2 || {};
+    for (const d in olderStart2) if (!(d in pstart2)) pstart2[d] = olderStart2[d];
+    // MT aprendidas: nunca se olvidan (unión). Naturaleza y habilidad: la elegida más tarde. La Mochila y las MT sin usar
+    // van con la versión más reciente, como las monedas con las que se pagaron.
+    r.ptm = r.ptm || {};
+    for (const d in older.ptm || {}) r.ptm[d] = [...new Set((r.ptm[d] || []).concat(older.ptm[d] || []))];
+    for (const k of ['pnat', 'pabil']) {
+      const mine: Record<string, any[]> = r[k] = r[k] || {};   // (any: [naturaleza o hueco, fecha])
+      for (const d in older[k] || {}) if (!mine[d] || (+older[k][d][1] || 0) > (+mine[d][1] || 0)) mine[d] = older[k][d];
+    }
+    r.bag = r.bag || {}; r.tms = r.tms || {};
     // Favoritos de la colección: de cada Pokémon, el cambio más reciente (no se tocan si ninguna copia los tiene).
     if (r.dexFav || older.dexFav) r.dexFav = DexQuery.mergeFavs(r.dexFav, older.dexFav);
     // Lo conseguido nunca se pierde: unión de legendarios, arenas, objetos, logros...

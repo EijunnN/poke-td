@@ -318,6 +318,7 @@ export const TD = (() => {
     /** Oleada en la que salió (para su recompensa). */
     wave = 1;
     chill = 0; chillCd = 0; frozenT = 0; stunT = 0; confuseT = 0; curseT = 0;
+    pinned = true;
     /**
      * Inmune a otro control fuerte (congelar, paralizar, confundir, empujar) mientras dure: con
      * muchas torres se podía tener a un enemigo parado para siempre, y el final era un paseo.
@@ -405,6 +406,12 @@ export const TD = (() => {
       if (r.burn || r.poison || r.slow || r.curse) note(type);
     }
 
+    /** Aturdir de los ataques (Onda Trueno, Tumba Rocas...): cuenta como control fuerte, con su inmunidad. */
+    applyDaze(dur: number) {
+      if (this.dead || this.ccT > 0) return;
+      this.ccT = CC_IMMUNE * (this.chief ? 1.5 : 1);
+      this.freeze(dur * (this.chief ? 0.5 : 1), 'stun', '¡Aturdido!', '#ffe14d');
+    }
     /** Lo deja quieto `dur` segundos (congelado o paralizado). */
     freeze(dur: number, how: 'frozen' | 'stun', text: string, col: string) {
       this.applySlow(1, dur);
@@ -572,8 +579,8 @@ export const TD = (() => {
 
   // ---------------- el ataque de cada torre ----------------
 
-  /** Formas de ataque que no sirven quieto: embestir (te mueve), el rastro al andar y los potenciadores. */
-  const NOT_FOR_TOWERS = new Set(['buff', 'dash', 'trail']);
+  /** Formas de ataque que no sirven quieto: embestir (te mueve), el rastro al andar, los potenciadores y las que sólo pegan pegadas al Pokémon (girar, empujar, cargar). */
+  const NOT_FOR_TOWERS = new Set(['buff', 'dash', 'trail', 'spin', 'shove', 'charge']);
   const towerMoves = new Map<number, string>();
   let parentOf: Map<number, number> | null = null;
   /** De qué evoluciona `dex` (o undefined). */
@@ -595,7 +602,7 @@ export const TD = (() => {
   function towerPool(dex: number): string[] {
     const mon = G.DEX_BY[dex];
     if (!mon) return [];
-    return (G.Moves.poolFor(mon) as string[]).filter(m => {
+    return (G.Moves.poolFor(mon, true, false) as string[]).filter(m => {
       const d = G.Moves.BY_ID[m];
       return d && mon.types.includes(d.type) && !NOT_FOR_TOWERS.has(d.kind);
     }).sort();
@@ -604,7 +611,7 @@ export const TD = (() => {
     const got = towerMoves.get(dex);
     if (got) return got;
     const mon = G.DEX_BY[dex];
-    let id = G.startMoveOf(dex);
+    let id = G.startMoveOf(dex, false);
     if (mon && !G.STARTER_BY[dex]) {
       const usable = towerPool(dex);
       // Primero los de su tipo principal (Zapdos, Eléctrico; Moltres, Fuego); los del segundo, sólo si del
@@ -781,7 +788,8 @@ export const TD = (() => {
     listenPointer();
 
     pl = new G.Player(mon, perks, !!save.partnerShiny && G.DB.ownsShiny(mon.dex));
-    pl.addMove(G.startMoveOf(mon.dex));
+    pl.cats = false;                        // la Defensa está afinada sin ataques físicos y especiales
+    pl.addMove(G.startMoveOf(mon.dex, false));
     if (coop) {
       G.Coop.begin(coop, pl, coopApi);
       if (!coop.watch) G.Social.setPlaying(true);
@@ -1175,6 +1183,7 @@ export const TD = (() => {
   /** Un Pokémon como torre (un G.Player que no lee el mando: sólo apunta y ataca). */
   function makeTower(dex: number, shiny = G.DB.ownsShiny(dex)): TowerMon {
     const t = new G.Player(G.DEX_BY[dex], {}, shiny);
+    t.cats = false;
     t.frozen = true;
     t.addMove(towerMoveOf(dex));
     return t;
